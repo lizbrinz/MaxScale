@@ -2308,7 +2308,7 @@ static bool route_single_stmt(
 				"if configuration parameter "
 				"use_sql_variables_in=all .",
 				STRPACKETTYPE(packet_type),
-				qtype_str,
+				(qtype_str==NULL ? "N/A" : qtype_str),
 				(query_str == NULL ? "(empty)" : query_str))));
 			
 			LOGIF(LT, (skygw_log_write(LOGFILE_TRACE, 

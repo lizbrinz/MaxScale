@@ -915,9 +915,20 @@ process_config_context(CONFIG_CONTEXT *context)
 						&& strcmp(params->name,
 							"options"))
 					{
-						filterAddParameter(obj->element,
+						if (!filterAddParameter(obj->element,
 							params->name,
-							params->value);
+							params->value))
+                                                {
+                                                    LOGIF(LE, (skygw_log_write_flush(
+                                                    LOGFILE_ERROR,
+                                                    "Error: Filter '%s' could not add "
+                                                    "parameter %s with value %s, "
+                                                    "not enough memory.",
+                                                    obj->object,
+                                                    params->name,
+                                                    params->value)));
+                                                    error_count++;
+                                                }
 					}
 					params = params->next;
 				}
