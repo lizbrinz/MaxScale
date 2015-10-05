@@ -71,38 +71,67 @@ extern __thread log_info_t tls_log_info;
  *					as QUERY_TYPE_SESSION_WRITE
  * 17/07/2014	Massimiliano Pinto	Server connection counter is updated in closeSession
  *
+ * 05/10/2015   Martin Brampton         Restructured routeQuery and route_single_stmt
+ * 
  * @endverbatim
  */
 
 static char *version_str = "V1.0.2";
 
+/*
+ * The following functions comprise the standard router interface
+ */
 static	ROUTER* createInstance(SERVICE *service, char **options);
 static	void*   newSession(ROUTER *instance, SESSION *session);
 static	void    closeSession(ROUTER *instance, void *session);
 static	void    freeSession(ROUTER *instance, void *session);
 static	int     routeQuery(ROUTER *instance, void *session, GWBUF *queue);
 static	void    diagnostic(ROUTER *instance, DCB *dcb);
-
 static  void	clientReply(
     ROUTER* instance,
     void*   router_session,
     GWBUF*  queue,
     DCB*    backend_dcb);
-
-static  void           handleError(
+static  void    handleError(
     ROUTER*        instance,
     void*          router_session,
     GWBUF*         errmsgbuf,
     DCB*           backend_dcb,
     error_action_t action,
     bool*          succp);
+static  uint8_t getCapabilities(ROUTER* inst, void* router_session);
 
-static void print_error_packet(ROUTER_CLIENT_SES* rses, GWBUF* buf, DCB* dcb);
-static int  router_get_servercount(ROUTER_INSTANCE* router);
-static int  rses_get_max_slavecount(ROUTER_CLIENT_SES* rses, int router_nservers);
-static int  rses_get_max_replication_lag(ROUTER_CLIENT_SES* rses);
-static backend_ref_t* get_bref_from_dcb(ROUTER_CLIENT_SES* rses, DCB* dcb);
+/*
+ * The following are used within the createInstance interface function
+ */
+
+/*
+ * The following are used within the newSession interface function
+ */
+
+/*
+ * The following are used within the closeSession interface function
+ */
+
+/*
+ * The following are used within the freeSession interface function
+ */
+
+/*
+ * The following are used within the routeQuery interface function
+ */
+
 static DCB* rses_get_client_dcb(ROUTER_CLIENT_SES* rses);
+
+static bool route_single_stmt(
+    ROUTER_INSTANCE*   inst,
+    ROUTER_CLIENT_SES* rses,
+    GWBUF*             querybuf);
+
+/*
+ * The following are used within route_single_stmt or its sub-functions, 
+ * which is only used with the routeQuery interface function
+ */
 
 static route_target_t get_route_target(
     skygw_query_type_t qtype,
@@ -125,13 +154,138 @@ static void check_create_tmp_table(
     GWBUF*  querybuf,
     skygw_query_type_t type);
 
-static bool route_single_stmt(
-    ROUTER_INSTANCE*   inst,
+static bool get_dcb(
+    DCB**              dcb,
     ROUTER_CLIENT_SES* rses,
-    GWBUF*             querybuf);
+    backend_type_t     btype,
+    char*              name,
+    int                max_rlag);
 
+static bool route_session_write(
+    ROUTER_CLIENT_SES* router_client_ses,
+    GWBUF*             querybuf,
+    ROUTER_INSTANCE*   inst,
+    unsigned char      packet_type,
+    skygw_query_type_t qtype);
 
-static  uint8_t getCapabilities(ROUTER* inst, void* router_session);
+static rses_property_t* rses_property_init(
+    rses_property_type_t prop_type);
+
+static int rses_property_add(
+    ROUTER_CLIENT_SES* rses,
+    rses_property_t*   prop);
+
+static void route_query_discard_packet(GWBUF *querybuffer);
+
+static inline DCB *route_stmt_get_master_dcb(
+    ROUTER_CLIENT_SES *router_session,
+    GWBUF *querybuffer);
+
+static inline bool route_stmt_derive_types(
+    skygw_query_type_t *qtype,
+    mysql_server_cmd_t *packet_type,
+    ROUTER_CLIENT_SES *router_session,
+    GWBUF *querybuffer,
+    uint8_t *packet);
+
+static inline void route_stmt_fix_commit_state(
+    ROUTER_CLIENT_SES *router_session,
+    skygw_query_type_t qtype);
+
+static inline void router_stmt_write_trace(
+    ROUTER_CLIENT_SES *router_session,
+    GWBUF *querybuffer,
+    skygw_query_type_t qtype);
+
+static inline bool route_stmt_conflicting_target(
+    ROUTER_CLIENT_SES *router_session,
+    GWBUF *querybuffer,
+    skygw_query_type_t qtype,
+    mysql_server_cmd_t *packet_type);
+
+static inline bool route_stmt_lock_router_session(
+    ROUTER_CLIENT_SES *router_session,
+    skygw_query_type_t qtype,
+    mysql_server_cmd_t *packet_type,
+    GWBUF *querybuffer);
+
+static inline DCB *route_stmt_target_named_server_or_rlag_max(
+    ROUTER_CLIENT_SES *router_session,
+    GWBUF *querybuffer,
+    route_target_t route_target);
+
+static inline DCB *route_stmt_target_is_slave(
+    ROUTER_CLIENT_SES *router_session,
+    ROUTER_INSTANCE*   router_instance);
+
+static inline DCB *route_stmt_target_is_master(
+    ROUTER_CLIENT_SES *router_session,
+    ROUTER_INSTANCE*   router_instance,
+    DCB *master_dcb);
+
+static inline bool route_stmt_to_target(
+    ROUTER_CLIENT_SES *router_session,
+    ROUTER_INSTANCE*   router_instance,
+    DCB *target_dcb,
+    GWBUF *querybuffer);
+
+static inline bool route_query_or_stmt_wrap_up(GWBUF *querybuffer);
+
+/*
+ * The following are used within the diagnostic interface function
+ */
+
+/*
+ * The following are used. directly or indirectly, within the clientReply interface function
+ */
+
+static GWBUF* sescmd_cursor_process_replies(GWBUF* replybuf, backend_ref_t* bref, bool*);
+static bool sescmd_cursor_next(sescmd_cursor_t* scur);
+static rses_property_t* mysql_sescmd_get_property(mysql_sescmd_t* scmd);
+static void print_error_packet(ROUTER_CLIENT_SES* rses, GWBUF* buf, DCB* dcb);
+
+/*
+ * The following are used within the handleError interface function
+ */
+
+/*
+ * The following are used within the getCapabilities interface function
+ */
+
+/*
+ * The following are used within more than one function
+ */
+
+static int  router_get_servercount(ROUTER_INSTANCE* router);
+static int  rses_get_max_slavecount(ROUTER_CLIENT_SES* rses, int router_nservers);
+static int  rses_get_max_replication_lag(ROUTER_CLIENT_SES* rses);
+static backend_ref_t* get_bref_from_dcb(ROUTER_CLIENT_SES* rses, DCB* dcb);
+
+static bool select_connect_backend_servers(
+    backend_ref_t**    p_master_ref,
+    backend_ref_t*     backend_ref,
+    int                router_nservers,
+    int                max_nslaves,
+    int                max_rlag,
+    select_criteria_t  select_criteria,
+    SESSION*           session,
+    ROUTER_INSTANCE*   router);
+
+static void rwsplit_process_router_options(
+    ROUTER_INSTANCE* router,
+    char**           options);
+
+static bool rses_begin_locked_router_action(
+    ROUTER_CLIENT_SES* rses);
+
+static void rses_end_locked_router_action(
+    ROUTER_CLIENT_SES* rses);
+
+static mysql_sescmd_t* sescmd_cursor_get_command(
+    sescmd_cursor_t* scur);
+
+static mysql_sescmd_t* rses_property_get_sescmd(
+    rses_property_t* prop);
 
 #if defined(NOT_USED)
 static bool router_option_configured(
@@ -144,6 +298,11 @@ static bool router_option_configured(
 static prep_stmt_t* prep_stmt_init(prep_stmt_type_t type, void* id);
 static void         prep_stmt_done(prep_stmt_t* pstmt);
 #endif /*< PREP_STMT_CACHING */
+
+/*
+ * The following four functions are used in the comparisons required to 
+ * decide on the routing of a statement
+ */
 
 int bref_cmp_global_conn(
     const void* bref1,
@@ -174,29 +333,9 @@ int (*criteria_cmpfun[LAST_CRITERIA])(const void*, const void*) =
     bref_cmp_current_load
 };
 
-static bool select_connect_backend_servers(
-    backend_ref_t**    p_master_ref,
-    backend_ref_t*     backend_ref,
-    int                router_nservers,
-    int                max_nslaves,
-    int                max_rlag,
-    select_criteria_t  select_criteria,
-    SESSION*           session,
-    ROUTER_INSTANCE*   router);
-
-static bool get_dcb(
-    DCB**              dcb,
-    ROUTER_CLIENT_SES* rses,
-    backend_type_t     btype,
-    char*              name,
-    int                max_rlag);
-
-static void rwsplit_process_router_options(
-    ROUTER_INSTANCE* router,
-    char**           options);
-
-
-
+/*
+ * The set of functions that comprise the standard router interface
+ */
 static ROUTER_OBJECT MyObject =
 {
     createInstance,
@@ -209,12 +348,6 @@ static ROUTER_OBJECT MyObject =
     handleError,
     getCapabilities
 };
-static bool rses_begin_locked_router_action(
-    ROUTER_CLIENT_SES* rses);
-
-static void rses_end_locked_router_action(
-    ROUTER_CLIENT_SES* rses);
-
 static void mysql_sescmd_done(
     mysql_sescmd_t* sescmd);
 
@@ -224,20 +357,7 @@ static mysql_sescmd_t* mysql_sescmd_init(
     unsigned char      packet_type,
     ROUTER_CLIENT_SES* rses);
 
-static rses_property_t* mysql_sescmd_get_property(
-    mysql_sescmd_t* scmd);
-
-static rses_property_t* rses_property_init(
-    rses_property_type_t prop_type);
-
-static int rses_property_add(
-    ROUTER_CLIENT_SES* rses,
-    rses_property_t*   prop);
-
 static void rses_property_done(
-    rses_property_t* prop);
-
-static mysql_sescmd_t* rses_property_get_sescmd(
     rses_property_t* prop);
 
 static bool execute_sescmd_history(backend_ref_t* bref);
@@ -259,26 +379,11 @@ static bool sescmd_cursor_is_active(
 static GWBUF* sescmd_cursor_clone_querybuf(
     sescmd_cursor_t* scur);
 
-static mysql_sescmd_t* sescmd_cursor_get_command(
-    sescmd_cursor_t* scur);
-
-static bool sescmd_cursor_next(
-    sescmd_cursor_t* scur);
-
-static GWBUF* sescmd_cursor_process_replies(GWBUF* replybuf, backend_ref_t* bref, bool*);
-
 static void tracelog_routed_query(
     ROUTER_CLIENT_SES* rses,
     char*              funcname,
     backend_ref_t*     bref,
     GWBUF*             buf);
-
-static bool route_session_write(
-    ROUTER_CLIENT_SES* router_client_ses,
-    GWBUF*             querybuf,
-    ROUTER_INSTANCE*   inst,
-    unsigned char      packet_type,
-    skygw_query_type_t qtype);
 
 static void refreshInstance(
     ROUTER_INSTANCE*  router,
