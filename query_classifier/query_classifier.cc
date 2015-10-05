@@ -1576,6 +1576,7 @@ char* skygw_get_qtype_str(
 				temp_str = (char *)realloc(qtype_str, strlen(qtype_str)+1+len+1);
                                 if (NULL == temp_str)
                                 {
+                                    free(qtype_str);
                                     return NULL;
                                 }
                                 else

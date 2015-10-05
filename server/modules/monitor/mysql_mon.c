@@ -698,15 +698,15 @@ monitorDatabase(MONITOR *mon, MONITOR_SERVERS *database)
     /* get server version string */
     server_string = (char *)mysql_get_server_info(database->con);
     if (server_string) {
-            char *stashed = database->server->server_string;
-            database->server->server_string = realloc(database->server->server_string, strlen(server_string)+1);
+            if (NULL == database->server->server_string
+                || strlen(server_string) > strlen(database->server->server_string))
+            {
+                free(database->server->server_string);
+                database->server->server_string = malloc(strlen(server_string)+1)
+            }
             if (database->server->server_string)
             {
                 strcpy(database->server->server_string, server_string);
-            }
-            else
-            {
-                free(stashed);
             }
     }
     

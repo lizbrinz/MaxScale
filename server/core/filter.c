@@ -329,6 +329,7 @@ filterAddParameter(FILTER_DEF *filter, char *name, char *value)
             {
                 free(filter->parameters[i]->name);
                 free(filter->parameters[i]->value);
+                free(filter->parameters[i]);
                 filter->parameters[i] = NULL;
             }
         }
