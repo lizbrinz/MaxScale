@@ -1539,7 +1539,7 @@ static void parsing_info_set_plain_str(
  * @param	qtype	Query type value, combination of values listed in 
  * 			query_classifier.h
  * 
- * @return	string representing the query type value
+ * @return	string representing the query type value, or NULL on memory failure
  */
 char* skygw_get_qtype_str(
 	skygw_query_type_t qtype)
@@ -1551,7 +1551,8 @@ char* skygw_get_qtype_str(
 
 	/**
 	 * Test values (bits) and clear matching bits from t1 one by one until 
-	 * t1 is completely cleared.
+	 * t1 is completely cleared. If memory allocation operations fail, return
+         * NULL - callers must check for the possibility of a NULL result.
 	 */
 	while (t1 != 0)
 	{		
@@ -1562,12 +1563,25 @@ char* skygw_get_qtype_str(
 			if (qtype_str == NULL)
 			{
 				qtype_str = strdup(STRQTYPE(t));
+                                if (NULL == qtype_str)
+                                {
+                                    return NULL;
+                                }
 			}
 			else
 			{
+                            char *temp_str;
 				size_t len = strlen(STRQTYPE(t));
 				/** reallocate space for delimiter, new string and termination */
-				qtype_str = (char *)realloc(qtype_str, strlen(qtype_str)+1+len+1);
+				temp_str = (char *)realloc(qtype_str, strlen(qtype_str)+1+len+1);
+                                if (NULL == temp_str)
+                                {
+                                    return NULL;
+                                }
+                                else
+                                {
+                                    qtype_str = temp_str;
+                                }
 				snprintf(qtype_str+strlen(qtype_str), 1+len+1, "|%s", STRQTYPE(t));
 			}
 			/** Remove found value from t1 */

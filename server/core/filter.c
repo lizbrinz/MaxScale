@@ -283,11 +283,15 @@ int     i;
  * @param filter	The filter to add the parameter to
  * @param name		The parameter name
  * @param value		The parameter value
+ * 
+ * @return bool         Whether the parameter was added
  */
-void
+bool
 filterAddParameter(FILTER_DEF *filter, char *name, char *value)
 {
-int     i;
+    FILTER_PARAMETER **stashed = NULL;
+    int     i;
+    bool    result = false;
 
         spinlock_acquire(&filter->spin);
         if (filter->parameters == NULL)
@@ -299,14 +303,37 @@ int     i;
         {
                 for (i = 0; filter->parameters[i]; i++)
                         ;
-                filter->parameters = (FILTER_PARAMETER **)realloc(filter->parameters,
-                                (i + 2) * sizeof(FILTER_PARAMETER *));
+                stashed = filter->parameters;
+                if ((filter->parameters = (FILTER_PARAMETER **)realloc(filter->parameters,
+                                (i + 2) * sizeof(FILTER_PARAMETER *))))
+                {
+                    stashed = NULL;
+                }
         }
-	filter->parameters[i] = (FILTER_PARAMETER *)calloc(1, sizeof(FILTER_PARAMETER));
-	filter->parameters[i]->name = strdup(name);
-	filter->parameters[i]->value = strdup(value);
-	filter->parameters[i+1] = NULL;
+        if (stashed)
+        {
+            filter->parameters = stashed;
+        }
+        else if (filter->parameters
+            && (filter->parameters[i] = (FILTER_PARAMETER *)calloc(1, sizeof(FILTER_PARAMETER))))
+        {
+            filter->parameters[i]->name = strdup(name);
+            filter->parameters[i]->value = strdup(value);
+            if (filter->parameters[i]->name
+                && filter->parameters[i]->value)
+            {
+                filter->parameters[i+1] = NULL;
+                result = true;
+            }
+            else
+            {
+                free(filter->parameters[i]->name);
+                free(filter->parameters[i]->value);
+                filter->parameters[i] = NULL;
+            }
+        }
         spinlock_release(&filter->spin);
+        return result;
 }
 
 /**

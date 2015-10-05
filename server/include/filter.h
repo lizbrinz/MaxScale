@@ -109,7 +109,7 @@ FILTER_DEF	*filter_alloc(char *, char *);
 void		filter_free(FILTER_DEF *);
 FILTER_DEF	*filter_find(char *);
 void		filterAddOption(FILTER_DEF *, char *);
-void		filterAddParameter(FILTER_DEF *, char *, char *);
+bool		filterAddParameter(FILTER_DEF *, char *, char *);
 DOWNSTREAM	*filterApply(FILTER_DEF *, SESSION *, DOWNSTREAM *);
 UPSTREAM	*filterUpstream(FILTER_DEF *, void *, UPSTREAM *);
 int		filter_standard_parameter(char *);
