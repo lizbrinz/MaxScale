@@ -229,14 +229,14 @@ static inline bool route_stmt_to_target(
     DCB *target_dcb,
     GWBUF *querybuffer);
 
-static inline bool route_query_or_stmt_wrap_up(GWBUF *querybuffer);
+static inline void route_query_or_stmt_wrap_up(GWBUF *querybuffer);
 
 /*
  * The following are used within the diagnostic interface function
  */
 
 /*
- * The following are used. directly or indirectly, within the clientReply interface function
+ * The following are used, directly or indirectly, within the clientReply interface function
  */
 
 static GWBUF* sescmd_cursor_process_replies(GWBUF* replybuf, backend_ref_t* bref, bool*);
@@ -2833,7 +2833,7 @@ route_stmt_to_target(
     return success;
 }
 
-static inline bool
+static inline void
 route_query_or_stmt_wrap_up(GWBUF *querybuffer)
 {
 #if defined(SS_DEBUG2)
