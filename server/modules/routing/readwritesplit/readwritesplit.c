@@ -189,6 +189,10 @@ static inline void route_stmt_fix_commit_state(
     ROUTER_CLIENT_SES *router_session,
     skygw_query_type_t qtype);
 
+static inline void route_stmt_fix_local_infile_state(
+    ROUTER_CLIENT_SES *router_session,
+    GWBUF *querybuf);
+
 static inline void router_stmt_write_trace(
     ROUTER_CLIENT_SES *router_session,
     GWBUF *querybuffer,
@@ -2225,6 +2229,9 @@ route_single_stmt(
         route_target = TARGET_MASTER;
         packet_type = MYSQL_COM_UNDEFINED;
         qtype = QUERY_TYPE_UNKNOWN;
+        router_session->rses_load_active = false;
+        skygw_log_write_flush(LT, "> LOAD DATA LOCAL INFILE finished: "
+            "%lu bytes sent.", router_session->rses_load_data_sent + gwbuf_length(querybuffer));
     }
     else
     {
@@ -2234,6 +2241,7 @@ route_single_stmt(
             return false;
         }
         route_stmt_fix_commit_state(router_session, qtype);
+        route_stmt_fix_local_infile_state(router_session, querybuffer);
 
         if(LOG_IS_ENABLED(LOGFILE_TRACE))
         {
@@ -2845,6 +2853,33 @@ route_query_or_stmt_wrap_up(GWBUF *querybuffer)
             free(canonical_query_str);
         }
 #endif
+}
+
+/**
+ * Check if the query is a LOAD DATA LOCAL INFILE query.
+ *
+ * If the query is LOAD DATA LOCAL INFILE and the streaming of the data is starting,
+ * all queries will be routed to the master until an empty packet is received.
+ * @param rses Router session
+ * @param querybuf GWBUF containing the query
+ */
+static inline void
+route_stmt_fix_local_infile_state(ROUTER_CLIENT_SES *router_session,
+                                  GWBUF *querybuf)
+{
+    if (!router_session->rses_load_active)
+    {
+        skygw_query_op_t queryop = query_classifier_get_operation(querybuf);
+        if (queryop == QUERY_OP_LOAD)
+        {
+            router_session->rses_load_active = true;
+            router_session->rses_load_data_sent = 0;
+        }
+    }
+    else
+    {
+        router_session->rses_load_data_sent += gwbuf_length(querybuf);
+    }
 }
 
 /**
