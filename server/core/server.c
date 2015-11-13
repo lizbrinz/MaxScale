@@ -34,6 +34,7 @@
  * 30/10/14	Massimiliano Pinto	Addition of SERVER_MASTER_STICKINESS description
  * 01/06/15	Massimiliano Pinto	Addition of server_update_address/port
  * 19/06/15 Martin Brampton		Extra code for persistent connections
+ *
  * @endverbatim
  */
 #include <stdio.h>
@@ -46,11 +47,6 @@
 #include <poll.h>
 #include <skygw_utils.h>
 #include <log_manager.h>
-
-/** Defined in log_manager.cc */
-extern int            lm_enabled_logfiles_bitmask;
-extern size_t         log_ses_count[];
-extern __thread log_info_t tls_log_info;
 
 static SPINLOCK	server_spin = SPINLOCK_INIT;
 static SERVER	*allServers = NULL;
@@ -78,7 +74,7 @@ SERVER 	*server;
         server->server_chk_top = CHK_NUM_SERVER;
         server->server_chk_tail = CHK_NUM_SERVER;
 #endif
-	server->name = strdup(servname);
+	server->name = strndup(servname, MAX_SERVER_NAME_LEN);
 	server->protocol = strdup(protocol);
 	server->port = port;
 	server->status = SERVER_RUNNING;
@@ -86,6 +82,7 @@ SERVER 	*server;
 	server->rlag = -2;
 	server->master_id = -1;
 	server->depth = -1;
+	spinlock_init(&server->lock);
         server->persistent = NULL;
         server->persistmax = 0;
         spinlock_init(&server->persistlock);
@@ -667,6 +664,7 @@ char	*status = NULL;
 void
 server_set_status(SERVER *server, int bit)
 {
+	spinlock_acquire(&server->lock);
 	server->status |= bit;
 	
 	/** clear error logged flag before the next failure */
@@ -674,6 +672,7 @@ server_set_status(SERVER *server, int bit)
 	{
 		server->master_err_is_logged = false;
 	}
+	spinlock_release(&server->lock);
 }
 
 /**
@@ -685,7 +684,9 @@ server_set_status(SERVER *server, int bit)
 void
 server_clear_status(SERVER *server, int bit)
 {
+	spinlock_acquire(&server->lock);
 	server->status &= ~bit;
+	spinlock_release(&server->lock);
 }
 
 /**
@@ -911,3 +912,54 @@ server_update_port(SERVER *server, unsigned short port)
 	spinlock_release(&server_spin);
 }
 
+static struct {
+	char		*str;
+	unsigned int	bit;
+} ServerBits[] = {
+	{ "running", 		SERVER_RUNNING },
+	{ "master",		SERVER_MASTER },
+	{ "slave",		SERVER_SLAVE },
+	{ "synced",		SERVER_JOINED },
+	{ "ndb",		SERVER_NDB },
+	{ "maintenance",	SERVER_MAINT },
+	{ "maint",		SERVER_MAINT },
+	{ NULL,			0 }
+};
+
+/**
+ * Map the server status bit
+ *
+ * @param str	String representation
+ * @return bit value or 0 on error
+ */
+unsigned int
+server_map_status(char *str)
+{
+int i;
+
+	for (i = 0; ServerBits[i].str; i++)
+		if (!strcasecmp(str, ServerBits[i].str))
+			return ServerBits[i].bit;
+	return 0;
+}
+
+/**
+ * Set the version string of the server.
+ * @param server Server to update
+ * @param string Version string
+ * @return True if the assignment of the version string was successful, false if
+ * memory allocation failed.
+ */
+bool server_set_version_string(SERVER* server, const char* string)
+{
+    bool rval = true;
+    spinlock_acquire(&server->lock);
+    free(server->server_string);
+    if ((server->server_string = strdup(string)) == NULL)
+    {
+        MXS_ERROR("Memory allocation failed.");
+        rval = false;
+    }
+    spinlock_release(&server->lock);
+    return rval;
+}

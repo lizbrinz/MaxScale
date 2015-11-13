@@ -17,6 +17,7 @@
  */
 
 #include <monitor_common.h>
+#include <maxscale_pcre2.h>
 
 monitor_event_t mon_name_to_event(char* tok);
 
@@ -225,23 +226,32 @@ case NEW_DONOR_EVENT:
     
 }
 
-void mon_append_node_names(MONITOR_SERVERS* start,char* str, int len)
+/**
+ * Create a list of running servers
+ * @param start Monitored servers
+ * @param dest Destination where the string is formed
+ * @param len Length of @c dest
+ */
+void mon_append_node_names(MONITOR_SERVERS* start, char* dest, int len)
 {
     MONITOR_SERVERS* ptr = start;
     bool first = true;
-    int slen = strlen(str);
-    char arr[256];
-    while(ptr && slen < len)
+    int slen = strlen(dest);
+    char arr[MAX_SERVER_NAME_LEN + 32]; // Some extra space for port
+    while (ptr && slen < len)
     {
-	if(!first)
-	{
-	    strncat(str,",",len);
-	}
-	first = false;
-	sprintf(arr,"%s:%d",ptr->server->name,ptr->server->port);
-	strncat(str,arr,len);
-	ptr = ptr->next;
-	slen = strlen(str);
+        if(SERVER_IS_RUNNING(ptr->server))
+        {
+            if (!first)
+            {
+                strncat(dest, ",", len);
+            }
+            first = false;
+            snprintf(arr, sizeof(arr), "%s:%d", ptr->server->name, ptr->server->port);
+            strncat(dest, arr, len);
+            slen = strlen(dest);
+        }
+        ptr = ptr->next;
     }
 }
 
@@ -302,22 +312,25 @@ bool mon_print_fail_status(
  */
 void monitor_launch_script(MONITOR* mon, MONITOR_SERVERS* ptr, char* script)
 {
-    char argstr[PATH_MAX + MON_ARG_MAX + 1];
-    EXTERNCMD* cmd;
+    char nodelist[PATH_MAX + MON_ARG_MAX + 1] = {'\0'};
+    char event[strlen(mon_get_event_name(ptr))];
+    char initiator[strlen(ptr->server->name) + 24]; // Extra space for port
 
-    snprintf(argstr, PATH_MAX + MON_ARG_MAX,
-             "%s --event=%s --initiator=%s:%d --nodelist=",
-             script,
-             mon_get_event_name(ptr),
-             ptr->server->name,
-             ptr->server->port);
+    snprintf(initiator, sizeof(initiator), "%s:%d", ptr->server->name, ptr->server->port);
+    snprintf(event, sizeof(event), "%s", mon_get_event_name(ptr));
+    mon_append_node_names(mon->databases, nodelist, PATH_MAX + MON_ARG_MAX);
 
-    mon_append_node_names(mon->databases, argstr, PATH_MAX + MON_ARG_MAX);
-    if ((cmd = externcmd_allocate(argstr)) == NULL)
+    EXTERNCMD* cmd = externcmd_allocate(script);
+
+    if (cmd == NULL)
     {
         skygw_log_write(LE, "Failed to initialize script: %s", script);
         return;
     }
+
+    externcmd_substitute_arg(cmd, "[$]INITIATOR", initiator);
+    externcmd_substitute_arg(cmd, "[$]EVENT", event);
+    externcmd_substitute_arg(cmd, "[$]NODELIST", nodelist);
 
     if (externcmd_execute(cmd))
     {
@@ -413,3 +426,92 @@ monitor_event_t mon_name_to_event(char* tok)
 
     }
 
+/**
+ * Connect to a database. This will always leave a valid database handle in the
+ * database->con pointer. This allows the user to call MySQL C API functions to
+ * find out the reason of the failure.
+ * @param mon Monitor
+ * @param database Monitored database
+ * @return MONITOR_CONN_OK if the connection is OK else the reason for the failure
+ */
+connect_result_t mon_connect_to_db(MONITOR* mon, MONITOR_SERVERS *database)
+{
+    connect_result_t rval = MONITOR_CONN_OK;
+
+    /** Return if the connection is OK */
+    if (database->con && mysql_ping(database->con) == 0)
+    {
+        return rval;
+    }
+
+    int connect_timeout = mon->connect_timeout;
+    int read_timeout = mon->read_timeout;
+    int write_timeout = mon->write_timeout;
+    char *uname = database->server->monuser ? database->server->monuser : mon->user;
+    char *passwd = database->server->monpw ? database->server->monpw : mon->password;
+    char *dpwd = decryptPassword(passwd);
+
+    if (database->con)
+    {
+        mysql_close(database->con);
+    }
+    database->con = mysql_init(NULL);
+
+    mysql_options(database->con, MYSQL_OPT_CONNECT_TIMEOUT, (void *) &connect_timeout);
+    mysql_options(database->con, MYSQL_OPT_READ_TIMEOUT, (void *) &read_timeout);
+    mysql_options(database->con, MYSQL_OPT_WRITE_TIMEOUT, (void *) &write_timeout);
+
+    time_t start = time(NULL);
+    bool result = (mysql_real_connect(database->con,
+                                      database->server->name,
+                                      uname,
+                                      dpwd,
+                                      NULL,
+                                      database->server->port,
+                                      NULL,
+                                      0) != NULL);
+    time_t end = time(NULL);
+
+    if (!result)
+    {
+        if ((int) difftime(end, start) >= connect_timeout)
+        {
+            rval = MONITOR_CONN_TIMEOUT;
+        }
+        else
+        {
+            rval = MONITOR_CONN_REFUSED;
+        }
+    }
+
+    free(dpwd);
+    return rval;
+}
+
+/**
+ * Log an error about the failure to connect to a backend server
+ * and why it happened.
+ * @param database Backend database
+ * @param rval Return value of mon_connect_to_db
+ */
+void mon_log_connect_error(MONITOR_SERVERS* database, connect_result_t rval)
+{
+    if (rval == MONITOR_CONN_TIMEOUT)
+    {
+        skygw_log_write_flush(LOGFILE_ERROR,
+                              "Error : Monitor timed out when connecting to "
+                              "server %s:%d : \"%s\"",
+                              database->server->name,
+                              database->server->port,
+                              mysql_error(database->con));
+    }
+    else
+    {
+        skygw_log_write_flush(LOGFILE_ERROR,
+                              "Error : Monitor was unable to connect to "
+                              "server %s:%d : \"%s\"",
+                              database->server->name,
+                              database->server->port,
+                              mysql_error(database->con));
+    }
+}

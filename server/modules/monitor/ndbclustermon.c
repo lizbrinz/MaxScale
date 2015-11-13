@@ -33,11 +33,6 @@
 
 #include <mysqlmon.h>
 
-/** Defined in log_manager.cc */
-extern int            lm_enabled_logfiles_bitmask;
-extern size_t         log_ses_count[];
-extern __thread log_info_t tls_log_info;
-
 static	void	monitorMain(void *);
 
 static char *version_str = "V2.1.0";
@@ -132,29 +127,15 @@ startMonitor(void *arg,void* opt)
     {
 	if(!strcmp(params->name,"script"))
 	{
-	    if(handle->script)
-		free(handle->script);
-	    if(access(params->value,X_OK) == 0)
-	    {
-		handle->script = strdup(params->value);
-	    }
-	    else
-	    {
-		script_error = true;
-		if(access(params->value,F_OK) == 0)
-		{
-		skygw_log_write(LE,
-			 "Error: The file cannot be executed: %s",
-			 params->value);
-		}
-		else
-		{
-		skygw_log_write(LE,
-			 "Error: The file cannot be found: %s",
-			 params->value);
-		}
-		handle->script = NULL;
-	    }
+	    if (externcmd_can_execute(params->value))
+        {
+            free(handle->script);
+            handle->script = strdup(params->value);
+        }
+        else
+        {
+            script_error = true;
+        }
 	}
 	else if(!strcmp(params->name,"events"))
 	{
@@ -248,76 +229,44 @@ char		*sep;
 static void
 monitorDatabase(MONITOR_SERVERS	*database, char *defaultUser, char *defaultPasswd, MONITOR *mon)
 {
-    MYSQL_MONITOR* handle = mon->handle;
 MYSQL_ROW	row;
 MYSQL_RES	*result;
 int		isjoined = 0;
-char            *uname = defaultUser, *passwd = defaultPasswd;
 char 			*server_string;
 
-	if (database->server->monuser != NULL)
-	{
-		uname = database->server->monuser;
-		passwd = database->server->monpw;
-	}
-	if (uname == NULL)
-		return;
+    /* Don't even probe server flagged as in maintenance */
+    if (SERVER_IN_MAINT(database->server))
+        return;
 
-	/* Don't even probe server flagged as in maintenance */
-	if (SERVER_IN_MAINT(database->server))
-		return;
+    connect_result_t rval = mon_connect_to_db(mon, database);
+    if (rval != MONITOR_CONN_OK)
+    {
+        server_clear_status(database->server, SERVER_RUNNING);
 
-	if (database->con == NULL || mysql_ping(database->con) != 0)
-	{
-		char *dpwd = decryptPassword(passwd);
-                int connect_timeout = mon->connect_timeout;
-                int read_timeout = mon->read_timeout;
-                int write_timeout = mon->write_timeout;
+        if (mysql_errno(database->con) == ER_ACCESS_DENIED_ERROR)
+        {
+            server_set_status(database->server, SERVER_AUTH_ERROR);
+        }
 
-		if(database->con)
-		    mysql_close(database->con);
-                database->con = mysql_init(NULL);
+        database->server->node_id = -1;
 
-                mysql_options(database->con, MYSQL_OPT_CONNECT_TIMEOUT, (void *)&connect_timeout);
-                mysql_options(database->con, MYSQL_OPT_READ_TIMEOUT, (void *)&read_timeout);
-                mysql_options(database->con, MYSQL_OPT_WRITE_TIMEOUT, (void *)&write_timeout);
+        if (mon_status_changed(database) && mon_print_fail_status(database))
+        {
+            mon_log_connect_error(database, rval);
+        }
+        return;
+    }
 
-		if (mysql_real_connect(database->con, database->server->name,
-			uname, dpwd, NULL, database->server->port, NULL, 0) == NULL)
-		{
-			LOGIF(LE, (skygw_log_write_flush(
-				LOGFILE_ERROR,
-				"Error : Monitor was unable to connect to "
-				"server %s:%d : \"%s\"",
-				database->server->name,
-				database->server->port,
-				mysql_error(database->con))));
-			server_clear_status(database->server, SERVER_RUNNING);
-			if (mysql_errno(database->con) == ER_ACCESS_DENIED_ERROR)
-			{
-				server_set_status(database->server, SERVER_AUTH_ERROR);
-			}
-			database->server->node_id = -1;
-			free(dpwd);
-			return;
-		}
-		else
-		{
-			server_clear_status(database->server, SERVER_AUTH_ERROR);
-		}
-		free(dpwd);
-	}
-
+    server_clear_status(database->server, SERVER_AUTH_ERROR);
 	/* If we get this far then we have a working connection */
 	server_set_status(database->server, SERVER_RUNNING);
 
 	/* get server version string */
 	server_string = (char *)mysql_get_server_info(database->con);
-	if (server_string) {
-		database->server->server_string = realloc(database->server->server_string, strlen(server_string)+1);
-		if (database->server->server_string)
-			strcpy(database->server->server_string, server_string);
-	}	
+    if (server_string)
+    {
+        server_set_version_string(database->server, server_string);
+    }
 
 	/* Check if the the SQL node is able to contact one or more data nodes */
 	if (mysql_query(database->con, "SHOW STATUS LIKE 'Ndb_number_of_ready_data_nodes'") == 0

@@ -20,6 +20,7 @@
 #include <skygw_utils.h>
 #include <stdint.h>
 #include <openssl/sha.h>
+#include <spinlock.h>
 /**
  * @file config.h The configuration handling elements
  *
@@ -119,6 +120,7 @@ extern unsigned int	config_pollsleep();
 CONFIG_PARAMETER*	config_get_param(CONFIG_PARAMETER* params, const char* name);
 config_param_type_t 	config_get_paramtype(CONFIG_PARAMETER* param);
 CONFIG_PARAMETER*	config_clone_param(CONFIG_PARAMETER* param);
+void			free_config_parameter(CONFIG_PARAMETER* p1);
 extern int		config_truth_value(char *);
 extern double           config_percentage_value(char *str);
 bool config_set_qualified_param(
@@ -150,4 +152,5 @@ void config_disable_feedback_task(void);
 unsigned long  config_get_gateway_id(void);
 GATEWAY_CONF* config_get_global_options();
 bool isInternalService(char *router);
+char* config_clean_string_list(char* str);
 #endif

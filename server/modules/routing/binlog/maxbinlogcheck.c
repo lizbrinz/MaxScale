@@ -63,9 +63,6 @@
 #include <version.h>
 #include <gwdirs.h>
 
-extern int lm_enabled_logfiles_bitmask;
-extern size_t         log_ses_count[];
-extern __thread log_info_t tls_log_info;
 extern int blr_read_events_all_events(ROUTER_INSTANCE *router, int fix, int debug);
 extern uint32_t extract_field(uint8_t *src, int bits);
 static void printVersion(const char *progname);
@@ -80,11 +77,15 @@ static struct option long_options[] = {
   {0, 0, 0, 0}
 };
 
-char *binlog_check_version = "1.0.0";
+char *binlog_check_version = "1.1.0";
+
+int
+MaxScaleUptime()
+{
+return 1;
+}
 
 int main(int argc, char **argv) {
-	char** arg_vector;
-	int arg_count = 4;
 	ROUTER_INSTANCE *inst;
 	int fd;
 	int ret;
@@ -123,24 +124,9 @@ int main(int argc, char **argv) {
 
 	num_args = optind;
 
-	arg_vector = malloc(sizeof(char*)*(arg_count + 1));
+	mxs_log_init(NULL, NULL, LOG_TARGET_DEFAULT);
 
-	if(arg_vector == NULL)
-	{
-		fprintf(stderr,"Error: Memory allocation failed for log manager arg_vector.\n");
-		return 1;
-	}
-
-	arg_vector[0] = "logmanager";
-	arg_vector[1] = "-j";
-	arg_vector[2] = "/tmp/maxbinlogcheck";
-	arg_vector[3] = "-o";
-	arg_vector[4] = NULL;
-	skygw_logmanager_init(arg_count,arg_vector);
-
-	skygw_log_set_augmentation(0);
-
-	free(arg_vector);
+	mxs_log_set_augmentation(0);
 
 	if (!debug_out)
 		skygw_log_disable(LOGFILE_DEBUG);
@@ -151,8 +137,8 @@ int main(int argc, char **argv) {
 		LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR,
 			"Error: Memory allocation failed for ROUTER_INSTANCE")));
 
-		skygw_log_sync_all();
-      		skygw_logmanager_done();
+		mxs_log_flush_sync();
+      		mxs_log_finish();
 
 		return 1;
 	}
@@ -175,8 +161,8 @@ int main(int argc, char **argv) {
 			"Failed to open binlog file %s: %s",
 			path, strerror(errno))));
         
-		skygw_log_sync_all();
-		skygw_logmanager_done();
+		mxs_log_flush_sync();
+		mxs_log_finish();
 
 		free(inst);
 
@@ -208,13 +194,13 @@ int main(int argc, char **argv) {
 
 	close(inst->binlog_fd);
 
-	skygw_log_sync_all();
+	mxs_log_flush_sync();
 
 	LOGIF(LM, (skygw_log_write_flush(LOGFILE_MESSAGE,
 		"Check retcode: %i, Binlog Pos = %llu", ret, inst->binlog_position)));
 
-	skygw_log_sync_all();
-	skygw_logmanager_done();
+	mxs_log_flush_sync();
+	mxs_log_finish();
 
 	free(inst);
 
