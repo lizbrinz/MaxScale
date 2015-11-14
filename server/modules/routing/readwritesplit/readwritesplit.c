@@ -66,6 +66,9 @@ MODULE_INFO 	info =
  * 18/07/2013	Massimiliano Pinto	routeQuery now handles COM_QUIT
  *					as QUERY_TYPE_SESSION_WRITE
  * 17/07/2014	Massimiliano Pinto	Server connection counter is updated in closeSession
+ * 
+ * 09/09/2015   Martin Brampton         Modify error handler
+ * 25/09/2015   Martin Brampton         Block callback processing when no router session in the DCB
  *
  * 05/10/2015   Martin Brampton         Restructured routeQuery and route_single_stmt
  *
@@ -88,6 +91,7 @@ static  void	clientReply(
     void*   router_session,
     GWBUF*  queue,
     DCB*    backend_dcb);
+
 static  void    handleError(
     ROUTER*        instance,
     void*          router_session,
@@ -95,7 +99,6 @@ static  void    handleError(
     DCB*           backend_dcb,
     error_action_t action,
     bool*          succp);
-static  uint8_t getCapabilities(ROUTER* inst, void* router_session);
 
 /*
  * The following are used within the createInstance interface function
@@ -285,6 +288,7 @@ static void rses_end_locked_router_action(
 static mysql_sescmd_t* sescmd_cursor_get_command(
     sescmd_cursor_t* scur);
 
+static  int getCapabilities();
 static mysql_sescmd_t* rses_property_get_sescmd(
     rses_property_t* prop);
 
@@ -1026,7 +1030,7 @@ static void* newSession(
     client_rses->rses_master_ref   = master_ref;
     /* assert with master_host */
     ss_dassert(master_ref && (master_ref->bref_backend->backend_server && SERVER_MASTER));
-    client_rses->rses_capabilities = RCAP_TYPE_STMT_INPUT;
+
     client_rses->rses_backend_ref  = backend_ref;
     client_rses->rses_nbackends    = router_nservers; /*< # of backend servers */
 
@@ -1549,6 +1553,8 @@ static route_target_t get_route_target(
              QUERY_IS_TYPE(qtype, QUERY_TYPE_USERVAR_READ) ||	/*< read user var */
 		QUERY_IS_TYPE(qtype, QUERY_TYPE_SYSVAR_READ) ||	/*< read sys var */
 		QUERY_IS_TYPE(qtype, QUERY_TYPE_EXEC_STMT) ||   /*< prepared stmt exec */
+		QUERY_IS_TYPE(qtype, QUERY_TYPE_PREPARE_STMT) ||
+		QUERY_IS_TYPE(qtype, QUERY_TYPE_PREPARE_NAMED_STMT) ||
 		QUERY_IS_TYPE(qtype, QUERY_TYPE_GSYSVAR_READ))) /*< read global sys var */
 	{
 		/** First set expected targets before evaluating hints */
@@ -1566,6 +1572,8 @@ static route_target_t get_route_target(
 
         if(QUERY_IS_TYPE(qtype, QUERY_TYPE_MASTER_READ) ||
 			QUERY_IS_TYPE(qtype, QUERY_TYPE_EXEC_STMT)	||
+		    QUERY_IS_TYPE(qtype, QUERY_TYPE_PREPARE_STMT) ||
+		    QUERY_IS_TYPE(qtype, QUERY_TYPE_PREPARE_NAMED_STMT) ||
 			/** Configured not to allow reading variables from slaves */
 			(use_sql_variables_in == TYPE_MASTER && 
 			(QUERY_IS_TYPE(qtype, QUERY_TYPE_USERVAR_READ)	||
@@ -3908,14 +3916,14 @@ static bool select_connect_backend_servers(
             {
                 ss_dassert(backend_ref[i].bref_backend->backend_conn_count > 0);
 
-                /** disconnect opened connections */
+                                /** disconnect opened connections */
                 dcb_close(backend_ref[i].bref_dcb);
-                bref_clear_state(&backend_ref[i], BREF_IN_USE);
-                /** Decrease backend's connection counter. */
-                atomic_add(&backend_ref[i].bref_backend->backend_conn_count, -1);
-            }
+                                bref_clear_state(&backend_ref[i], BREF_IN_USE);
+                                /** Decrease backend's connection counter. */
+                                atomic_add(&backend_ref[i].bref_backend->backend_conn_count, -1);
+                        }
+                }
         }
-    }
 return_succp:
 
     return succp;
@@ -4665,27 +4673,11 @@ static void tracelog_routed_query(
 
 
 /**
- * Return rc, rc < 0 if router session is closed. rc == 0 if there are no
- * capabilities specified, rc > 0 when there are capabilities.
- */
-static uint8_t getCapabilities(
-    ROUTER* inst,
-    void*   router_session)
+ * Return RCAP_TYPE_STMT_INPUT.
+ */ 
+static int getCapabilities ()
 {
-    ROUTER_CLIENT_SES* rses = (ROUTER_CLIENT_SES *)router_session;
-    uint8_t            rc;
-
-    if(!rses_begin_locked_router_action(rses))
-    {
-        rc = 0xff;
-        goto return_rc;
-    }
-    rc = rses->rses_capabilities;
-
-    rses_end_locked_router_action(rses);
-
-return_rc:
-    return rc;
+        return RCAP_TYPE_STMT_INPUT;
 }
 
 /**
@@ -5054,10 +5046,9 @@ static void rwsplit_process_router_options(
  * @param       router_session  The router session
  * @param       errmsgbuf       The error message to reply
  * @param       backend_dcb     The backend DCB
- * @param       action          The action: REPLY, REPLY_AND_CLOSE, NEW_CONNECTION
- * @param       succp           Result of action. True if there is at least master
- * and enough slaves to continue session. Otherwise false.
- *
+ * @param       action     	The action: ERRACT_NEW_CONNECTION or ERRACT_REPLY_CLIENT
+ * @param	succp		Result of action: true iff router can continue
+ * 
  * Even if succp == true connecting to new slave may have failed. succp is to
  * tell whether router has enough master/slave connections to continue work.
  */
@@ -5074,13 +5065,6 @@ static void handleError(
     ROUTER_CLIENT_SES* rses    = (ROUTER_CLIENT_SES *)router_session;
 
     CHK_DCB(backend_dcb);
-
-    /** Reset error handle flag from a given DCB */
-    if(action == ERRACT_RESET)
-    {
-        backend_dcb->dcb_errhandle_called = false;
-        return;
-    }
 
     /** Don't handle same error twice on same DCB */
     if(backend_dcb->dcb_errhandle_called)
