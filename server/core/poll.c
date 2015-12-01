@@ -15,7 +15,7 @@
  *
  * Copyright MariaDB Corporation Ab 2013-2014
  */
- 
+
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -220,7 +220,7 @@ int	i;
 		}
 	}
 #if MUTEX_EPOLL
-        simple_mutex_init(&epoll_wait_mutex, "epoll_wait_mutex");        
+        simple_mutex_init(&epoll_wait_mutex, "epoll_wait_mutex");
 #endif
 
 	hktask_add("Load Average", poll_loadav, NULL, POLL_LOAD_FREQ);
@@ -268,7 +268,7 @@ poll_add_dcb(DCB *dcb)
      * Choose new state according to the role of dcb.
      */
     spinlock_acquire(&dcb->dcb_initlock);
-    if (dcb->dcb_role == DCB_ROLE_REQUEST_HANDLER) 
+    if (dcb->dcb_role == DCB_ROLE_REQUEST_HANDLER)
     {
         new_state = DCB_STATE_POLLING;
     }
@@ -300,19 +300,19 @@ poll_add_dcb(DCB *dcb)
                   dcb,
                   STRDCBSTATE(dcb->state));
     }
-    dcb->state = new_state; 
+    dcb->state = new_state;
     spinlock_release(&dcb->dcb_initlock);
     /*
      * The only possible failure that will not cause a crash is
      * running out of system resources.
      */
     rc = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, dcb->fd, &ev);
-    if (rc) 
+    if (rc)
     {
         /* Some errors are actually considered acceptable */
         rc = poll_resolve_error(dcb, errno, true);
     }
-    if (0 == rc) 
+    if (0 == rc)
     {
         MXS_DEBUG("%lu [poll_add_dcb] Added dcb %p in state %s to poll set.",
                   pthread_self(),
@@ -320,7 +320,7 @@ poll_add_dcb(DCB *dcb)
                   STRDCBSTATE(dcb->state));
     }
     else dcb->state = old_state;
-    return rc; 
+    return rc;
 }
 
 /**
@@ -361,19 +361,19 @@ poll_remove_dcb(DCB *dcb)
 
         /**
          * Only positive fds can be removed from epoll set.
-         * Cloned DCBs can have a state of DCB_STATE_POLLING but are not in 
+         * Cloned DCBs can have a state of DCB_STATE_POLLING but are not in
          * the epoll set and do not have a valid file descriptor.  Hence the
-         * only action for them is already done - the change of state to 
+         * only action for them is already done - the change of state to
          * DCB_STATE_NOPOLLING.
-         */		 
+         */
         dcbfd = dcb->fd;
         spinlock_release(&dcb->dcb_initlock);
-        if (dcbfd > 0) 
+        if (dcbfd > 0)
 		{
             rc = epoll_ctl(epoll_fd, EPOLL_CTL_DEL, dcbfd, &ev);
             /**
              * The poll_resolve_error function will always
-             * return 0 or crash.  So if it returns non-zero result, 
+             * return 0 or crash.  So if it returns non-zero result,
              * things have gone wrong and we crash.
              */
             if (rc) rc = poll_resolve_error(dcb, errno, false);
@@ -464,7 +464,7 @@ poll_resolve_error(DCB *dcb, int errornum, bool adding)
  * The non-debug option does an epoll with a time out. This allows the checking of
  * shutdown value to be checked in all threads. The algorithm for polling in this
  * mode is to do a poll with no-wait, if no events are detected then the poll is
- * repeated with a time out. This allows for a quick check before making the call 
+ * repeated with a time out. This allows for a quick check before making the call
  * with timeout. The call with the timeout differs in that the Linux scheduler may
  * deschedule a process if a timeout is included, but will not do this if a 0 timeout
  * value is given. this improves performance when the gateway is under heavy load.
@@ -516,7 +516,7 @@ int		   poll_spins = 0;
 
 	/** Init mysql thread context for use with a mysql handle and a parser */
 	mysql_thread_init();
-	
+
 	while (1)
 	{
 		if (pollStats.evq_pending == 0 && timeout_bias < 10)
@@ -536,7 +536,7 @@ int		   poll_spins = 0;
 		{
 			thread_data[thread_id].state = THREAD_POLLING;
 		}
-                
+
 		atomic_add(&pollStats.n_polls, 1);
 		if ((nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, 0)) == -1)
 		{
@@ -685,7 +685,7 @@ int		   poll_spins = 0;
 			{
 				thread_data[thread_id].state = THREAD_STOPPED;
 			}
-			bitmask_clear(&poll_mask, thread_id);
+			bitmask_clear_with_lock(&poll_mask, thread_id);
 			/** Release mysql thread context */
 			mysql_thread_end();
 			return;
@@ -700,7 +700,7 @@ int		   poll_spins = 0;
 /**
  * Set the number of non-blocking poll cycles that will be done before
  * a blocking poll will take place. Whenever an event arrives on a thread
- * or the thread sees a pending event to execute it will reset it's 
+ * or the thread sees a pending event to execute it will reset it's
  * poll_spin coutn to zero and will then poll with a 0 timeout until the
  * poll_spin value is greater than the value set here.
  *
@@ -735,7 +735,7 @@ poll_set_maxwait(unsigned int maxwait)
  * to process the DCB. If there are pending events the DCB will be moved to the
  * back of the queue so that other DCB's will have a share of the threads to
  * execute events for them.
- * 
+ *
  * Including session id to log entries depends on this function. Assumption is
  * that when maxscale thread starts processing of an event it processes one
  * and only one session until it returns from this function. Session id is
@@ -1082,10 +1082,10 @@ unsigned long	qtime;
 }
 
 /**
- * 
+ *
  * Check that the DCB has a session link before processing.
  * If not, log an error.  Processing will be bypassed
- * 
+ *
  * @param   dcb         The DCB to check
  * @param   function    The name of the function about to be called
  * @return  bool        Does the DCB have a non-null session link
@@ -1108,9 +1108,9 @@ poll_dcb_session_check(DCB *dcb, const char *function)
         return false;
     }
 }
-    
+
 /**
- * 
+ *
  * Shutdown the polling loop
  */
 void
@@ -1344,7 +1344,7 @@ double	qavg1 = 0.0, qavg5 = 0.0, qavg15 = 0.0;
 			char *event_string
 				= event_to_string(thread_data[i].event);
 			bool from_heap;
-			
+
 			if (event_string == NULL)
 			{
 				from_heap = false;
@@ -1359,7 +1359,7 @@ double	qavg1 = 0.0, qavg5 = 0.0, qavg15 = 0.0;
 				i, state, thread_data[i].n_fds,
 				thread_data[i].cur_dcb, 1 + hkheartbeat - dcb->evq.started,
 						 event_string);
-			
+
 			if (from_heap)
 			{
 				free(event_string);
@@ -1401,17 +1401,17 @@ int		new_samples, new_nfds;
  * Add given GWBUF to DCB's readqueue and add a pending EPOLLIN event for DCB.
  * The event pretends that there is something to read for the DCB. Actually
  * the incoming data is stored in the DCB's readqueue where it is read.
- * 
+ *
  * @param dcb	DCB where the event and data are added
  * @param buf	GWBUF including the data
- * 
+ *
  */
 void poll_add_epollin_event_to_dcb(
 	DCB*   dcb,
 	GWBUF* buf)
 {
 	__uint32_t ev;
-	
+
 	ev = EPOLLIN;
 
 	poll_add_event_to_dcb(dcb, buf, ev);
@@ -1422,14 +1422,14 @@ static void poll_add_event_to_dcb(
 	DCB*       dcb,
 	GWBUF*     buf,
 	__uint32_t ev)
-{	
+{
 	/** Add buf to readqueue */
 	spinlock_acquire(&dcb->authlock);
 	dcb->dcb_readqueue = gwbuf_append(dcb->dcb_readqueue, buf);
 	spinlock_release(&dcb->authlock);
-		
+
 	spinlock_acquire(&pollqlock);
-	
+
 	/** Set event to DCB */
 	if (DCB_POLL_BUSY(dcb))
 	{
@@ -1458,7 +1458,7 @@ static void poll_add_event_to_dcb(
 		}
 		pollStats.evq_length++;
 		pollStats.evq_pending++;
-		
+
 		if (pollStats.evq_length > pollStats.evq_max)
 		{
 			pollStats.evq_max = pollStats.evq_length;
@@ -1608,7 +1608,7 @@ char		*tmp1, *tmp2;
 	dcb_printf(pdcb, "-----------------+------------+--------------------+-------------------\n");
 	do {
 		dcb_printf(pdcb, "%-16p | %-10s | %-18s | %-18s\n", dcb,
-				dcb->evq.processing ? "Processing" : "Pending", 
+				dcb->evq.processing ? "Processing" : "Pending",
 				   (tmp1 = event_to_string(dcb->evq.processing_events)),
 				   (tmp2 = event_to_string(dcb->evq.pending_events)));
 		free(tmp1);

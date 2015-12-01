@@ -33,26 +33,29 @@
  */
 
 /* Both these numbers MUST be exact multiples of 8 */
-#define BIT_LENGTH_INITIAL      32      /**< Initial number of bits in the bitmask */
-#define BIT_LENGTH_INC          32      /**< Number of bits to add on each increment */
+#define BIT_LENGTH_INITIAL      128      /**< Initial number of bits in the bitmask */
+#define BIT_LENGTH_INC          128      /**< Number of bits to add on each increment */
 
 /**
  * The bitmask structure used to store an arbitrary large bitmask
  */
 typedef struct
 {
-    SPINLOCK lock;       /**< Lock to protect the bitmask */
-    unsigned char *bits; /**< Pointer to the bits themselves */
-    unsigned int length; /**< The number of bits in the bitmask */
+    SPINLOCK lock;          /**< Lock to protect the bitmask */
+    unsigned char *bits;    /**< Pointer to the bits themselves */
+    int length;          /**< The number of bits in the bitmask */
+    int size;            /**< The number of bytes in the bitmask */
+
 } GWBITMASK;
 
 extern void bitmask_init(GWBITMASK *);
 extern void bitmask_free(GWBITMASK *);
 extern void bitmask_set(GWBITMASK *, int);
-extern void bitmask_clear(GWBITMASK *, int);
+extern int bitmask_clear(GWBITMASK *, int);
+extern int bitmask_clear_with_lock(GWBITMASK *, int);
 extern int  bitmask_isset(GWBITMASK *, int);
 extern int  bitmask_isallclear(GWBITMASK *);
 extern void bitmask_copy(GWBITMASK *, GWBITMASK *);
-extern char *bitmask_render_readable(GWBITMASK *bitmask);
+extern char *bitmask_render_readable(GWBITMASK *);
 
 #endif
