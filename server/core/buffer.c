@@ -239,41 +239,47 @@ dprintAllBuffers(void *pdcb)
 void
 gwbuf_free(GWBUF *buf)
 {
+    GWBUF *nextbuf;
     BUF_PROPERTY    *prop;
     buffer_object_t *bo;
 
-    CHK_GWBUF(buf);
-    if (atomic_add(&buf->sbuf->refcount, -1) == 1)
+    while (buf)
     {
-        free(buf->sbuf->data);
-        free(buf->sbuf);
-        bo = buf->gwbuf_bufobj;
-
-        while (bo != NULL)
+        CHK_GWBUF(buf);
+        nextbuf = buf->next;
+        if (atomic_add(&buf->sbuf->refcount, -1) == 1)
         {
-            bo = gwbuf_remove_buffer_object(buf, bo);
-        }
+            free(buf->sbuf->data);
+            free(buf->sbuf);
+            bo = buf->gwbuf_bufobj;
 
-    }
-    while (buf->properties)
-    {
-        prop = buf->properties;
-        buf->properties = prop->next;
-        free(prop->name);
-        free(prop->value);
-        free(prop);
-    }
-    /** Release the hint */
-    while (buf->hint)
-    {
-        HINT* h = buf->hint;
-        buf->hint = buf->hint->next;
-        hint_free(h);
-    }
+            while (bo != NULL)
+            {
+                bo = gwbuf_remove_buffer_object(buf, bo);
+            }
+
+        }
+        while (buf->properties)
+        {
+            prop = buf->properties;
+            buf->properties = prop->next;
+            free(prop->name);
+            free(prop->value);
+            free(prop);
+        }
+        /** Release the hint */
+        while (buf->hint)
+        {
+            HINT* h = buf->hint;
+            buf->hint = buf->hint->next;
+            hint_free(h);
+        }
 #if defined(BUFFER_TRACE)
-    gwbuf_remove_from_hashtable(buf);
+        gwbuf_remove_from_hashtable(buf);
 #endif
-    free(buf);
+        free(buf);
+        buf = nextbuf;
+    }
 }
 
 /**

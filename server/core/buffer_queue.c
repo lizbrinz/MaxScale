@@ -19,35 +19,132 @@
 #include <string.h>
 #include <stdio.h>
 #include <buffer_queue.h>
+#include <spinlock.h>
+#include <buffer.h>
 
 BUFFER_QUEUE *
 buffer_queue_alloc()
 {
-
+    BUFFER_QUEUE *queue;
+    if ((queue = malloc(sizeof(BUFFER_QUEUE))))
+    {
+        spinlock_init(&queue->lock_inbox);
+        spinlock_init(&queue->lock_outbox);
+        queue->inbox_head = queue->inbox_tail = queue->outbox_head = queue->outbox_tail = NULL;
+        return queue;
+    }
+    return NULL;
 }
 
-void *
+void
 buffer_queue_free(BUFFER_QUEUE *queue)
 {
+    if (queue)
+    {
+        gwbuf_free(inbox_head);
+        gwbuf_free(outbox_head);
+        free(queue);
+    }
+}
 
+void
+buffer_enqueue(BUFFER_QUEUE *queue, GWBUF *buffer)
+{
+    spinlock_acquire(&queue->lock_inbox);
+    if (queue->inbox_tail)
+    {
+        queue->inbox_tail->next = buffer;
+    }
+    else
+    {
+        queue->inbox_head = buffer;
+    }
+    queue->inbox_tail = buffer->tail;
+    spinlock_release(&queue->lock_inbox);
+}
+
+GWBUF *
+buffer_dequeue(BUFFER_QUEUE *queue)
+{
+    GWBUF *buffer;
+
+    spinlock_acquire(&queue->lock_outbox);
+    if (queue->outbox_head)
+    {
+        buffer = queue->outbox_head;
+        queue->outbox_head = buffer->next;
+    }
+    else
+    {
+        spinlock_acquire(&queue->lock_inbox);
+        queue->outbox_head = queue->inbox_head;
+        queue->outbox_tail = queue->inbox_tail;
+        queue->inbox_head = queue->inbox_tail = NULL;
+        buffer = queue->outbox_head;
+        if (buffer)
+        {
+            queue->outbox_head = buffer->next;
+        }
+        spinlock_release(&queue->lock_inbox);
+    }
+    spinlock_release(&queue->lock_outbox);
+    return buffer;
 }
 
 void *
-buffer_enqueue(BUFFER_QUEUE *queue, DCB *dcb)
+buffer_queue_head_data(BUFFER_QUEUE *queue)
 {
-    spinlock_acquire(&queue->lock_inbox);
-    queue->inbox_head = dcb;
-    dcb->
-}
-
-DCB *
-buffer_dequeue(BUFFER_QUEUE *queue)
-{
-
+    return GWBUF_DATA(queue->outbox_head);
 }
 
 int
 buffer_queue_size(BUFFER_QUEUE *queue)
 {
+    GWBUF *buffer;
+    int size;
+
+    spinlock_acquire(&queue->lock_outbox);
+    spinlock_acquire(&queue->lock_inbox);
+    buffer = queue->inbox_head;
+    while(buffer)
+    {
+        size++;
+        buffer = buffer->next;
+    }
+    buffer = queue->outbox_head;
+    while(buffer)
+    {
+        size++;
+        buffer = buffer->next;
+    }
+    spinlock_release(&queue->lock_inbox);
+    spinlock_release(&queue->lock_outbox);
+    return size;
+}
+
+bool
+is_buffer_queue_empty(BUFFER_QUEUE *buffer)
+{
+    bool empty;
+
+    spinlock_acquire(&queue->lock_outbox);
+    spinlock_acquire(&queue->lock_inbox);
+    empty = (queue->inbox_head == NULL && queue->outbox_head == NULL);
+    spinlock_release(&queue->lock_inbox);
+    spinlock_release(&queue->lock_outbox);
+    return empty;
+}
+
+int
+buffer_queue_data_length(BUFFER_QUEUE *buffer)
+{
+    int size;
+
+    spinlock_acquire(&queue->lock_outbox);
+    spinlock_acquire(&queue->lock_inbox);
+    size = gwbuf_length(queue->inbox_head) + gwbuf_length(queue->outbox_head);
+    spinlock_release(&queue->lock_inbox);
+    spinlock_release(&queue->lock_outbox);
+    return size;
 
 }
