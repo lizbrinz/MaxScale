@@ -1577,7 +1577,7 @@ ROUTER_SLAVE	*sptr;
 	sptr = router->slaves;
 	while (sptr)
 	{
-		if (sptr->state != 0)
+		if (sptr->state == BLRS_DUMPING || sptr->state == BLRS_REGISTERED)
 		{
 			sprintf(server_id, "%d", sptr->serverid);
 			sprintf(host, "%s", sptr->hostname ? sptr->hostname : "");
@@ -2082,14 +2082,6 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 
 		if (hdr.ok == SLAVE_POS_READ_UNSAFE) {
 
-			ROUTER_OBJECT *router_obj;
-
-			spinlock_acquire(&router->lock);
-
-			router_obj = router->service->router;
-
-			spinlock_release(&router->lock);
-
 			MXS_ERROR("%s: Slave %s:%i, server-id %d, binlog '%s', %s",
 				router->service->name,
 				slave->dcb->remote,
@@ -2102,7 +2094,7 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 			 * Close the slave session and socket
 			 * The slave will try to reconnect
 			 */
-			router_obj->closeSession(router->service->router_instance, slave);
+			dcb_close(slave->dcb);
 
 #ifndef BLFILE_IN_SLAVE
                         blr_close_binlog(router, file);
@@ -2699,7 +2691,8 @@ blr_slave_disconnect_server(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, int se
 	while (sptr)
 	{
 		/* don't examine slaves with state = 0 */
-		if (sptr->state != 0 && sptr->serverid == server_id)
+		if ((sptr->state == BLRS_REGISTERED || sptr->state == BLRS_DUMPING) &&
+			sptr->serverid == server_id)
 		{
 			/* server_id found */
 			server_found = 1;
@@ -2713,8 +2706,8 @@ blr_slave_disconnect_server(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, int se
 			/* send server_id with disconnect state to client */
 			n = blr_slave_send_disconnected_server(router, slave, server_id, 1);
 
-			/* force session close for matched slave */
-			router_obj->closeSession(router->service->router_instance, sptr);
+			sptr->state = BLRS_UNREGISTERED;
+			dcb_close(sptr->dcb);
 
 			break;
 		} else {
@@ -2775,7 +2768,7 @@ blr_slave_disconnect_all(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave)
 	while (sptr)
 	{
 		/* skip servers with state = 0 */
-		if (sptr->state != 0)
+		if (sptr->state == BLRS_REGISTERED || sptr->state == BLRS_DUMPING)
 		{
 			sprintf(server_id, "%d", sptr->serverid);
 			sprintf(state, "disconnected");
@@ -2812,8 +2805,8 @@ blr_slave_disconnect_all(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave)
 
 			slave->dcb->func.write(slave->dcb, pkt);
 
-			/* force session close*/
-			router_obj->closeSession(router->service->router_instance, sptr);
+			sptr->state = BLRS_UNREGISTERED;
+			dcb_close(sptr->dcb);
 
 		}
 		sptr = sptr->next;
