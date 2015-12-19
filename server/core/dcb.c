@@ -109,6 +109,9 @@ static inline void dcb_process_victim_queue(DCB *listofdcb);
 static void dcb_stop_polling_and_shutdown (DCB *dcb);
 static bool dcb_maybe_add_persistent(DCB *);
 static inline bool dcb_write_parameter_check(DCB *dcb, GWBUF *queue);
+static int dcb_bytes_readable(DCB *dcb);
+static int dcb_read_no_bytes_available(DCB *dcb, int nreadtotal);
+static GWBUF *dcb_basic_read(DCB *dcb, int bytesavailable, int maxbytes, int nreadtotal, int *nsingleread);
 #if defined(FAKE_CODE)
 static inline void dcb_write_fake_code(DCB *dcb);
 #endif
@@ -888,7 +891,7 @@ int dcb_read(DCB   *dcb,
 
         dcb->last_read = hkheartbeat;
 
-        buffer = dcb_basic_read(dcb, bytesavailable, maxbytes, &nsingleread);
+        buffer = dcb_basic_read(dcb, bytesavailable, maxbytes, nreadtotal, &nsingleread);
         if (buffer)
         {
             nreadtotal += nsingleread;
@@ -913,7 +916,7 @@ int dcb_read(DCB   *dcb,
     return nsingleread;
 }
 
-int
+static int
 dcb_bytes_readable(DCB *dcb)
 {
     int bytesavailable;
@@ -939,7 +942,7 @@ dcb_bytes_readable(DCB *dcb)
     }
 }
 
-int
+static int
 dcb_read_no_bytes_available(DCB *dcb, int nreadtotal)
 {
     /** Handle closed client socket */
@@ -964,8 +967,8 @@ dcb_read_no_bytes_available(DCB *dcb, int nreadtotal)
     return 0;
 }
 
-GWBUF *
-dcb_basic_read(DCB *dcb, int bytesavailable, int maxbytes, int *nsingleread)
+static GWBUF *
+dcb_basic_read(DCB *dcb, int bytesavailable, int maxbytes, int nreadtotal, int *nsingleread)
 {
     GWBUF *buffer;
     int bufsize = MIN(bytesavailable, MAX_BUFFER_SIZE);
