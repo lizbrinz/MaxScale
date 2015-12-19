@@ -59,6 +59,8 @@
  * 28/09/2015   Martin Brampton         Add counters, maxima for DCBs and zombies
  * 29/05/2015   Martin Brampton         Impose locking in dcb_call_foreach callbacks
  * 17/10/2015   Martin Brampton         Add hangup for each and bitmask display MaxAdmin
+ * 15/12/2015   Martin Brampton         Merge most of SSL write code into non-SSL,
+ *                                      enhance SSL code
  *
  * @endverbatim
  */
@@ -110,12 +112,12 @@ static inline bool dcb_write_parameter_check(DCB *dcb, GWBUF *queue);
 #if defined(FAKE_CODE)
 static inline void dcb_write_fake_code(DCB *dcb);
 #endif
-static inline void dcb_write_when_already_queued(DCB *dcb, GWBUF *queue);
 static void dcb_log_write_failure(DCB *dcb, GWBUF *queue, int eno);
 static inline void dcb_write_tidy_up(DCB *dcb, bool below_water);
-static void dcb_write_SSL_error_report (DCB *dcb, int ret, int ssl_errno);
-int dcb_bytes_readable_SSL (DCB *dcb, int nread);
-void dcb_log_ssl_read_error(DCB *dcb, int ssl_errno, int rc);
+static int dcb_bytes_readable_SSL (DCB *dcb, int nread);
+static void dcb_log_ssl_read_error(DCB *dcb, int ssl_errno, int rc);
+static int gw_write(DCB *dcb, bool *stop_writing);
+static int gw_write_SSL(DCB *dcb, bool *stop_writing);
 
 size_t dcb_get_session_id(
     DCB *dcb)
@@ -854,8 +856,6 @@ int dcb_read(DCB   *dcb,
              GWBUF **head,
              int maxbytes)
 {
-    GWBUF   *buffer = NULL;
-    int     bytesavailable;
     int     nsingleread = 0;
     int     nreadtotal = 0;
 
@@ -873,12 +873,55 @@ int dcb_read(DCB   *dcb,
 
     while (0 == maxbytes || nreadtotal < maxbytes)
     {
-        int bufsize;
+        GWBUF   *buffer = NULL;
+        int bytesavailable = dcb_bytes_readable(dcb);
 
-        if (-1 == ioctl(dcb->fd, FIONREAD, &bytesavailable))
+        if (bytesavailable < 0)
         {
-            char errbuf[STRERROR_BUFLEN];
-            /* <editor-fold defaultstate="collapsed" desc=" Error Logging "> */
+            return -1;
+        }
+        else if (bytesavailable == 0)
+        {
+            /** Handle closed client socket */
+            return dcb_read_no_bytes_available(dcb, nreadtotal);
+        }
+
+        dcb->last_read = hkheartbeat;
+
+        buffer = dcb_basic_read(dcb, bytesavailable, maxbytes, &nsingleread);
+        if (buffer)
+        {
+            nreadtotal += nsingleread;
+            /* <editor-fold defaultstate="collapsed" desc=" Debug Logging "> */
+        MXS_DEBUG("%lu [dcb_read] Read %d bytes from dcb %p in state %s "
+                  "fd %d.",
+                  pthread_self(),
+                  nsingleread,
+                  dcb,
+                  STRDCBSTATE(dcb->state),
+                  dcb->fd);
+        /* </editor-fold> */
+            /*< Append read data to the gwbuf */
+            *head = gwbuf_append(*head, buffer);
+        }
+        else
+        {
+            break;
+        }
+    } /*< while (0 == maxbytes || nreadtotal < maxbytes) */
+
+    return nsingleread;
+}
+
+int
+dcb_bytes_readable(DCB *dcb)
+{
+    int bytesavailable;
+
+    if (-1 == ioctl(dcb->fd, FIONREAD, &bytesavailable))
+    {
+        char errbuf[STRERROR_BUFLEN];
+        /* <editor-fold defaultstate="collapsed" desc=" Error Logging "> */
             MXS_ERROR("%lu [dcb_read] Error : ioctl FIONREAD for dcb %p in "
                       "state %s fd %d failed due error %d, %s.",
                       pthread_self(),
@@ -888,49 +931,57 @@ int dcb_read(DCB   *dcb,
                       errno,
                       strerror_r(errno, errbuf, sizeof(errbuf)));
             /* </editor-fold> */
+        return -1;
+    }
+    else
+    {
+        return bytesavailable;
+    }
+}
+
+int
+dcb_read_no_bytes_available(DCB *dcb, int nreadtotal)
+{
+    /** Handle closed client socket */
+    if (nreadtotal == 0 && dcb_isclient(dcb))
+    {
+        char c;
+        int l_errno = 0;
+        int r = -1;
+
+        /* try to read 1 byte, without consuming the socket buffer */
+        r = recv(dcb->fd, &c, sizeof(char), MSG_PEEK);
+        l_errno = errno;
+
+        if (r <= 0 &&
+            l_errno != EAGAIN &&
+            l_errno != EWOULDBLOCK &&
+            l_errno != 0)
+        {
             return -1;
         }
+    }
+    return 0;
+}
 
-        if (bytesavailable == 0)
-        {
-            /** Handle closed client socket */
-            if (nreadtotal == 0 && dcb_isclient(dcb))
-            {
-                char c;
-                int l_errno = 0;
-                int r = -1;
+GWBUF *
+dcb_basic_read(DCB *dcb, int bytesavailable, int maxbytes, int *nsingleread)
+{
+    GWBUF *buffer;
+    int bufsize = MIN(bytesavailable, MAX_BUFFER_SIZE);
+    if (maxbytes)
+    {
+        bufsize = MIN(bufsize, maxbytes-nreadtotal);
+    }
 
-                /* try to read 1 byte, without consuming the socket buffer */
-                r = recv(dcb->fd, &c, sizeof(char), MSG_PEEK);
-                l_errno = errno;
-
-                if (r <= 0 &&
-                    l_errno != EAGAIN &&
-                    l_errno != EWOULDBLOCK &&
-                    l_errno != 0)
-                {
-                    return -1;
-                }
-            }
-            return 0;
-        }
-
-        dcb->last_read = hkheartbeat;
-
-        bufsize = MIN(bytesavailable, MAX_BUFFER_SIZE);
-        if (maxbytes)
-        {
-            bufsize = MIN(bufsize, maxbytes-nreadtotal);
-        }
-
-        if ((buffer = gwbuf_alloc(bufsize)) == NULL)
-        {
-            /*<
-             * This is a fatal error which should cause shutdown.
-             * Todo shutdown if memory allocation fails.
-             */
-            char errbuf[STRERROR_BUFLEN];
-            /* <editor-fold defaultstate="collapsed" desc=" Error Logging "> */
+    if ((buffer = gwbuf_alloc(bufsize)) == NULL)
+    {
+        /*<
+         * This is a fatal error which should cause shutdown.
+         * Todo shutdown if memory allocation fails.
+         */
+        char errbuf[STRERROR_BUFLEN];
+        /* <editor-fold defaultstate="collapsed" desc=" Error Logging "> */
             MXS_ERROR("%lu [dcb_read] Error : Failed to allocate read buffer "
                       "for dcb %p fd %d, due %d, %s.",
                       pthread_self(),
@@ -939,17 +990,18 @@ int dcb_read(DCB   *dcb,
                       errno,
                       strerror_r(errno, errbuf, sizeof(errbuf)));
             /* </editor-fold> */
-            return -1;
-        }
-        GW_NOINTR_CALL(nsingleread = read(dcb->fd, GWBUF_DATA(buffer), bufsize);
-                       dcb->stats.n_reads++);
+        *nsingleread = -1;
+        return NULL;
+    }
+    *nsingleread = read(dcb->fd, GWBUF_DATA(buffer), bufsize);
+    dcb->stats.n_reads++;
 
-        if (nsingleread <= 0)
+    if (*nsingleread <= 0)
+    {
+        if (errno != 0 && errno != EAGAIN && errno != EWOULDBLOCK)
         {
-            if (errno != 0 && errno != EAGAIN && errno != EWOULDBLOCK)
-            {
-                char errbuf[STRERROR_BUFLEN];
-                /* <editor-fold defaultstate="collapsed" desc=" Error Logging "> */
+            char errbuf[STRERROR_BUFLEN];
+            /* <editor-fold defaultstate="collapsed" desc=" Error Logging "> */
                 MXS_ERROR("%lu [dcb_read] Error : Read failed, dcb %p in state "
                           "%s fd %d, due %d, %s.",
                           pthread_self(),
@@ -959,25 +1011,11 @@ int dcb_read(DCB   *dcb,
                           errno,
                           strerror_r(errno, errbuf, sizeof(errbuf)));
                 /* </editor-fold> */
-            }
-            gwbuf_free(buffer);
-            return nsingleread;
         }
-        nreadtotal += nsingleread;
-        /* <editor-fold defaultstate="collapsed" desc=" Debug Logging "> */
-        MXS_DEBUG("%lu [dcb_read] Read %d bytes from dcb %p in state %s "
-                  "fd %d.",
-                  pthread_self(),
-                  nsingleread,
-                  dcb,
-                  STRDCBSTATE(dcb->state),
-                  dcb->fd);
-        /* </editor-fold> */
-        /*< Append read data to the gwbuf */
-        *head = gwbuf_append(*head, buffer);
-    } /*< while (0 == maxbytes || nreadtotal < maxbytes) */
-
-    return nsingleread;
+        gwbuf_free(buffer);
+        return NULL;
+    }
+    return buffer;
 }
 
 /**
@@ -991,10 +1029,12 @@ int dcb_read(DCB   *dcb,
  * @return      -1 on error, otherwise the number of read bytes on the last
  * iteration of while loop. 0 is returned if no data available.
  */
-int dcb_read_SSL(DCB *dcb, GWBUF **head)
+int
+dcb_read_SSL(DCB *dcb, GWBUF **head)
 {
     GWBUF *buffer = NULL;
-    int b, n, nread = 0;
+    int nsingleread, nreadtotal = 0;
+
     CHK_DCB(dcb);
 
     if (dcb->fd <= 0)
@@ -1004,10 +1044,73 @@ int dcb_read_SSL(DCB *dcb, GWBUF **head)
         return 0;
     }
 
-    while ((b = dcb_bytes_readable_SSL(dcb, nread)) > 0)
+    if (dcb->ssl_write_want_read)
+    {
+        dcb_drain_writeq(dcb);
+    }
+
+    spinlock_acquire(&dcb->writeqlock);
+    if (dcb->ssl_write_want_read || dcb->ssl_write_want_write)
+    {
+        spinlock_release(&dcb->writeqlock);
+        return 0;
+    }
+    spinlock_release(&dcb->writeqlock);
+
+    do
     {
         dcb->last_read = hkheartbeat;
-        int bufsize = MIN(b, MAX_BUFFER_SIZE);
+        buffer = dcb_basic_read_SSL(dcb, &nsingleread);
+        if (NULL == buffer)
+        {
+            return nsingleread;
+        }
+
+#ifdef SS_DEBUG
+        MXS_DEBUG("%lu SSL: Truncated buffer from %d to %ld bytes. "
+                  "Read %d bytes, %d bytes waiting.\n", pthread_self(),
+                  bufsize, GWBUF_LENGTH(buffer), nsingleread, bytesavailable);
+
+        if (GWBUF_LENGTH(buffer) != nsingleread)
+        {
+            mxs_log_flush_sync();
+        }
+
+        ss_info_dassert((buffer->start <= buffer->end), "Buffer start has passed end.");
+        ss_info_dassert(GWBUF_LENGTH(buffer) == nsingleread, "Buffer size not equal to read bytes.");
+#endif
+        nreadtotal += nsingleread;
+
+        MXS_DEBUG("%lu [dcb_read_SSL] Read %d bytes from dcb %p in state %s "
+                  "fd %d.",
+                  pthread_self(),
+                  nsingleread,
+                  dcb,
+                  STRDCBSTATE(dcb->state),
+                  dcb->fd);
+
+        /*< Append read data to the gwbuf */
+        *head = gwbuf_append(*head, buffer);
+    } while (nsingleread > 0);
+
+    ss_dassert(gwbuf_length(*head) == nreadtotal);
+    MXS_DEBUG("%lu Read a total of %d bytes from dcb %p in state %s fd %d.",
+              pthread_self(),
+              nreadtotal,
+              dcb,
+              STRDCBSTATE(dcb->state),
+              dcb->fd);
+
+    return nreadtotal;
+}
+
+void
+dcb_read_SSL_old_stuff()
+{
+    GWBUF *buffer;
+    int nread = 0;
+    int n;
+    int bufsize = MIN(b, MAX_BUFFER_SIZE);
 
         if ((buffer = gwbuf_alloc(bufsize)) == NULL)
         {
@@ -1043,48 +1146,82 @@ int dcb_read_SSL(DCB *dcb, GWBUF **head)
             }
             return nread;
         }
+}
 
-        buffer = gwbuf_rtrim(buffer, bufsize - n);
+GWBUF *
+dcb_basic_read_SSL(DCB *dcb, int *nsingleread)
+{
+    unsigned char *temp_buffer[MAX_BUFFER_SIZE];
+    GWBUF *buffer = NULL;
 
-        if (buffer)
+    *nsingleread = SSL_read(dcb->ssl, (void *)temp_buffer, MAX_BUFFER_SIZE);
+    dcb->stats.n_reads++;
+
+    switch (SSL_get_error(dcb->ssl, nsingleread))
+    {
+    case SSL_ERROR_NONE:
+        /* Successful read */
+        if ((nsingleread && buffer = gwbuf_alloc_and_load(nsingleread, (void *)temp_buffer)) == NULL)
         {
-#ifdef SS_DEBUG
-            MXS_DEBUG("%lu SSL: Truncated buffer from %d to %ld bytes. "
-                      "Read %d bytes, %d bytes waiting.\n", pthread_self(),
-                      bufsize, GWBUF_LENGTH(buffer), n, b);
-
-            if (GWBUF_LENGTH(buffer) != n)
-            {
-                mxs_log_flush_sync();
-            }
-
-            ss_info_dassert((buffer->start <= buffer->end), "Buffer start has passed end.");
-            ss_info_dassert(GWBUF_LENGTH(buffer) == n, "Buffer size not equal to read bytes.");
-#endif
-            nread += n;
-
-            MXS_DEBUG("%lu [dcb_read_SSL] Read %d bytes from dcb %p in state %s "
-                      "fd %d.",
+            /*<
+             * This is a fatal error which should cause shutdown.
+             * Todo shutdown if memory allocation fails.
+             */
+            char errbuf[STRERROR_BUFLEN];
+            /* <editor-fold defaultstate="collapsed" desc=" Error Logging "> */
+            MXS_ERROR("%lu [dcb_read] Error : Failed to allocate read buffer "
+                      "for dcb %p fd %d, due %d, %s.",
                       pthread_self(),
-                      n,
                       dcb,
-                      STRDCBSTATE(dcb->state),
-                      dcb->fd);
-
-            /*< Append read data to the gwbuf */
-            *head = gwbuf_append(*head, buffer);
+                      dcb->fd,
+                      errno,
+                      strerror_r(errno, errbuf, sizeof(errbuf)));
+            /* </editor-fold> */
+            *nsingleread = -1;
+            return NULL;
         }
+        spinlock_acquire(&dcb->writeqlock);
+        /* If we were in a retry situation, need to clear flag and attempt write */
+        if (dcb->ssl_read_want_write || dcb->ssl_read_want_read)
+        {
+            dcb->ssl_read_want_write = false;
+            dcb->ssl_read_want_read = false;
+            spinlock_release(&dcb->writeqlock);
+            dcb_drain_writeq(dcb);
+        }
+        else
+        {
+            spinlock_release(&dcb->writeqlock);
+        }
+        break;
+
+    case SSL_ERROR_ZERO_RETURN:
+        /* react to the SSL connection being closed */
+        poll_fake_hangup_event(dcb);
+        break;
+
+    case SSL_ERROR_WANT_READ:
+        /* Prevent SSL I/O on connection until retried, return to poll loop */
+        spinlock_acquire(&dcb->writeqlock);
+        dcb->ssl_read_want_write = false;
+        dcb->ssl_read_want_read = true;
+        spinlock_release(&dcb->writeqlock);
+        break;
+
+    case SSL_ERROR_WANT_WRITE:
+        /* Prevent SSL I/O on connection until retried, return to poll loop */
+        spinlock_acquire(&dcb->writeqlock);
+        dcb->ssl_read_want_write = true;
+        dcb->ssl_read_want_read = false;
+        spinlock_release(&dcb->writeqlock);
+        break;
+
+    default:
+        /* Report error(s) and shutdown the connection */
+        /* TO DO */
+        break;
     }
-
-    ss_dassert(gwbuf_length(*head) == nread);
-    MXS_DEBUG("%lu Read a total of %d bytes from dcb %p in state %s fd %d.",
-              pthread_self(),
-              nread,
-              dcb,
-              STRDCBSTATE(dcb->state),
-              dcb->fd);
-
-    return nread;
+    return buffer;
 }
 
 /**
@@ -1096,7 +1233,7 @@ int dcb_read_SSL(DCB *dcb, GWBUF **head)
 int
 dcb_write(DCB *dcb, GWBUF *queue)
 {
-    int written;
+    bool empty_queue;
     int below_water;
 
     below_water = (dcb->high_water && dcb->writeqlen < dcb->high_water) ? 1 : 0;
@@ -1107,64 +1244,24 @@ dcb_write(DCB *dcb, GWBUF *queue)
     }
 
     spinlock_acquire(&dcb->writeqlock);
-    if (dcb->writeq)
-    {
-        dcb_write_when_already_queued(dcb, queue);
-    }
-    else
-    {
-        /*
-         * Loop over the buffer chain that has been passed to us
-         * from the reading side.
-         * Send as much of the data in that chain as possible and
-         * add any balance to the write queue.
-         */
-        while (queue != NULL)
-        {
-#if defined(FAKE_CODE)
-            dcb_write_fake_code(dcb);
-#endif /* FAKE_CODE */
-            GW_NOINTR_CALL(
-                written = gw_write(dcb, GWBUF_DATA(queue), GWBUF_LENGTH(queue));
-                dcb->stats.n_writes++;
-                );
-
-            if (written < 0)
-            {
-                int saved_errno = errno;
-                dcb_log_write_failure(dcb, queue, saved_errno);
-
-                /*<
-                 * What wasn't successfully written is stored to write queue
-                 * for suspended write.
-                 */
-                atomic_add(&dcb->writeqlen, gwbuf_length(queue));
-                dcb->writeq = queue;
-                dcb->stats.n_buffered++;
-                spinlock_release(&dcb->writeqlock);
-
-                /** Return 1 if the write failure was due to EWOULDBLOCK or EAGAIN.
-                    The rest of the buffer will be written once an EPOLL_OUT event
-                    arrives.*/
-                return saved_errno == 0 ||
-                    saved_errno == EAGAIN ||
-                    saved_errno == EWOULDBLOCK;
-            }
-            /*
-             * Pull the number of bytes we have written from
-             * queue with have.
-             */
-            queue = gwbuf_consume(queue, written);
-            MXS_DEBUG("%lu [dcb_write] Wrote %d Bytes to dcb %p in "
-                      "state %s fd %d",
-                      pthread_self(),
-                      written,
-                      dcb,
-                      STRDCBSTATE(dcb->state),
-                      dcb->fd);
-        } /*< while (queue != NULL) */
-    } /* if (dcb->writeq) */
-
+    empty_queue = (dcb->writeq == NULL);
+    /*
+     * Add our data to the write queue.  If the queue already had data,
+     * then there will be an EPOLLOUT event to drain what is already queued.
+     * If it did not already have data, we call the drain write queue
+     * function immediately to attempt to write the data.
+     */
+    atomic_add(&dcb->writeqlen, gwbuf_length(queue));
+    dcb->writeq = gwbuf_append(dcb->writeq, queue);
+    dcb->stats.n_buffered++;
+    MXS_DEBUG("%lu [dcb_write] Append to writequeue. %d writes "
+              "buffered for dcb %p in state %s fd %d",
+              pthread_self(),
+              dcb->stats.n_buffered,
+              dcb,
+              STRDCBSTATE(dcb->state),
+              dcb->fd);
+    if (empty_queue) dcb_drain_writeq(dcb);
     dcb_write_tidy_up(dcb, below_water);
 
     return 1;
@@ -1246,36 +1343,6 @@ dcb_write_parameter_check(DCB *dcb, GWBUF *queue)
         }
     }
     return true;
-}
-
-/**
- * Handle writing when there is already queued data
- *
- * @param dcb   The DCB of the client
- * @param queue Queue of buffers to write
- */
-static inline void
-dcb_write_when_already_queued(DCB *dcb, GWBUF *queue)
-{
-    /*
-     * We have some queued data, so add our data to
-     * the write queue and return.
-     * The assumption is that there will be an EPOLLOUT
-     * event to drain what is already queued. We are protected
-     * by the spinlock, which will also be acquired by the
-     * the routine that drains the queue data, so we should
-     * not have a race condition on the event.
-     */
-    atomic_add(&dcb->writeqlen, gwbuf_length(queue));
-    dcb->writeq = gwbuf_append(dcb->writeq, queue);
-    dcb->stats.n_buffered++;
-    MXS_DEBUG("%lu [dcb_write] Append to writequeue. %d writes "
-              "buffered for dcb %p in state %s fd %d",
-              pthread_self(),
-              dcb->stats.n_buffered,
-              dcb,
-              STRDCBSTATE(dcb->state),
-              dcb->fd);
 }
 
 /**
@@ -1374,181 +1441,6 @@ dcb_write_tidy_up(DCB *dcb, bool below_water)
 }
 
 /**
- * General purpose routine to write to an SSL enabled DCB
- *
- * @param dcb   The DCB of the client
- * @param ssl   The SSL structure for this DCB
- * @param queue Queue of buffers to write
- * @return 0 on failure, 1 on success
- */
-int
-dcb_write_SSL(DCB *dcb, GWBUF *queue)
-{
-    int  w;
-    int  saved_errno = 0;
-    bool below_water;
-
-    below_water = (dcb->high_water && dcb->writeqlen < dcb->high_water) ? 1 : 0;
-    // The following guarantees that queue is not NULL
-    if (!dcb_write_parameter_check(dcb, queue))
-    {
-        return 0;
-    }
-
-    spinlock_acquire(&dcb->writeqlock);
-
-    if (dcb->writeq)
-    {
-        dcb_write_when_already_queued(dcb, queue);
-    }
-    else
-    {
-        /*
-         * Loop over the buffer chain that has been passed to us
-         * from the reading side.
-         * Send as much of the data in that chain as possible and
-         * add any balance to the write queue.
-         */
-        while (queue != NULL)
-        {
-#if defined(FAKE_CODE)
-            dcb_write_fake_code(dcb);
-#endif /* FAKE_CODE */
-            do
-            {
-                w = gw_write_SSL(dcb->ssl, GWBUF_DATA(queue), GWBUF_LENGTH(queue));
-                dcb->stats.n_writes++;
-
-                if (w <= 0)
-                {
-                    int ssl_errno = SSL_get_error(dcb->ssl, w);
-                    dcb_write_SSL_error_report(dcb, w, ssl_errno);
-                    if (ssl_errno != SSL_ERROR_WANT_WRITE)
-                    {
-                        atomic_add(&dcb->writeqlen, gwbuf_length(queue));
-                        dcb->stats.n_buffered++;
-                        dcb_write_tidy_up(dcb, below_water);
-                        return 1;
-                    }
-#ifdef SS_DEBUG
-                    else
-                    {
-                        MXS_DEBUG("SSL error: SSL_ERROR_WANT_WRITE, retrying SSL_write...");
-                    }
-#endif
-                }
-            }
-            while (w <= 0);
-
-            /** Remove written bytes from the queue */
-            queue = gwbuf_consume(queue, w);
-            MXS_DEBUG("%lu [dcb_write] Wrote %d Bytes to dcb %p in "
-                      "state %s fd %d",
-                      pthread_self(),
-                      w,
-                      dcb,
-                      STRDCBSTATE(dcb->state),
-                      dcb->fd);
-        } /*< while (queue != NULL) */
-        /*<
-         * What wasn't successfully written is stored to write queue
-         * for suspended write.
-         */
-        dcb->writeq = queue;
-
-    } /* if (dcb->writeq) */
-
-    dcb_write_tidy_up(dcb, below_water);
-
-    return 1;
-}
-
-/**
- * General purpose routine to write error reports for SSL writes
- *
- * @param dcb   The DCB of the client
- * @param ret   The SSL operation return code
- * @param ssl_errno   The SSL error code
- */
-static void
-dcb_write_SSL_error_report(DCB *dcb, int ret, int ssl_errno)
-{
-    char errbuf[STRERROR_BUFLEN];
-
-    if (MXS_LOG_PRIORITY_IS_ENABLED(LOG_DEBUG))
-    {
-        switch(ssl_errno)
-        {
-        case SSL_ERROR_WANT_READ:
-            MXS_DEBUG("%lu [dcb_write] Write to dcb "
-                      "%p in state %s fd %d failed "
-                      "due error SSL_ERROR_WANT_READ",
-                      pthread_self(),
-                      dcb,
-                      STRDCBSTATE(dcb->state),
-                      dcb->fd);
-            break;
-        case SSL_ERROR_WANT_WRITE:
-            MXS_DEBUG("%lu [dcb_write] Write to dcb "
-                      "%p in state %s fd %d failed "
-                      "due error SSL_ERROR_WANT_WRITE",
-                      pthread_self(),
-                      dcb,
-                      STRDCBSTATE(dcb->state),
-                      dcb->fd);
-            break;
-        default:
-            MXS_DEBUG("%lu [dcb_write] Write to dcb "
-                      "%p in state %s fd %d failed "
-                      "due error %d",
-                      pthread_self(),
-                      dcb,
-                      STRDCBSTATE(dcb->state),
-                      dcb->fd,ssl_errno);
-            break;
-        }
-    }
-
-    if (MXS_LOG_PRIORITY_IS_ENABLED(LOG_ERR) && ssl_errno != SSL_ERROR_WANT_WRITE)
-    {
-        if (ret == -1)
-        {
-            MXS_ERROR("Write to dcb %p in "
-                      "state %s fd %d failed due to "
-                      "SSL error %d",
-                      dcb,
-                      STRDCBSTATE(dcb->state),
-                      dcb->fd,
-                      ssl_errno);
-            if (ssl_errno == SSL_ERROR_SSL || ssl_errno == SSL_ERROR_SYSCALL)
-            {
-                if (ssl_errno == SSL_ERROR_SYSCALL)
-                {
-                    MXS_ERROR("%d:%s", errno, strerror_r(errno, errbuf, sizeof(errbuf)));
-                }
-                do
-                {
-                    char errbuf[SSL_ERRBUF_LEN];
-                    ERR_error_string_n(ssl_errno,errbuf, sizeof(errbuf));
-                    MXS_ERROR("%d:%s", ssl_errno,errbuf);
-                }
-                while ((ssl_errno = ERR_get_error()) != 0);
-            }
-        }
-        else if (ret == 0)
-        {
-            do
-            {
-                char errbuf[SSL_ERRBUF_LEN];
-                ERR_error_string_n(ssl_errno,errbuf,sizeof(errbuf));
-                MXS_ERROR("%d:%s", ssl_errno,errbuf);
-            }
-            while ((ssl_errno = ERR_get_error()) != 0);
-        }
-    }
-}
-
-/**
  * Drain the write queue of a DCB. This is called as part of the EPOLLOUT handling
  * of a socket and will try to send any buffered data from the write queue
  * up until the point the write would block.
@@ -1559,70 +1451,57 @@ dcb_write_SSL_error_report(DCB *dcb, int ret, int ssl_errno)
 int
 dcb_drain_writeq(DCB *dcb)
 {
-    int n = 0;
-    int w;
-    int saved_errno = 0;
-    int above_water;
-
-    above_water = (dcb->low_water && dcb->writeqlen > dcb->low_water) ? 1 : 0;
+    int total_written = 0;
+    int written;
+    bool stop_writing = false;
+    bool above_water = (dcb->low_water && dcb->writeqlen > dcb->low_water);
 
     spinlock_acquire(&dcb->writeqlock);
-
-    if (dcb->writeq)
+    if (dcb->ssl_read_want_write || dcb->ssl_read_want_read)
     {
-        int len;
-        /*
-         * Loop over the buffer chain in the pending writeq
-         * Send as much of the data in that chain as possible and
-         * leave any balance on the write queue.
-         */
-        while (dcb->writeq != NULL)
+        if (dcb->ssl_read_want_write)
         {
-            len = GWBUF_LENGTH(dcb->writeq);
-            GW_NOINTR_CALL(w = gw_write(dcb, GWBUF_DATA(dcb->writeq), len););
-            saved_errno = errno;
-            errno = 0;
-
-            if (w < 0)
-            {
-#if defined(SS_DEBUG)
-                if (saved_errno == EAGAIN ||
-                    saved_errno == EWOULDBLOCK)
-#else
-                    if (saved_errno == EAGAIN ||
-                        saved_errno == EWOULDBLOCK ||
-                        saved_errno == EPIPE)
-#endif
-                    {
-                        break;
-                    }
-                char errbuf[STRERROR_BUFLEN];
-                MXS_ERROR("Write to dcb %p "
-                          "in state %s fd %d failed due errno %d, %s",
-                          dcb,
-                          STRDCBSTATE(dcb->state),
-                          dcb->fd,
-                          saved_errno,
-                          strerror_r(saved_errno, errbuf, sizeof(errbuf)));
-                break;
-            }
-            /*
-             * Pull the number of bytes we have written from
-             * queue with have.
-             */
-            dcb->writeq = gwbuf_consume(dcb->writeq, w);
-            MXS_DEBUG("%lu [dcb_drain_writeq] Wrote %d Bytes to dcb %p "
-                      "in state %s fd %d",
-                      pthread_self(),
-                      w,
-                      dcb,
-                      STRDCBSTATE(dcb->state),
-                      dcb->fd);
-            n += w;
+            poll_fake_event(dcb, EPOLLIN);
         }
+        spinlock_release(&dcb->writeqlock);
+        return 0;
+    }
+    /*
+     * Loop over the buffer chain in the pending writeq
+     * Send as much of the data in that chain as possible and
+     * leave any balance on the write queue.
+     */
+    while (dcb->writeq != NULL)
+    {
+        if (dcb->ssl)
+        {
+            written = gw_write_SSL(dcb, &stop_writing);
+        }
+        else
+        {
+            written = gw_write(dcb, &stop_writing);
+        }
+        if (stop_writing) break;
+        /*
+         * Pull the number of bytes we have written from
+         * queue with have.
+         */
+        dcb->writeq = gwbuf_consume(dcb->writeq, written);
+        MXS_DEBUG("%lu [dcb_drain_writeq] Wrote %d Bytes to dcb %p "
+                  "in state %s fd %d",
+                  pthread_self(),
+                  written,
+                  dcb,
+                  STRDCBSTATE(dcb->state),
+                  dcb->fd);
+        total_written += written;
     }
     spinlock_release(&dcb->writeqlock);
-    atomic_add(&dcb->writeqlen, -n);
+
+    if (total_written)
+    {
+        atomic_add(&dcb->writeqlen, -total_written);
+    }
 
     /* The write queue has drained, potentially need to call a callback function */
     if (dcb->writeq == NULL)
@@ -1630,108 +1509,14 @@ dcb_drain_writeq(DCB *dcb)
         dcb_call_callback(dcb, DCB_REASON_DRAINED);
     }
 
+    /* Check if the draining has taken us from above water to below water */
     if (above_water && dcb->writeqlen < dcb->low_water)
     {
         atomic_add(&dcb->stats.n_low_water, 1);
         dcb_call_callback(dcb, DCB_REASON_LOW_WATER);
     }
 
-    return n;
-}
-
-/**
- * Drain the write queue of a DCB. This is called as part of the EPOLLOUT handling
- * of a socket and will try to send any buffered data from the write queue
- * up until the point the write would block. This function uses SSL encryption
- * and the SSL handshake should have been completed prior to calling this function.
- *
- * @param dcb   DCB to drain the write queue of
- * @return The number of bytes written
- */
-int
-dcb_drain_writeq_SSL(DCB *dcb)
-{
-    int n = 0;
-    int w;
-    int saved_errno = 0;
-    int above_water;
-
-    above_water = (dcb->low_water && dcb->writeqlen > dcb->low_water) ? 1 : 0;
-
-    spinlock_acquire(&dcb->writeqlock);
-
-    if (dcb->writeq)
-    {
-        int len;
-        /*
-         * Loop over the buffer chain in the pending writeq
-         * Send as much of the data in that chain as possible and
-         * leave any balance on the write queue.
-         */
-        while (dcb->writeq != NULL)
-        {
-            len = GWBUF_LENGTH(dcb->writeq);
-            w = gw_write_SSL(dcb->ssl, GWBUF_DATA(dcb->writeq), len);
-
-            if (w < 0)
-            {
-                int ssl_errno = SSL_get_error(dcb->ssl,w);
-
-                if (ssl_errno == SSL_ERROR_WANT_WRITE || ssl_errno == SSL_ERROR_WANT_READ)
-                {
-                    break;
-                }
-                MXS_ERROR("Write to dcb failed due to SSL error %d:", ssl_errno);
-                switch(ssl_errno)
-                {
-                case SSL_ERROR_SSL:
-                case SSL_ERROR_SYSCALL:
-                    while ((ssl_errno = ERR_get_error()) != 0)
-                    {
-                        char errbuf[SSL_ERRBUF_LEN];
-                        ERR_error_string_n(ssl_errno,errbuf,sizeof(errbuf));
-                        MXS_ERROR("%s", errbuf);
-                    }
-                    if (errno != 0)
-                    {
-                        char errbuf[STRERROR_BUFLEN];
-                        MXS_ERROR("%d:%s", errno, strerror_r(errno, errbuf, sizeof(errbuf)));
-                    }
-                    break;
-                case SSL_ERROR_ZERO_RETURN:
-                    MXS_ERROR("Socket is closed.");
-                    break;
-
-                default:
-                    MXS_ERROR("Unexpected error.");
-                    break;
-                }
-                break;
-            }
-            /*
-             * Pull the number of bytes we have written from
-             * queue with have.
-             */
-            dcb->writeq = gwbuf_consume(dcb->writeq, w);
-            n += w;
-        }
-    }
-    spinlock_release(&dcb->writeqlock);
-    atomic_add(&dcb->writeqlen, -n);
-
-    /* The write queue has drained, potentially need to call a callback function */
-    if (dcb->writeq == NULL)
-    {
-        dcb_call_callback(dcb, DCB_REASON_DRAINED);
-    }
-
-    if (above_water && dcb->writeqlen < dcb->low_water)
-    {
-        atomic_add(&dcb->stats.n_low_water, 1);
-        dcb_call_callback(dcb, DCB_REASON_LOW_WATER);
-    }
-
-    return n;
+    return total_written;
 }
 
 /**
@@ -2361,20 +2146,54 @@ void dcb_hashtable_stats(
  * @param nbytes        Number of bytes to write
  * @return Number of written bytes
  */
-int
-gw_write_SSL(SSL* ssl, const void *buf, size_t nbytes)
+static int
+gw_write_SSL(DCB *dcb, bool *stop_writing)
 {
-    int w = 0;
-    int fd = SSL_get_fd(ssl);
+    int written;
 
-    if (fd > 0)
+    written = SSL_write(dcb->ssl, GWBUF_DATA(dcb->writeq), GWBUF_LENGTH(dcb->writeq));
+
+    *stop_writing = false;
+    switch (SSL_get_error(dcb->ssl, written))
     {
-        w = SSL_write(ssl, buf, nbytes);
+    case SSL_ERROR_NONE:
+        /* Successful write */
+        if (dcb->ssl_write_want_read || dcb->ssl_write_want_write)
+        {
+            dcb->ssl_write_want_read = false;
+            dcb->ssl_write_want_write = false;
+            poll_fake_event(dcb, EPOLLIN);
+        break;
+
+    case SSL_ERROR_ZERO_RETURN:
+        /* react to the SSL connection being closed */
+        *stop_writing = true;
+        poll_fake_hangup_event(dcb);
+        break;
+
+    case SSL_ERROR_WANT_READ:
+        /* Prevent SSL I/O on connection until retried, return to poll loop */
+        *stop_writing = true;
+        dcb->ssl_write_want_read = true;
+        dcb->ssl_write_want_write = false;
+        break;
+
+    case SSL_ERROR_WANT_WRITE:
+        /* Prevent SSL I/O on connection until retried, return to poll loop */
+        *stop_writing = true;
+        dcb->ssl_write_want_read = false;
+        dcb->ssl_write_want_write = true;
+        break;
+
+    default:
+        /* Report error(s) and shutdown the connection */
+        *stop_writing = true;
+        /* TO DO */
+        break;
     }
-    return w;
+
+    return written > 0 ? written : 0;
 }
-
-
 
 /**
  * Write data to a DCB
@@ -2384,31 +2203,37 @@ gw_write_SSL(SSL* ssl, const void *buf, size_t nbytes)
  * @param nbytes        Number of bytes to write
  * @return Number of written bytes
  */
-int
-gw_write(DCB *dcb, const void *buf, size_t nbytes)
+static int
+gw_write(DCB *dcb, bool *stop_writing)
 {
-    int w = 0;
+    int written = 0;
     int fd = dcb->fd;
+    size_t nbytes = GWBUF_LENGTH(dcb->writeq);
+    void *buf = GWBUF_DATA(dcb->writeq);
+    int saved_errno;
+
+    errno = 0;
+
 #if defined(FAKE_CODE)
     if (fd > 0 && dcb_fake_write_errno[fd] != 0)
     {
         ss_dassert(dcb_fake_write_ev[fd] != 0);
-        w = write(fd, buf, nbytes/2); /*< leave peer to read missing bytes */
+        written = write(fd, buf, nbytes/2); /*< leave peer to read missing bytes */
 
-        if (w > 0)
+        if (written > 0)
         {
-            w = -1;
+            written = -1;
             errno = dcb_fake_write_errno[fd];
         }
     }
     else if (fd > 0)
     {
-        w = write(fd, buf, nbytes);
+        written = write(fd, buf, nbytes);
     }
 #else
     if (fd > 0)
     {
-        w = write(fd, buf, nbytes);
+        written = write(fd, buf, nbytes);
     }
 #endif /* FAKE_CODE */
 
@@ -2419,7 +2244,7 @@ gw_write(DCB *dcb, const void *buf, size_t nbytes)
         char*    str;
 
         /** Print only MySQL packets */
-        if (w > 5)
+        if (written > 5)
         {
             str = (char *)&packet[5];
             len      = packet[0];
@@ -2459,7 +2284,37 @@ gw_write(DCB *dcb, const void *buf, size_t nbytes)
         }
     }
 #endif
-    return w;
+    saved_errno = errno;
+    errno = 0;
+
+    if (written < 0)
+    {
+        *stop_writing = true;
+#if defined(SS_DEBUG)
+        if (saved_errno != EAGAIN &&
+            saved_errno != EWOULDBLOCK)
+#else
+        if (saved_errno != EAGAIN &&
+            saved_errno != EWOULDBLOCK &&
+            saved_errno != EPIPE)
+#endif
+        {
+            char errbuf[STRERROR_BUFLEN];
+            MXS_ERROR("Write to dcb %p "
+              "in state %s fd %d failed due errno %d, %s",
+              dcb,
+              STRDCBSTATE(dcb->state),
+              dcb->fd,
+              saved_errno,
+              strerror_r(saved_errno, errbuf, sizeof(errbuf)));
+        }
+    }
+    else
+    {
+        *stop_writing = false;
+    }
+
+    return written > 0 ? written : 0;
 }
 
 /**
@@ -3173,7 +3028,8 @@ dcb_role_name(DCB *dcb)
  * @param nread Number of bytes we have already read
  * @return Number of bytes readable or -1 on error
  */
-int dcb_bytes_readable_SSL(DCB *dcb, int nread)
+static int
+dcb_bytes_readable_SSL(DCB *dcb, int nread)
 {
     int rval = 0;
     int nbytes;
@@ -3235,7 +3091,8 @@ int dcb_bytes_readable_SSL(DCB *dcb, int nread)
  * @param ssl_errno SSL error number
  * @param rc Return value of SSL_read
  */
-void dcb_log_ssl_read_error(DCB *dcb, int ssl_errno, int rc)
+static void
+dcb_log_ssl_read_error(DCB *dcb, int ssl_errno, int rc)
 {
     if (ssl_errno != SSL_ERROR_WANT_READ &&
         ssl_errno != SSL_ERROR_WANT_WRITE &&

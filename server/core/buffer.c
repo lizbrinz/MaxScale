@@ -135,6 +135,29 @@ retblock:
     return rval;
 }
 
+/**
+ * Allocate a new gateway buffer structure of size bytes and load with data.
+ *
+ * For now we allocate memory directly from malloc for buffer the management
+ * structure and the actual data buffer itself. We may swap at a future date
+ * to a more effecient mechanism.
+ *
+ * @param       size    The size in bytes of the data area required
+ * @param       data    Pointer to the data (size bytes) to be loaded
+ * @return      Pointer to the buffer structure or NULL if memory could not
+ *              be allocated.
+ */
+GWBUF *
+gwbuf_alloc_and_load(unsigned int size, void *data)
+{
+    GWBUF      *rval;
+    if ((rval = gwbuf_alloc(size)) != NULL)
+    {
+        memcpy(GWBUF_DATA(rval), data, size);
+    }
+    return rval;
+}
+
 #if defined(BUFFER_TRACE)
 /**
  * Store a trace of buffer creation

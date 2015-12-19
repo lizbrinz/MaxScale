@@ -22,7 +22,7 @@
 #include <resultset.h>
 
 /**
- * @file poll.h	The poll related functionality 
+ * @file poll.h	The poll related functionality
  *
  * @verbatim
  * Revision History
@@ -66,6 +66,8 @@ extern	void		dShowEventQ(DCB *dcb);
 extern	void		dShowEventStats(DCB *dcb);
 extern	int         poll_get_stat(POLL_STAT stat);
 extern	RESULTSET	*eventTimesGetList();
+extern  void        poll_fake_event(DCB *dcb, uint32_t ev);
 extern  void        poll_fake_hangup_event(DCB *dcb);
 extern  void        poll_fake_write_event(DCB *dcb);
+extern  void        poll_fake_read_event(DCB *dcb);
 #endif
