@@ -56,6 +56,7 @@
 static HASHTABLE *buffer_hashtable = NULL;
 #endif
 
+static void gwbuf_free_one(GWBUF *buf);
 static buffer_object_t* gwbuf_remove_buffer_object(GWBUF*           buf,
                                                    buffer_object_t* bufobj);
 
@@ -255,9 +256,9 @@ dprintAllBuffers(void *pdcb)
 #endif
 
 /**
- * Free a gateway buffer
+ * Free a list of gateway buffers
  *
- * @param buf The buffer to free
+ * @param buf The list of buffers to free
  */
 void
 gwbuf_free(GWBUF *buf)
@@ -270,39 +271,53 @@ gwbuf_free(GWBUF *buf)
     {
         CHK_GWBUF(buf);
         nextbuf = buf->next;
-        if (atomic_add(&buf->sbuf->refcount, -1) == 1)
-        {
-            free(buf->sbuf->data);
-            free(buf->sbuf);
-            bo = buf->gwbuf_bufobj;
-
-            while (bo != NULL)
-            {
-                bo = gwbuf_remove_buffer_object(buf, bo);
-            }
-
-        }
-        while (buf->properties)
-        {
-            prop = buf->properties;
-            buf->properties = prop->next;
-            free(prop->name);
-            free(prop->value);
-            free(prop);
-        }
-        /** Release the hint */
-        while (buf->hint)
-        {
-            HINT* h = buf->hint;
-            buf->hint = buf->hint->next;
-            hint_free(h);
-        }
-#if defined(BUFFER_TRACE)
-        gwbuf_remove_from_hashtable(buf);
-#endif
-        free(buf);
+        gwbuf_free_one(buf);
         buf = nextbuf;
     }
+}
+
+/**
+ * Free a single gateway buffer
+ *
+ * @param buf The buffer to free
+ */
+static void
+gwbuf_free_one(GWBUF *buf)
+{
+    BUF_PROPERTY    *prop;
+    buffer_object_t *bo;
+
+    if (atomic_add(&buf->sbuf->refcount, -1) == 1)
+    {
+        free(buf->sbuf->data);
+        free(buf->sbuf);
+        bo = buf->gwbuf_bufobj;
+
+        while (bo != NULL)
+        {
+            bo = gwbuf_remove_buffer_object(buf, bo);
+        }
+
+    }
+    while (buf->properties)
+    {
+        prop = buf->properties;
+        buf->properties = prop->next;
+        free(prop->name);
+        free(prop->value);
+        free(prop);
+    }
+    /** Release the hint */
+    while (buf->hint)
+    {
+        HINT* h = buf->hint;
+        buf->hint = buf->hint->next;
+        hint_free(h);
+    }
+#if defined(BUFFER_TRACE)
+    gwbuf_remove_from_hashtable(buf);
+#endif
+    free(buf);
 }
 
 /**
@@ -522,7 +537,7 @@ gwbuf_consume(GWBUF *head, unsigned int length)
             head->next->tail = head->tail;
         }
 
-        gwbuf_free(head);
+        gwbuf_free_one(head);
     }
 
     ss_dassert(rval == NULL || (rval->end > rval->start));

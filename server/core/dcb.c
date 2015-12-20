@@ -112,6 +112,7 @@ static inline bool dcb_write_parameter_check(DCB *dcb, GWBUF *queue);
 static int dcb_bytes_readable(DCB *dcb);
 static int dcb_read_no_bytes_available(DCB *dcb, int nreadtotal);
 static GWBUF *dcb_basic_read(DCB *dcb, int bytesavailable, int maxbytes, int nreadtotal, int *nsingleread);
+static GWBUF *dcb_basic_read_SSL(DCB *dcb, int *nsingleread);
 #if defined(FAKE_CODE)
 static inline void dcb_write_fake_code(DCB *dcb);
 #endif
@@ -1044,7 +1045,7 @@ dcb_read_SSL(DCB *dcb, GWBUF **head)
     {
         MXS_ERROR("Read failed, dcb is %s.",
                   dcb->fd == DCBFD_CLOSED ? "closed" : "cloned, not readable");
-        return 0;
+        return -1;
     }
 
     if (dcb->ssl_write_want_read)
@@ -1060,41 +1061,25 @@ dcb_read_SSL(DCB *dcb, GWBUF **head)
     }
     spinlock_release(&dcb->writeqlock);
 
-    do
+    dcb->last_read = hkheartbeat;
+    buffer = dcb_basic_read_SSL(dcb, &nsingleread);
+    if (buffer)
     {
-        dcb->last_read = hkheartbeat;
-        buffer = dcb_basic_read_SSL(dcb, &nsingleread);
-        if (NULL == buffer)
-        {
-            return nsingleread;
-        }
-
-#ifdef SS_DEBUG
-        MXS_DEBUG("%lu SSL: Truncated buffer from %d to %ld bytes. "
-                  "Read %d bytes, %d bytes waiting.\n", pthread_self(),
-                  bufsize, GWBUF_LENGTH(buffer), nsingleread, bytesavailable);
-
-        if (GWBUF_LENGTH(buffer) != nsingleread)
-        {
-            mxs_log_flush_sync();
-        }
-
-        ss_info_dassert((buffer->start <= buffer->end), "Buffer start has passed end.");
-        ss_info_dassert(GWBUF_LENGTH(buffer) == nsingleread, "Buffer size not equal to read bytes.");
-#endif
         nreadtotal += nsingleread;
-
-        MXS_DEBUG("%lu [dcb_read_SSL] Read %d bytes from dcb %p in state %s "
-                  "fd %d.",
-                  pthread_self(),
-                  nsingleread,
-                  dcb,
-                  STRDCBSTATE(dcb->state),
-                  dcb->fd);
-
-        /*< Append read data to the gwbuf */
         *head = gwbuf_append(*head, buffer);
-    } while (nsingleread > 0);
+
+        while (buffer && SSL_pending(dcb->ssl))
+        {
+            dcb->last_read = hkheartbeat;
+            buffer = dcb_basic_read_SSL(dcb, &nsingleread);
+            if (NULL != buffer)
+            {
+                nreadtotal += nsingleread;
+                /*< Append read data to the gwbuf */
+                *head = gwbuf_append(*head, buffer);
+            }
+        }
+    }
 
     ss_dassert(gwbuf_length(*head) == nreadtotal);
     MXS_DEBUG("%lu Read a total of %d bytes from dcb %p in state %s fd %d.",
@@ -1104,54 +1089,10 @@ dcb_read_SSL(DCB *dcb, GWBUF **head)
               STRDCBSTATE(dcb->state),
               dcb->fd);
 
-    return nreadtotal;
+    return nsingleread;
 }
 
-void
-dcb_read_SSL_old_stuff()
-{
-    GWBUF *buffer;
-    int nread = 0;
-    int n;
-    int bufsize = MIN(b, MAX_BUFFER_SIZE);
-
-        if ((buffer = gwbuf_alloc(bufsize)) == NULL)
-        {
-            /*<
-             * This is a fatal error which should cause shutdown.
-             * Todo shutdown if memory allocation fails.
-             */
-            char errbuf[STRERROR_BUFLEN];
-            MXS_ERROR("Failed to allocate read buffer "
-                      "for dcb %p fd %d, due %d, %s.",
-                      dcb,
-                      dcb->fd,
-                      errno,
-                      strerror_r(errno, errbuf, sizeof (errbuf)));
-
-            return -1;
-        }
-
-        n = SSL_read(dcb->ssl, GWBUF_DATA(buffer), bufsize);
-        dcb->stats.n_reads++;
-
-        if (n <= 0)
-        {
-            int ssl_errno = SSL_get_error(dcb->ssl, n);
-            dcb_log_ssl_read_error(dcb, ssl_errno, n);
-
-            if (ssl_errno != SSL_ERROR_WANT_READ &&
-                ssl_errno != SSL_ERROR_WANT_WRITE &&
-                ssl_errno != SSL_ERROR_NONE)
-            {
-                nread = -1;
-                gwbuf_free(buffer);
-            }
-            return nread;
-        }
-}
-
-GWBUF *
+static GWBUF *
 dcb_basic_read_SSL(DCB *dcb, int *nsingleread)
 {
     unsigned char *temp_buffer[MAX_BUFFER_SIZE];
@@ -1160,11 +1101,19 @@ dcb_basic_read_SSL(DCB *dcb, int *nsingleread)
     *nsingleread = SSL_read(dcb->ssl, (void *)temp_buffer, MAX_BUFFER_SIZE);
     dcb->stats.n_reads++;
 
-    switch (SSL_get_error(dcb->ssl, nsingleread))
+    switch (SSL_get_error(dcb->ssl, *nsingleread))
     {
     case SSL_ERROR_NONE:
         /* Successful read */
-        if ((nsingleread && buffer = gwbuf_alloc_and_load(nsingleread, (void *)temp_buffer)) == NULL)
+        MXS_DEBUG("%lu [%s] Read %d bytes from dcb %p in state %s "
+                  "fd %d.",
+                  pthread_self(),
+                  __func__,
+                  nsingleread,
+                  dcb,
+                  STRDCBSTATE(dcb->state),
+                  dcb->fd);
+        if (*nsingleread && (buffer = gwbuf_alloc_and_load(*nsingleread, (void *)temp_buffer)) == NULL)
         {
             /*<
              * This is a fatal error which should cause shutdown.
@@ -1200,28 +1149,48 @@ dcb_basic_read_SSL(DCB *dcb, int *nsingleread)
 
     case SSL_ERROR_ZERO_RETURN:
         /* react to the SSL connection being closed */
+        MXS_DEBUG("%lu [%s] SSL connection appears to have hung up"
+                  pthread_self(),
+                  __func__,
+                );
         poll_fake_hangup_event(dcb);
+        *nsingleread = 0;
         break;
 
     case SSL_ERROR_WANT_READ:
         /* Prevent SSL I/O on connection until retried, return to poll loop */
+        MXS_DEBUG("%lu [%s] SSL connection want read"
+                  pthread_self(),
+                  __func__,
+                );
         spinlock_acquire(&dcb->writeqlock);
         dcb->ssl_read_want_write = false;
         dcb->ssl_read_want_read = true;
         spinlock_release(&dcb->writeqlock);
+        *nsingleread = 0;
         break;
 
     case SSL_ERROR_WANT_WRITE:
         /* Prevent SSL I/O on connection until retried, return to poll loop */
+        MXS_DEBUG("%lu [%s] SSL connection want write"
+                  pthread_self(),
+                  __func__,
+                );
         spinlock_acquire(&dcb->writeqlock);
         dcb->ssl_read_want_write = true;
         dcb->ssl_read_want_read = false;
         spinlock_release(&dcb->writeqlock);
+        *nsingleread = 0;
         break;
 
     default:
         /* Report error(s) and shutdown the connection */
-        /* TO DO */
+        MXS_DEBUG("%lu [%s] SSL connection has error"
+                  pthread_self(),
+                  __func__,
+                );
+        /* TO DO above is temporary */
+        *nsingleread = -1;
         break;
     }
     return buffer;
@@ -1256,6 +1225,7 @@ dcb_write(DCB *dcb, GWBUF *queue)
      */
     atomic_add(&dcb->writeqlen, gwbuf_length(queue));
     dcb->writeq = gwbuf_append(dcb->writeq, queue);
+    spinlock_release(&dcb->writeqlock);
     dcb->stats.n_buffered++;
     MXS_DEBUG("%lu [dcb_write] Append to writequeue. %d writes "
               "buffered for dcb %p in state %s fd %d",
@@ -2166,6 +2136,7 @@ gw_write_SSL(DCB *dcb, bool *stop_writing)
             dcb->ssl_write_want_read = false;
             dcb->ssl_write_want_write = false;
             poll_fake_event(dcb, EPOLLIN);
+        }
         break;
 
     case SSL_ERROR_ZERO_RETURN:
