@@ -1037,7 +1037,7 @@ int
 dcb_read_SSL(DCB *dcb, GWBUF **head)
 {
     GWBUF *buffer = NULL;
-    int nsingleread, nreadtotal = 0;
+    int nbytes = 0, nsingleread = 0, nlastread = 0, nreadtotal = 0;
 
     CHK_DCB(dcb);
 
@@ -1046,6 +1046,12 @@ dcb_read_SSL(DCB *dcb, GWBUF **head)
         MXS_ERROR("Read failed, dcb is %s.",
                   dcb->fd == DCBFD_CLOSED ? "closed" : "cloned, not readable");
         return -1;
+    }
+
+    ioctl(dcb->fd, FIONREAD, &nbytes);
+    if (0 == nbytes)
+    {
+        return 0;
     }
 
     if (dcb->ssl_write_want_read)
@@ -1063,21 +1069,25 @@ dcb_read_SSL(DCB *dcb, GWBUF **head)
 
     dcb->last_read = hkheartbeat;
     buffer = dcb_basic_read_SSL(dcb, &nsingleread);
-    if (buffer)
+    if (nsingleread > 0)
     {
         nreadtotal += nsingleread;
         *head = gwbuf_append(*head, buffer);
+        nlastread = nsingleread;
 
-        while (buffer && SSL_pending(dcb->ssl))
+        ioctl(dcb->fd, FIONREAD, &nbytes);
+        while (nsingleread > 0 && (nbytes || SSL_pending(dcb->ssl)))
         {
             dcb->last_read = hkheartbeat;
             buffer = dcb_basic_read_SSL(dcb, &nsingleread);
             if (NULL != buffer)
             {
+                nlastread = nsingleread;
                 nreadtotal += nsingleread;
                 /*< Append read data to the gwbuf */
                 *head = gwbuf_append(*head, buffer);
             }
+            ioctl(dcb->fd, FIONREAD, &nbytes);
         }
     }
 
@@ -1089,7 +1099,7 @@ dcb_read_SSL(DCB *dcb, GWBUF **head)
               STRDCBSTATE(dcb->state),
               dcb->fd);
 
-    return nsingleread;
+    return nsingleread >= 0 ? nlastread : nsingleread;
 }
 
 static GWBUF *
@@ -1109,7 +1119,7 @@ dcb_basic_read_SSL(DCB *dcb, int *nsingleread)
                   "fd %d.",
                   pthread_self(),
                   __func__,
-                  nsingleread,
+                  *nsingleread,
                   dcb,
                   STRDCBSTATE(dcb->state),
                   dcb->fd);
@@ -1149,9 +1159,9 @@ dcb_basic_read_SSL(DCB *dcb, int *nsingleread)
 
     case SSL_ERROR_ZERO_RETURN:
         /* react to the SSL connection being closed */
-        MXS_DEBUG("%lu [%s] SSL connection appears to have hung up"
+        MXS_DEBUG("%lu [%s] SSL connection appears to have hung up",
                   pthread_self(),
-                  __func__,
+                  __func__
                 );
         poll_fake_hangup_event(dcb);
         *nsingleread = 0;
@@ -1159,9 +1169,9 @@ dcb_basic_read_SSL(DCB *dcb, int *nsingleread)
 
     case SSL_ERROR_WANT_READ:
         /* Prevent SSL I/O on connection until retried, return to poll loop */
-        MXS_DEBUG("%lu [%s] SSL connection want read"
+        MXS_DEBUG("%lu [%s] SSL connection want read",
                   pthread_self(),
-                  __func__,
+                  __func__
                 );
         spinlock_acquire(&dcb->writeqlock);
         dcb->ssl_read_want_write = false;
@@ -1172,9 +1182,9 @@ dcb_basic_read_SSL(DCB *dcb, int *nsingleread)
 
     case SSL_ERROR_WANT_WRITE:
         /* Prevent SSL I/O on connection until retried, return to poll loop */
-        MXS_DEBUG("%lu [%s] SSL connection want write"
+        MXS_DEBUG("%lu [%s] SSL connection want write",
                   pthread_self(),
-                  __func__,
+                  __func__
                 );
         spinlock_acquire(&dcb->writeqlock);
         dcb->ssl_read_want_write = true;
@@ -1185,9 +1195,9 @@ dcb_basic_read_SSL(DCB *dcb, int *nsingleread)
 
     default:
         /* Report error(s) and shutdown the connection */
-        MXS_DEBUG("%lu [%s] SSL connection has error"
+        MXS_DEBUG("%lu [%s] SSL connection has error",
                   pthread_self(),
-                  __func__,
+                  __func__
                 );
         /* TO DO above is temporary */
         *nsingleread = -1;

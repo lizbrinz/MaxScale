@@ -20,7 +20,7 @@
  * @file buffer.h  - The MaxScale buffer management functions
  *
  * The buffer management is based on the principle of a linked list
- * of variable size buffer, the intention beign to allow longer
+ * of variable size buffer, the intention begin to allow longer
  * content to be buffered in a list and minimise any need to copy
  * data between buffers.
  *
@@ -37,6 +37,8 @@
  *                                      the gwbuf_append process
  * 09/11/2015   Martin Brampton         Add buffer tracing (conditional compilation),
  *                                      accessed by "show buffers" maxadmin command
+ * 20/12/2015   Martin Brampton         Change gwbuf_free to free the whole list;
+ *                                      add the gwbuf_count function.
  *
  * @endverbatim
  */
@@ -72,7 +74,7 @@ static void gwbuf_remove_from_hashtable(GWBUF *buf);
  *
  * For now we allocate memory directly from malloc for buffer the management
  * structure and the actual data buffer itself. We may swap at a future date
- * to a more effecient mechanism.
+ * to a more efficient mechanism.
  *
  * @param       size The size in bytes of the data area required
  * @return      Pointer to the buffer structure or NULL if memory could not
@@ -141,7 +143,7 @@ retblock:
  *
  * For now we allocate memory directly from malloc for buffer the management
  * structure and the actual data buffer itself. We may swap at a future date
- * to a more effecient mechanism.
+ * to a more efficient mechanism.
  *
  * @param       size    The size in bytes of the data area required
  * @param       data    Pointer to the data (size bytes) to be loaded
@@ -568,6 +570,24 @@ gwbuf_length(GWBUF *head)
 }
 
 /**
+ * Return the number of individual buffers in the linked list.
+ *
+ * @param head  The current head of the linked list
+ * @return The number of bytes of data in the linked list
+ */
+int
+gwbuf_count(GWBUF *head)
+{
+    int result = 0;
+    while (head)
+    {
+        result++;
+        head = head->next;
+    }
+    return result;
+}
+
+/**
  * Trim bytes form the end of a GWBUF structure. If the
  * buffer has n_bytes or less then it will be freed and
  * NULL will be returned.
@@ -643,7 +663,7 @@ void gwbuf_set_type(
  * @param buf           GWBUF where object is added
  * @param id            Type identifier for object
  * @param data          Object data
- * @param donefun_dp    Clean-up function to be executed before buffer is freed.
+ * @param donefun_fp    Clean-up function to be executed before buffer is freed.
  */
 void gwbuf_add_buffer_object(GWBUF* buf,
                              bufobj_id_t id,
