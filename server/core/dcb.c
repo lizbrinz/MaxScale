@@ -1037,7 +1037,7 @@ int
 dcb_read_SSL(DCB *dcb, GWBUF **head)
 {
     GWBUF *buffer = NULL;
-    int nbytes = 0, nsingleread = 0, nlastread = 0, nreadtotal = 0;
+    int nsingleread = 0, nlastread = 0, nreadtotal = 0;
 
     CHK_DCB(dcb);
 
@@ -1048,35 +1048,20 @@ dcb_read_SSL(DCB *dcb, GWBUF **head)
         return -1;
     }
 
-    ioctl(dcb->fd, FIONREAD, &nbytes);
-    if (0 == nbytes)
-    {
-        return 0;
-    }
-
     if (dcb->ssl_write_want_read)
     {
         dcb_drain_writeq(dcb);
     }
 
-    spinlock_acquire(&dcb->writeqlock);
-    if (dcb->ssl_write_want_read || dcb->ssl_write_want_write)
-    {
-        spinlock_release(&dcb->writeqlock);
-        return 0;
-    }
-    spinlock_release(&dcb->writeqlock);
-
     dcb->last_read = hkheartbeat;
     buffer = dcb_basic_read_SSL(dcb, &nsingleread);
-    if (nsingleread > 0)
+    if (buffer)
     {
         nreadtotal += nsingleread;
         *head = gwbuf_append(*head, buffer);
         nlastread = nsingleread;
 
-        ioctl(dcb->fd, FIONREAD, &nbytes);
-        while (nsingleread > 0 && (nbytes || SSL_pending(dcb->ssl)))
+        while (buffer || SSL_pending(dcb->ssl))
         {
             dcb->last_read = hkheartbeat;
             buffer = dcb_basic_read_SSL(dcb, &nsingleread);
@@ -1087,7 +1072,6 @@ dcb_read_SSL(DCB *dcb, GWBUF **head)
                 /*< Append read data to the gwbuf */
                 *head = gwbuf_append(*head, buffer);
             }
-            ioctl(dcb->fd, FIONREAD, &nbytes);
         }
     }
 
@@ -1440,14 +1424,9 @@ dcb_drain_writeq(DCB *dcb)
     bool above_water = (dcb->low_water && dcb->writeqlen > dcb->low_water);
 
     spinlock_acquire(&dcb->writeqlock);
-    if (dcb->ssl_read_want_write || dcb->ssl_read_want_read)
+    if (dcb->ssl_read_want_write)
     {
-        if (dcb->ssl_read_want_write)
-        {
-            poll_fake_event(dcb, EPOLLIN);
-        }
-        spinlock_release(&dcb->writeqlock);
-        return 0;
+        poll_fake_event(dcb, EPOLLIN);
     }
     /*
      * Loop over the buffer chain in the pending writeq
@@ -2132,21 +2111,18 @@ void dcb_hashtable_stats(
 static int
 gw_write_SSL(DCB *dcb, bool *stop_writing)
 {
-    int written;
+    int written, ssl_errno;
+    char errbuf[STRERROR_BUFLEN];
 
     written = SSL_write(dcb->ssl, GWBUF_DATA(dcb->writeq), GWBUF_LENGTH(dcb->writeq));
 
     *stop_writing = false;
-    switch (SSL_get_error(dcb->ssl, written))
+    switch ((ssl_errno = SSL_get_error(dcb->ssl, written)))
     {
     case SSL_ERROR_NONE:
         /* Successful write */
-        if (dcb->ssl_write_want_read || dcb->ssl_write_want_write)
-        {
-            dcb->ssl_write_want_read = false;
-            dcb->ssl_write_want_write = false;
-            poll_fake_event(dcb, EPOLLIN);
-        }
+        dcb->ssl_write_want_read = false;
+        dcb->ssl_write_want_write = false;
         break;
 
     case SSL_ERROR_ZERO_RETURN:
@@ -2172,7 +2148,25 @@ gw_write_SSL(DCB *dcb, bool *stop_writing)
     default:
         /* Report error(s) and shutdown the connection */
         *stop_writing = true;
-        /* TO DO */
+        MXS_ERROR("[%s] Read failed, dcb %p in state "
+                  "%s fd %d, SSL error %d: %s.",
+                  __func__,
+                  dcb,
+                  STRDCBSTATE(dcb->state),
+                  dcb->fd,
+                  ssl_errno,
+                  strerror_r(errno, errbuf, sizeof(errbuf)));
+
+        if (ssl_errno == SSL_ERROR_SSL ||
+            ssl_errno == SSL_ERROR_SYSCALL)
+        {
+            while ((ssl_errno = ERR_get_error()) != 0)
+            {
+                ERR_error_string_n(ssl_errno, errbuf, STRERROR_BUFLEN);
+                MXS_ERROR("%s", errbuf);
+            }
+        }
+        poll_fake_hangup_event(dcb);
         break;
     }
 

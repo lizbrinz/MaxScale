@@ -20,7 +20,7 @@
 #include <spinlock.h>
 
 /**
- * @file dcb_queue.h An implementation of an arbitrarily long queue
+ * @file buffer_queue.h An implementation of an arbitrarily long queue
  *
  * @verbatim
  * Revision History
