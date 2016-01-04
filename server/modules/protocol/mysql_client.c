@@ -739,10 +739,8 @@ int gw_read_client_event(
 				2,
 				0,
 				"failed to create new session");
-            while (read_buffer)
-            {
-                read_buffer = gwbuf_consume(read_buffer, GWBUF_LENGTH(read_buffer));
-            }
+            gwbuf_free(read_buffer);
+            read_buffer = NULL;
             return 0;
         }
 
@@ -829,7 +827,8 @@ int gw_read_client_event(
 		    /** SSL was requested and the handshake is either done or
 		     * still ongoing. After the handshake is done, the client
 		     * will send another auth packet. */
-		    while((read_buffer = gwbuf_consume(read_buffer,GWBUF_LENGTH(read_buffer))));
+            gwbuf_free(read_buffer);
+            read_buffer = NULL;
 		    break;
 		}
 
@@ -918,7 +917,8 @@ int gw_read_client_event(
 
 			dcb_close(dcb);
 		}
-		read_buffer = gwbuf_consume(read_buffer, nbytes_read);
+                gwbuf_free(read_buffer);
+                read_buffer = NULL;
 	}
         break;
 
@@ -1014,7 +1014,8 @@ int gw_read_client_event(
 
 		dcb_close(dcb);
 	    }
-	    read_buffer = gwbuf_consume(read_buffer, nbytes_read);
+        gwbuf_free(read_buffer);
+        read_buffer = NULL;
 	}
 	break;
 
@@ -1126,10 +1127,8 @@ int gw_read_client_event(
                                           "Session will be closed.");
 
 			    }
-                            while (read_buffer)
-                            {
-                                read_buffer = gwbuf_consume(read_buffer, GWBUF_LENGTH(read_buffer));
-                            }
+                gwbuf_free(read_buffer);
+                read_buffer = NULL;
                         }
 		    }
 		}
@@ -1137,7 +1136,8 @@ int gw_read_client_event(
 		{
 		    MXS_INFO("Session received a query in state %s",
                              STRSESSIONSTATE(ses_state));
-		    while((read_buffer = GWBUF_CONSUME_ALL(read_buffer)) != NULL);
+            gwbuf_free(read_buffer);
+            read_buffer = NULL;
 		    goto return_rc;
 		}
                 goto return_rc;

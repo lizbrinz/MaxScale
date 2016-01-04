@@ -544,63 +544,54 @@ return_packetbuf:
  * @param p_readbuf Buffer to split, set to NULL if no partial packets are left
  * @return Head of the chain of complete packets, all in a single, contiguous buffer
  */
-GWBUF* modutil_get_complete_packets(GWBUF** p_readbuf)
+GWBUF* modutil_get_complete_packets(GWBUF **p_readbuf)
 {
-    GWBUF *buff = NULL, *packet;
+    GWBUF *complete_part = NULL;
     uint8_t *ptr;
-    uint32_t len,blen,total = 0;
+    uint32_t len, blen, total = 0; 
 
+    /** Give up if the parameter is not a pointer to a pointer or
+     * the total buffer length is less than the 3 bytes needed to
+     * hold a packet length. */
     if(p_readbuf == NULL || (*p_readbuf) == NULL ||
-       gwbuf_length(*p_readbuf) < 3)
-	return NULL;
-
-    packet = gwbuf_make_contiguous(*p_readbuf);
-    packet->next = NULL;
-    *p_readbuf = packet;
-    ptr = (uint8_t*)packet->start;
-    len = gw_mysql_get_byte3(ptr) + 4;
-    blen = gwbuf_length(packet);
-    
-    if(len == blen)
+       (blen = gwbuf_length(*p_readbuf)) < 3)
     {
-	    *p_readbuf = NULL;
-	    return packet;
-    }
-    else if(len > blen)
-    {
-	return NULL;
+        return NULL;
     }
 
-    while(total + len < blen)
-    {
-	ptr += len;
-	total += len;
+    *p_readbuf = gwbuf_make_contiguous(*p_readbuf);
+    ptr = (uint8_t*)(*p_readbuf)->start;
 
-    /** We need at least 3 bytes of the packet header to know how long the whole
-     * packet is going to be. */
-    if (total + 3 >= blen)
+    /** We need at least 3 bytes of the packet header to know how long the next
+     * packet is going to be, if we are going to cycle round again. */
+    while(total + (len = gw_mysql_get_byte3(ptr) + 4) < (blen - 3))
     {
-        break;
+        ptr += len;
+        total += len;
     }
 
-	len = gw_mysql_get_byte3(ptr) + 4;
-    }
-
-    /** Full packets only, return original */
-    if(total + len == blen)
+    total += len;
+    /* If total has overshot the buffer(s) return null, this is an error. */
+    if (total > blen)
     {
-	*p_readbuf = NULL;
-	return packet;
+        return NULL;
+    }
+    /** Full packets only, return original and null the passed buffer */
+    if(total == blen)
+    {
+        GWBUF *packet = *p_readbuf;
+        *p_readbuf = NULL;
+        return packet;
     }
 
     /** The next packet is a partial, split into complete and partial packets */
-    if((buff = gwbuf_clone_portion(packet,0,total)) == NULL)
+    if((complete_part = gwbuf_clone_portion(*p_readbuf,0,total)) == NULL)
     {
-	MXS_ERROR("Failed to partially clone buffer.");
-	return NULL;
+        MXS_ERROR("Failed to partially clone buffer while extracting complete packets.");
+        return NULL;
     }
-    gwbuf_consume(packet,total);
-    return buff;
+    *p_readbuf = gwbuf_consume(*p_readbuf,total);
+    return complete_part;
 }
 
 /**
