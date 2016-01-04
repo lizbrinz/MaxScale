@@ -991,9 +991,6 @@ static int handle_state_switch(DCB* dcb,DCB_REASON reason, void * routersession)
     }
     switch(reason)
     {
-	case DCB_REASON_CLOSE:
-        dcb->func.close(dcb);
-        break;
     case DCB_REASON_DRAINED:
         /** Do we need to do anything? */
         break;
