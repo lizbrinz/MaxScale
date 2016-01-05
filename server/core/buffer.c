@@ -20,7 +20,7 @@
  * @file buffer.h  - The MaxScale buffer management functions
  *
  * The buffer management is based on the principle of a linked list
- * of variable size buffer, the intention begin to allow longer
+ * of variable size buffer, the intention being to allow longer
  * content to be buffered in a list and minimise any need to copy
  * data between buffers.
  *
@@ -140,10 +140,6 @@ retblock:
 
 /**
  * Allocate a new gateway buffer structure of size bytes and load with data.
- *
- * For now we allocate memory directly from malloc for buffer the management
- * structure and the actual data buffer itself. We may swap at a future date
- * to a more efficient mechanism.
  *
  * @param       size    The size in bytes of the data area required
  * @param       data    Pointer to the data (size bytes) to be loaded
@@ -571,6 +567,8 @@ gwbuf_length(GWBUF *head)
 
 /**
  * Return the number of individual buffers in the linked list.
+ *
+ * Currently not used, provided mainly for use during debugging sessions.
  *
  * @param head  The current head of the linked list
  * @return The number of bytes of data in the linked list
