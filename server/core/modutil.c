@@ -25,6 +25,7 @@
  * Date		Who			Description
  * 04/06/14	Mark Riddoch		Initial implementation
  * 24/10/14	Massimiliano Pinto	Added modutil_send_mysql_err_packet, modutil_create_mysql_err_msg
+ * 04/01/16 Martin Brampton     Streamline code in modutil_get_complete_packets
  *
  * @endverbatim
  */
@@ -161,16 +162,16 @@ unsigned char	*ptr;
 }
 
 /**
- * Calculate the length of MySQL packet and how much is missing from the GWBUF 
+ * Calculate the length of MySQL packet and how much is missing from the GWBUF
  * passed as parameter.
- * 
+ *
  * This routine assumes that there is only one MySQL packet in the buffer.
- * 
- * @param buf			buffer list including the query, may consist of 
+ *
+ * @param buf			buffer list including the query, may consist of
  * 				multiple buffers
- * @param nbytes_missing	pointer to missing bytecount 
- * 
- * @return the length of MySQL packet and writes missing bytecount to 
+ * @param nbytes_missing	pointer to missing bytecount
+ *
+ * @return the length of MySQL packet and writes missing bytecount to
  * nbytes_missing.
  */
 int modutil_MySQL_query_len(
@@ -179,18 +180,18 @@ int modutil_MySQL_query_len(
 {
 	int     len;
 	int     buflen;
-	
+
 	if (!modutil_is_SQL(buf))
 	{
 		len = 0;
 		goto retblock;
 	}
-	len = MYSQL_GET_PACKET_LEN((uint8_t *)GWBUF_DATA(buf)); 
+	len = MYSQL_GET_PACKET_LEN((uint8_t *)GWBUF_DATA(buf));
 	*nbytes_missing = len-1;
 	buflen = gwbuf_length(buf);
-	
-	*nbytes_missing -= buflen-5;	
-	
+
+	*nbytes_missing -= buflen-5;
+
 retblock:
 	return len;
 }
@@ -300,10 +301,10 @@ char	*dptr, *rval = NULL;
 
 /**
  * Copy query string from GWBUF buffer to separate memory area.
- * 
+ *
  * @param buf   GWBUF buffer including the query
- * 
- * @return Plain text query if the packet type is COM_QUERY. Otherwise return 
+ *
+ * @return Plain text query if the packet type is COM_QUERY. Otherwise return
  * a string including the packet type.
  */
 char *
@@ -313,10 +314,10 @@ modutil_get_query(GWBUF *buf)
         mysql_server_cmd_t packet_type;
         size_t             len;
         char*              query_str = NULL;
-        
+
         packet = GWBUF_DATA(buf);
         packet_type = packet[4];
-        
+
         switch (packet_type) {
                 case MYSQL_COM_QUIT:
                         len = strlen("[Quit msg]")+1;
@@ -327,9 +328,9 @@ modutil_get_query(GWBUF *buf)
                         memcpy(query_str, "[Quit msg]", len);
                         memset(&query_str[len], 0, 1);
                         break;
-                        
+
                 case MYSQL_COM_QUERY:
-                        len = MYSQL_GET_PACKET_LEN(packet)-1; /*< distract 1 for packet type byte */        
+                        len = MYSQL_GET_PACKET_LEN(packet)-1; /*< distract 1 for packet type byte */
                         if (len < 1 || len > ~(size_t)0 - 1 || (query_str = (char *)malloc(len+1)) == NULL)
                         {
                                 goto retblock;
@@ -337,7 +338,7 @@ modutil_get_query(GWBUF *buf)
                         memcpy(query_str, &packet[5], len);
                         memset(&query_str[len], 0, 1);
                         break;
-                        
+
                 default:
                         len = strlen(STRPACKETTYPE(packet_type))+1;
                         if (len < 1 || len > ~(size_t)0 - 1 || (query_str = (char *)malloc(len+1)) == NULL)
@@ -445,7 +446,7 @@ GWBUF *modutil_create_mysql_err_msg(
  * Send a MySQL protocol Generic ERR message, to the dcb
  *
  * @param dcb 			The DCB to send the packet
- * @param packet_number 	MySQL protocol sequence number in the packet 
+ * @param packet_number 	MySQL protocol sequence number in the packet
  * @param in_affected_rows	MySQL affected rows
  * @param mysql_errno		The MySQL errno
  * @param sqlstate_msg		The MySQL State Message
@@ -458,20 +459,20 @@ int modutil_send_mysql_err_packet (
 	int		packet_number,
 	int		in_affected_rows,
 	int		mysql_errno,
-	const char	*sqlstate_msg,	
+	const char	*sqlstate_msg,
 	const char	*mysql_message)
 {
         GWBUF* buf;
 
         buf = modutil_create_mysql_err_msg(packet_number, in_affected_rows, mysql_errno, sqlstate_msg, mysql_message);
-   
+
         return dcb->func.write(dcb, buf);
 }
 
 /**
  * Buffer contains at least one of the following:
  * complete [complete] [partial] mysql packet
- * 
+ *
  * return pointer to gwbuf containing a complete packet or
  *   NULL if no complete packet was found.
  */
@@ -486,32 +487,32 @@ GWBUF* modutil_get_next_MySQL_packet(
 	uint8_t* data;
 	size_t   nbytes_copied = 0;
 	uint8_t* target;
-	
+
 	readbuf = *p_readbuf;
-	
+
 	if (readbuf == NULL)
 	{
 		packetbuf = NULL;
 		goto return_packetbuf;
-	}                
+	}
 	CHK_GWBUF(readbuf);
-	
+
 	if (GWBUF_EMPTY(readbuf))
 	{
 		packetbuf = NULL;
 		goto return_packetbuf;
-	}        
+	}
 	totalbuflen = gwbuf_length(readbuf);
 	data        = (uint8_t *)GWBUF_DATA((readbuf));
 	packetlen   = MYSQL_GET_PACKET_LEN(data)+4;
-	
+
 	/** packet is incomplete */
 	if (packetlen > totalbuflen)
 	{
 		packetbuf = NULL;
 		goto return_packetbuf;
 	}
-	
+
 	packetbuf = gwbuf_alloc(packetlen);
 	target    = GWBUF_DATA(packetbuf);
 	packetbuf->gwbuf_type = readbuf->gwbuf_type; /*< Copy the type too */
@@ -523,17 +524,17 @@ GWBUF* modutil_get_next_MySQL_packet(
 	{
 		uint8_t* src = GWBUF_DATA((*p_readbuf));
 		size_t   bytestocopy;
-		
+
 		buflen = GWBUF_LENGTH((*p_readbuf));
 		bytestocopy = MIN(buflen,packetlen-nbytes_copied);
-		
+
 		memcpy(target+nbytes_copied, src, bytestocopy);
 		*p_readbuf = gwbuf_consume((*p_readbuf), bytestocopy);
 		totalbuflen = gwbuf_length((*p_readbuf));
 		nbytes_copied += bytestocopy;
 	}
 	ss_dassert(buflen == 0 || nbytes_copied == packetlen);
-	
+
 return_packetbuf:
 	return packetbuf;
 }
@@ -548,7 +549,7 @@ GWBUF* modutil_get_complete_packets(GWBUF **p_readbuf)
 {
     GWBUF *complete_part = NULL;
     uint8_t *ptr;
-    uint32_t len, blen, total = 0; 
+    uint32_t len, blen, total = 0;
 
     /** Give up if the parameter is not a pointer to a pointer or
      * the total buffer length is less than the 3 bytes needed to
@@ -601,7 +602,7 @@ GWBUF* modutil_get_complete_packets(GWBUF **p_readbuf)
  * detection of partial packets in buffers.
  * @param reply Buffer to use
  * @param use_ok Whether the DEPRECATE_EOF flag is set
- * @param n_found If there were previous packets found 
+ * @param n_found If there were previous packets found
  * @return Number of EOF packets
  */
 int
@@ -632,14 +633,14 @@ modutil_count_signal_packets(GWBUF *reply, int use_ok,  int n_found, int* more)
                 eoflen = pktlen;
             }
         }
-        
+
         if((ptr + pktlen) > end || (eof + n_found) >= 2)
         {
 	    moreresults = PTR_EOF_MORE_RESULTS(ptr);
-            ptr = prev;    
+            ptr = prev;
             break;
         }
-        
+
         prev = ptr;
         ptr += pktlen;
     }
@@ -672,9 +673,9 @@ modutil_count_signal_packets(GWBUF *reply, int use_ok,  int n_found, int* more)
 
 /**
  * Create parse error and EPOLLIN event to event queue of the backend DCB.
- * When event is notified the error message is processed as error reply and routed 
+ * When event is notified the error message is processed as error reply and routed
  * upstream to client.
- * 
+ *
  * @param backend_dcb	DCB where event is added
  * @param errstr	Plain-text string error
  * @param flags		GWBUF type flags
@@ -690,9 +691,9 @@ void modutil_reply_parse_error(
 
 /**
  * Create authentication error and EPOLLIN event to event queue of the backend DCB.
- * When event is notified the error message is processed as error reply and routed 
+ * When event is notified the error message is processed as error reply and routed
  * upstream to client.
- * 
+ *
  * @param backend_dcb	DCB where event is added
  * @param errstr	Plain-text string error
  * @param flags		GWBUF type flags
@@ -709,9 +710,9 @@ void modutil_reply_auth_error(
 
 /**
  * Create error message and EPOLLIN event to event queue of the backend DCB.
- * When event is notified the message is processed as error reply and routed 
+ * When event is notified the message is processed as error reply and routed
  * upstream to client.
- * 
+ *
  * @param backend_dcb	DCB where event is added
  * @param error		SQL error number
  * @param state		SQL state
@@ -727,10 +728,10 @@ static void modutil_reply_routing_error(
 {
 	GWBUF* buf;
 	CHK_DCB(backend_dcb);
-	
+
 	buf = modutil_create_mysql_err_msg(1, 0, error, state, errstr);
 	free(errstr);
-	
+
 	if (buf == NULL)
 	{
             MXS_ERROR("Creating routing error message failed.");
@@ -784,7 +785,7 @@ void* strnchr_esc(char* ptr,char c, int len)
 	}
 	p++;
     }
-    
+
     return NULL;
 }
 
@@ -838,7 +839,7 @@ int modutil_count_statements(GWBUF* buffer)
     ptr = end - 1;
     while(isspace(*ptr))
 	ptr--;
-    
+
     if(*ptr == ';')
     {
 	num--;
