@@ -1606,55 +1606,55 @@ void
 poll_fake_event(DCB *dcb, uint32_t ev)
 {
 
-	spinlock_acquire(&pollqlock);
-	/*
-	 * If the DCB is already on the queue, there are no pending events and
-	 * there are other events on the queue, then
-	 * take it off the queue. This stops the DCB hogging the threads.
-	 */
-	if (DCB_POLL_BUSY(dcb) && dcb->evq.pending_events == 0 && dcb->evq.prev != dcb)
-	{
-		dcb->evq.prev->evq.next = dcb->evq.next;
-		dcb->evq.next->evq.prev = dcb->evq.prev;
-		if (eventq == dcb)
-			eventq = dcb->evq.next;
-		dcb->evq.next = NULL;
-		dcb->evq.prev = NULL;
-		pollStats.evq_length--;
-	}
+    spinlock_acquire(&pollqlock);
+    /*
+     * If the DCB is already on the queue, there are no pending events and
+     * there are other events on the queue, then
+     * take it off the queue. This stops the DCB hogging the threads.
+     */
+    if (DCB_POLL_BUSY(dcb) && dcb->evq.pending_events == 0 && dcb->evq.prev != dcb)
+    {
+        dcb->evq.prev->evq.next = dcb->evq.next;
+        dcb->evq.next->evq.prev = dcb->evq.prev;
+        if (eventq == dcb)
+            eventq = dcb->evq.next;
+        dcb->evq.next = NULL;
+        dcb->evq.prev = NULL;
+        pollStats.evq_length--;
+    }
 
-	if (DCB_POLL_BUSY(dcb))
-	{
-		if (dcb->evq.pending_events == 0)
-			pollStats.evq_pending++;
-		dcb->evq.pending_events |= ev;
-	}
-	else
-	{
-		dcb->evq.pending_events = ev;
-		dcb->evq.inserted = hkheartbeat;
-		if (eventq)
-		{
-			dcb->evq.prev = eventq->evq.prev;
-			eventq->evq.prev->evq.next = dcb;
-			eventq->evq.prev = dcb;
-			dcb->evq.next = eventq;
-		}
-		else
-		{
-			eventq = dcb;
-			dcb->evq.prev = dcb;
-			dcb->evq.next = dcb;
-		}
-		pollStats.evq_length++;
-		pollStats.evq_pending++;
-		dcb->evq.inserted = hkheartbeat;
-		if (pollStats.evq_length > pollStats.evq_max)
-		{
-			pollStats.evq_max = pollStats.evq_length;
-		}
-	}
-	spinlock_release(&pollqlock);
+    if (DCB_POLL_BUSY(dcb))
+    {
+        if (dcb->evq.pending_events == 0)
+            pollStats.evq_pending++;
+        dcb->evq.pending_events |= ev;
+    }
+    else
+    {
+        dcb->evq.pending_events = ev;
+        dcb->evq.inserted = hkheartbeat;
+        if (eventq)
+        {
+            dcb->evq.prev = eventq->evq.prev;
+            eventq->evq.prev->evq.next = dcb;
+            eventq->evq.prev = dcb;
+            dcb->evq.next = eventq;
+        }
+        else
+        {
+            eventq = dcb;
+            dcb->evq.prev = dcb;
+            dcb->evq.next = dcb;
+        }
+        pollStats.evq_length++;
+        pollStats.evq_pending++;
+        dcb->evq.inserted = hkheartbeat;
+        if (pollStats.evq_length > pollStats.evq_max)
+        {
+            pollStats.evq_max = pollStats.evq_length;
+        }
+    }
+    spinlock_release(&pollqlock);
 }
 
 /*

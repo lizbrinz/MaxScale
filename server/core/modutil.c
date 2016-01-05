@@ -187,19 +187,19 @@ modutil_MySQL_Query(GWBUF *buf, char **sql, int *length, int *residual)
 int
 modutil_MySQL_query_len(GWBUF* buf, int* nbytes_missing)
 {
-	int     len;
-	int     buflen;
+    int     len;
+    int     buflen;
 
-	if (!modutil_is_SQL(buf))
-	{
-		len = 0;
-		goto retblock;
-	}
-	len = MYSQL_GET_PACKET_LEN((uint8_t *)GWBUF_DATA(buf));
-	*nbytes_missing = len-1;
-	buflen = gwbuf_length(buf);
+    if (!modutil_is_SQL(buf))
+    {
+        len = 0;
+        goto retblock;
+    }
+    len = MYSQL_GET_PACKET_LEN((uint8_t *)GWBUF_DATA(buf));
+    *nbytes_missing = len-1;
+    buflen = gwbuf_length(buf);
 
-	*nbytes_missing -= buflen-5;
+    *nbytes_missing -= buflen-5;
 
 retblock:
     return len;
@@ -460,12 +460,12 @@ GWBUF *modutil_create_mysql_err_msg(int        packet_number,
  *
  * Send a MySQL protocol Generic ERR message, to the dcb
  *
- * @param dcb 			The DCB to send the packet
- * @param packet_number 	MySQL protocol sequence number in the packet
- * @param in_affected_rows	MySQL affected rows
- * @param mysql_errno		The MySQL errno
- * @param sqlstate_msg		The MySQL State Message
- * @param mysql_message		The Error Message
+ * @param dcb               The DCB to send the packet
+ * @param packet_number     MySQL protocol sequence number in the packet
+ * @param in_affected_rows  MySQL affected rows
+ * @param mysql_errno       The MySQL errno
+ * @param sqlstate_msg      The MySQL State Message
+ * @param mysql_message     The Error Message
  * @return	0 for successful dcb write or 1 on failure
  *
  */
