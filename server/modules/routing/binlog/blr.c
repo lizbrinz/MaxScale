@@ -13,7 +13,7 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright MariaDB Corporation Ab 2014-2015
+ * Copyright MariaDB Corporation Ab 2014-2016
  */
 
 /**
@@ -51,6 +51,7 @@
  * 23/10/2015	Markus Makela		Added current_safe_event
  * 27/10/2015   Martin Brampton         Amend getCapabilities to return RCAP_TYPE_NO_RSESSION
  * 26/11/2015	Massimiliano Pinto	Added check for missing service listener
+ * 07/01/2016	Massimiliano Pinto	Added semi_sync replication support
  *
  * @endverbatim
  */
@@ -277,6 +278,8 @@ char		task_name[BLRM_TASK_NAME_LEN+1] = "";
 	inst->binlogdir = NULL;
 	inst->heartbeat = BLR_HEARTBEAT_DEFAULT_INTERVAL;
 	inst->mariadb10_compat = false;
+	inst->request_semi_sync = 0;
+	inst->master_semi_sync = false;
 
 	inst->user = strdup(service->credentials.name);
 	inst->password = strdup(service->credentials.authdata);
@@ -417,6 +420,10 @@ char		task_name[BLRM_TASK_NAME_LEN+1] = "";
 				else if (strcmp(options[i], "transaction_safety") == 0)
 				{
 					inst->trx_safe = config_truth_value(value);
+				}
+				else if (strcmp(options[i], "semisync") == 0)
+				{
+					inst->request_semi_sync = config_truth_value(value);
 				}
 				else if (strcmp(options[i], "lowwater") == 0)
 				{

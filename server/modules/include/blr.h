@@ -15,7 +15,7 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright MariaDB Corporation Ab 2014-2015
+ * Copyright MariaDB Corporation Ab 2014-2016
  */
 
 /**
@@ -35,6 +35,7 @@
  * 24/06/15	Massimiliano Pinto	Added BLRM_UNCONFIGURED state
  * 05/08/15	Massimiliano Pinto	Initial implementation of transaction safety
  * 23/10/15	Markus Makela		Added current_safe_event
+ * 07/01/16	Massimiliano Pinto	Added semi_sync replication support
  *
  * @endverbatim
  */
@@ -450,6 +451,8 @@ typedef struct router_instance {
 	char		  *set_master_uuid; /*< Send custom Master UUID to slaves */
 	char		  *set_master_server_id; /*< Send custom Master server_id to slaves */
 	int		  send_slave_heartbeat; /*< Enable sending heartbeat to slaves */
+	bool		  request_semi_sync;	/*< Request Semi-Sync replication to master */
+	int		  master_semi_sync;	/*< Semi-Sync replication status of master server */
 	struct router_instance	*next;
 } ROUTER_INSTANCE;
 
@@ -465,29 +468,32 @@ typedef struct router_instance {
 #define BLRM_HBPERIOD		0x0006
 #define BLRM_CHKSUM1		0x0007
 #define BLRM_CHKSUM2		0x0008
-#define BLRM_GTIDMODE		0x0009
-#define BLRM_MUUID		0x000A
-#define BLRM_SUUID		0x000B
-#define	BLRM_LATIN1		0x000C
-#define	BLRM_UTF8		0x000D
-#define	BLRM_SELECT1		0x000E
-#define	BLRM_SELECTVER		0x000F
-#define BLRM_SELECTVERCOM	0x0010
-#define BLRM_SELECTHOSTNAME	0x0011
-#define BLRM_MAP		0x0012
-#define	BLRM_REGISTER		0x0013
-#define	BLRM_BINLOGDUMP		0x0014
-#define	BLRM_SLAVE_STOPPED	0x0015
-#define	BLRM_MARIADB10		0x0016
+#define	BLRM_MARIADB10		0x0009
+#define BLRM_GTIDMODE		0x000A
+#define BLRM_MUUID		0x000B
+#define BLRM_SUUID		0x000C
+#define	BLRM_LATIN1		0x000D
+#define	BLRM_UTF8		0x000E
+#define	BLRM_SELECT1		0x000F
+#define	BLRM_SELECTVER		0x0010
+#define BLRM_SELECTVERCOM	0x0011
+#define BLRM_SELECTHOSTNAME	0x0012
+#define BLRM_MAP		0x0013
+#define	BLRM_REGISTER		0x0014
+#define	BLRM_CHECK_SEMISYNC	0x0015
+#define	BLRM_REQUEST_SEMISYNC	0x0016
+#define	BLRM_REQUEST_BINLOGDUMP	0x0017
+#define	BLRM_BINLOGDUMP		0x0018
+#define	BLRM_SLAVE_STOPPED	0x0019
 
-#define BLRM_MAXSTATE		0x0016
+#define BLRM_MAXSTATE		0x0019
 
 static char *blrm_states[] = { "Unconfigured", "Unconnected", "Connecting", "Authenticated", "Timestamp retrieval",
 	"Server ID retrieval", "HeartBeat Period setup", "binlog checksum config",
-	"binlog checksum rerieval", "GTID Mode retrieval", "Master UUID retrieval",
+	"binlog checksum rerieval", "Set MariaDB slave capability", "GTID Mode retrieval", "Master UUID retrieval",
 	"Set Slave UUID", "Set Names latin1", "Set Names utf8", "select 1",
 	"select version()", "select @@version_comment", "select @@hostname",
-	"select @@max_allowed_packet", "Register slave", "Binlog Dump", "Slave stopped", "Set MariaDB slave capability" };
+	"select @@max_allowed_packet", "Register slave", "Semi-Sync Support retrivial", "Request Semi-Sync Replication","Request Binlog Dump", "Binlog Dump", "Slave stopped" };
 
 #define BLRS_CREATED		0x0000
 #define BLRS_UNREGISTERED	0x0001

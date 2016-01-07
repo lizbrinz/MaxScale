@@ -13,7 +13,7 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright MariaDB Corporation Ab 2014-2015
+ * Copyright MariaDB Corporation Ab 2014-2016
  */
 
 /**
@@ -47,7 +47,8 @@
  *					MariaDB 10 transaction start point.
  *					It's no longer using QUERY_EVENT with BEGIN	
  * 25/09/2015	Massimiliano Pinto	Addition of lastEventReceived for slaves
- * 23/10/15	Markus Makela		Added current_safe_event
+ * 23/10/2015	Markus Makela		Added current_safe_event
+ * 07/01/2016	Massimiliano Pinto	Added semi_sync replication support
  *
  * @endverbatim
  */
@@ -98,8 +99,34 @@ extern int blr_check_heartbeat(ROUTER_INSTANCE *router);
 extern char * blr_last_event_description(ROUTER_INSTANCE *router);
 static void blr_log_identity(ROUTER_INSTANCE *router);
 static void blr_distribute_error_message(ROUTER_INSTANCE *router, char *message, char *state, unsigned int err_code);
+void blr_extract_header_semisync(uint8_t *pkt, REP_HEADER *hdr);
+static int blr_send_semisync_ack (ROUTER_INSTANCE *router, uint64_t pos);
+static int blr_get_master_semisync(GWBUF *buf);
 
 static int keepalive = 1;
+
+/** Transactio-Safety feature */
+typedef enum
+{
+    BLRM_NO_TRANSACTION, /*< No transaction */
+    BLRM_PENDING_COMMIT_EVENT, /*< Waiting for the COMMIT event in the current transaction */
+    BLRM_PENDING_XID_EVENT /*< Waiting for the XID event of current transaction */
+} master_transaction_t;
+
+/** Master Semi-Sync capability */
+typedef enum
+{
+    MASTER_SEMISYNC_NOT_AVAILABLE, /*< Semi-Sync replication not available */
+    MASTER_SEMISYNC_DISABLED, /*< Semi-Sync is disabled */
+    MASTER_SEMISYNC_ENABLED /*< Semi-Sync is enabled */
+} master_semisync_capability_t;
+
+#define MASTER_BYTES_BEFORE_EVENT 5
+#define MASTER_BYTES_BEFORE_EVENT_SEMI_SYNC MASTER_BYTES_BEFORE_EVENT + 2
+/* Semi-Sync indicator in network packet (byte 6) */
+#define BLR_MASTER_SEMI_SYNC_INDICATOR  0xef
+/* Semi-Sync flag ACK_REQ in network packet (byte 7) */
+#define BLR_MASTER_SEMI_SYNC_ACK_REQ    0x01
 
 /**
  * blr_start_master - controls the connection of the binlog router to the
@@ -498,8 +525,8 @@ char	task_name[BLRM_TASK_NAME_LEN + 1] = "";
 			GWBUF_CONSUME_ALL(router->saved_master.mariadb10);
 		router->saved_master.mariadb10 = buf;
 		blr_cache_response(router, "mariadb10", buf);
-		buf = blr_make_query("SHOW VARIABLES LIKE 'SERVER_UUID'");
-		router->master_state = BLRM_MUUID;
+		buf = blr_make_query("SET NAMES latin1");
+		router->master_state = BLRM_LATIN1;
 		router->master->func.write(router->master, buf);
 		break;
 	case BLRM_GTIDMODE:
@@ -623,16 +650,83 @@ char	task_name[BLRM_TASK_NAME_LEN + 1] = "";
 		router->master->func.write(router->master, buf);
 		break;
 	case BLRM_REGISTER:
-		// Request a dump of the binlog file
+		/* discard master reply to COM_REGISTER_SLAVE */
+		gwbuf_consume(buf, GWBUF_LENGTH(buf));
+
+		/* if semisync option is set, check for master semi-sync availability */
+		if (router->request_semi_sync) {
+			MXS_NOTICE("%s: checking Semi-Sync replication capability for master server %s:%d",
+				router->service->name,
+				router->service->dbref->server->name,
+				router->service->dbref->server->port);
+
+			buf = blr_make_query("SHOW VARIABLES LIKE 'rpl_semi_sync_master_enabled'");
+			router->master_state = BLRM_CHECK_SEMISYNC;
+			router->master->func.write(router->master, buf);
+
+			break;
+		} else {
+			router->master_state = BLRM_REQUEST_BINLOGDUMP;
+		}
+	case BLRM_CHECK_SEMISYNC:
+		{
+			if (router->master_state == BLRM_CHECK_SEMISYNC) {
+				/* Get master semi-sync installed, enabled, disabled */
+				router->master_semi_sync = blr_get_master_semisync(buf);
+
+				/* Discard buffer */
+				gwbuf_consume(buf, GWBUF_LENGTH(buf));
+
+				if (router->master_semi_sync == MASTER_SEMISYNC_NOT_AVAILABLE) { /* not installed */
+					MXS_NOTICE("%s: master server %s:%d doesn't have semy_sync capability",
+						router->service->name,
+						router->service->dbref->server->name,
+						router->service->dbref->server->port);
+
+					router->master_state = BLRM_REQUEST_BINLOGDUMP;
+
+				} else if (router->master_semi_sync == MASTER_SEMISYNC_DISABLED) {
+					MXS_NOTICE(stderr, "%s: master server %s:%d doesn't have semy_sync enabled",
+						router->service->name,
+						router->service->dbref->server->name,
+						router->service->dbref->server->port);
+
+					router->master_state = BLRM_REQUEST_BINLOGDUMP;
+				} else {
+					/* Request semi-sync only if master value is ON */
+					MXS_NOTICE(stderr, "%s: master server %s:%d has semy_sync enabled, Requesting Semi-Sync Replication");
+						router->service->name,
+						router->service->dbref->server->name,
+						router->service->dbref->server->port);
+
+					buf = blr_make_query("SET @rpl_semi_sync_slave = 1");
+					router->master_state = BLRM_REQUEST_SEMISYNC;
+					router->master->func.write(router->master, buf);
+
+					break;
+				}
+			}
+		}
+	case BLRM_REQUEST_SEMISYNC:
+		if (router->master_state == BLRM_REQUEST_SEMISYNC) {
+			/* discard master reply */
+			gwbuf_consume(buf, GWBUF_LENGTH(buf));
+
+			router->master_state = BLRM_REQUEST_BINLOGDUMP;
+		}
+	case BLRM_REQUEST_BINLOGDUMP:
+		/* Request a dump of the binlog file */
 		buf = blr_make_binlog_dump(router);
+
 		router->master_state = BLRM_BINLOGDUMP;
+
 		router->master->func.write(router->master, buf);
 		MXS_NOTICE("%s: Request binlog records from %s at "
-                   "position %lu from master server %s:%d",
-                   router->service->name, router->binlog_name,
-                   router->current_pos,
-                   router->service->dbref->server->name,
-                   router->service->dbref->server->port);
+			"position %lu from master server %s:%d",
+			router->service->name, router->binlog_name,
+			router->current_pos,
+			router->service->dbref->server->name,
+			router->service->dbref->server->port);
 
 		/* Log binlog router identity */
 		blr_log_identity(router);
@@ -790,6 +884,8 @@ int			no_residual = 1;
 int			preslen = -1;
 int			prev_length = -1;
 int			n_bufs = -1, pn_bufs = -1;
+int			semi_sync_send_ack = 0;
+int			check_packet_len = MASTER_BYTES_BEFORE_EVENT;
 
 	/*
 	 * Prepend any residual buffer to the buffer chain we have
@@ -935,10 +1031,23 @@ int			n_bufs = -1, pn_bufs = -1;
 			router->stats.n_binlogs++;
 			router->stats.n_binlogs_ses++;
 
-			blr_extract_header(ptr, &hdr);
+			/* Check for semi-sync in event with OK byte[4]: 
+			 * move pointer 2 bytes ahead and set check_packet_len accordingly
+			 */
+			if (ptr[4] == 0 && router->master_semi_sync != MASTER_SEMISYNC_NOT_AVAILABLE &&
+				ptr[5] == BLR_MASTER_SEMI_SYNC_INDICATOR) {
+
+				check_packet_len = MASTER_BYTES_BEFORE_EVENT_SEMI_SYNC;
+				semi_sync_send_ack = ptr[6];
+
+				blr_extract_header_semisync(ptr, &hdr);
+
+				ptr += 2;
+			} else
+				blr_extract_header(ptr, &hdr);
 
 			/* Sanity check */
-			if (hdr.ok == 0 && hdr.event_size != len - 5)
+			if (hdr.ok == 0 && hdr.event_size != len - check_packet_len)
 			{
 				MXS_ERROR("Packet length is %d, but event size is %d, "
                           "binlog file %s position %lu "
@@ -1028,7 +1137,7 @@ int			n_bufs = -1, pn_bufs = -1;
 				 */
 
 				spinlock_acquire(&router->binlog_lock);
-				if (router->trx_safe == 0 || (router->trx_safe && router->pending_transaction == 0)) {
+				if (router->trx_safe == 0 || (router->trx_safe && router->pending_transaction == BLRM_NO_TRANSACTION)) {
 					/* no pending transaction: set current_pos to binlog_position */
 					router->binlog_position = router->current_pos;
 					router->current_safe_event = router->current_pos;
@@ -1058,7 +1167,7 @@ int			n_bufs = -1, pn_bufs = -1;
 							if (flags == 0) {
 								spinlock_acquire(&router->binlog_lock);
 
-								if (router->pending_transaction > 0) {
+								if (router->pending_transaction > BLRM_NO_TRANSACTION) {
 									MXS_ERROR("A MariaDB 10 transaction "
                                               "is already open "
                                               "@ %lu (GTID %u-%u-%lu) and "
@@ -1071,7 +1180,7 @@ int			n_bufs = -1, pn_bufs = -1;
 										// An action should be taken here
 								}
 
-								router->pending_transaction = 1;
+								router->pending_transaction = BLRM_TRANSACTION_START;
 
 								spinlock_release(&router->binlog_lock);
 							}
@@ -1096,7 +1205,7 @@ int			n_bufs = -1, pn_bufs = -1;
 
 						/* Check for BEGIN (it comes for START TRANSACTION too) */
 						if (strncmp(statement_sql, "BEGIN", 5) == 0) {
-							if (router->pending_transaction > 0) {
+							if (router->pending_transaction > BLRM_NO_TRANSACTION) {
 								MXS_ERROR("A transaction is already open "
                                           "@ %lu and a new one starts @ %lu",
                                           router->binlog_position,
@@ -1105,13 +1214,13 @@ int			n_bufs = -1, pn_bufs = -1;
 									// An action should be taken here
 							}
 
-							router->pending_transaction = 1;
+							router->pending_transaction = BLRM_TRANSACTION_START;
 						}
 
 						/* Check for COMMIT in non transactional store engines */
 						if (strncmp(statement_sql, "COMMIT", 6) == 0) {
 
-							router->pending_transaction = 2;
+							router->pending_transaction = BLRM_COMMIT_SEEN;
 						}
 
 						spinlock_release(&router->binlog_lock);
@@ -1124,7 +1233,7 @@ int			n_bufs = -1, pn_bufs = -1;
 						spinlock_acquire(&router->binlog_lock);
 
 						if (router->pending_transaction) {
-							router->pending_transaction = 3;
+							router->pending_transaction = BLRM_XID_EVENT_SEEN;
 						}
 						spinlock_release(&router->binlog_lock);
 					}
@@ -1214,6 +1323,23 @@ int			n_bufs = -1, pn_bufs = -1;
 							return;
 						}
 
+                                                /* Handle semi-sync request fom master */
+						if (router->master_semi_sync != MASTER_SEMISYNC_NOT_AVAILABLE &&
+							semi_sync_send_ack == BLR_MASTER_SEMI_SYNC_ACK_REQ) {
+
+							MXS_DEBUG("%s:binlog record in binlog file %s, pos %lu has SEMI_SYNC_ACK_REQ and needs a Semi-Sync ACK packet to be sent to the master server",
+								router->service->name, router->binlog_name,
+								router->current_pos,
+								router->service->dbref->server->name,
+								router->service->dbref->server->port);
+
+							blr_send_semisync_ack(router, hdr.next_pos);
+
+							spinlock_acquire(&router->lock);
+							semi_sync_send_ack = 0;
+							spinlock_release(&router->lock);
+						}
+
 						/* Check for rotete event */
 						if (hdr.event_type == ROTATE_EVENT)
 						{
@@ -1240,7 +1366,7 @@ int			n_bufs = -1, pn_bufs = -1;
 
 						spinlock_acquire(&router->binlog_lock);
 
-						if (router->trx_safe == 0 || (router->trx_safe && router->pending_transaction == 0)) {
+						if (router->trx_safe == 0 || (router->trx_safe && router->pending_transaction == BLRM_NO_TRANSACTION)) {
 
 							router->binlog_position = router->current_pos;
 							router->current_safe_event = router->current_pos;
@@ -1263,7 +1389,7 @@ int			n_bufs = -1, pn_bufs = -1;
 							 *
 							 */
 
-							 if (router->pending_transaction > 1) {
+							 if (router->pending_transaction > BLRM_TRANSACTION_START) {
 								unsigned long long pos;
 								unsigned long long end_pos;
 								GWBUF   *record;
@@ -1336,7 +1462,7 @@ int			n_bufs = -1, pn_bufs = -1;
 								spinlock_acquire(&router->binlog_lock);
 
 								router->binlog_position = router->current_pos;
-								router->pending_transaction = 0;
+								router->pending_transaction = BLRM_NO_TRANSACTION;
 
 								spinlock_release(&router->binlog_lock);
 							} else {
@@ -2215,3 +2341,98 @@ ROUTER_SLAVE    *slave;
 	spinlock_release(&router->lock);
 }
 
+/**
+ * Populate a header structure for a replication message from a GWBUF structure with semi-sync enabled.
+ *
+ * @param pkt   The incoming packet in a GWBUF chain
+ * @param hdr   The packet header to populate
+ */
+void
+blr_extract_header_semisync(register uint8_t *ptr, register REP_HEADER *hdr)
+{
+
+        hdr->payload_len = EXTRACT24(ptr);
+        hdr->seqno = ptr[3];
+        hdr->ok = ptr[4];
+        /* Data available after 2 bytes (the 2 semisync bytes) */
+        hdr->timestamp = EXTRACT32(&ptr[5 + 2]);
+        hdr->event_type = ptr[9 + 2];
+        hdr->serverid = EXTRACT32(&ptr[10 + 2]);
+        hdr->event_size = EXTRACT32(&ptr[14 + 2]);
+        hdr->next_pos = EXTRACT32(&ptr[18 + 2]);
+        hdr->flags = EXTRACT16(&ptr[22 + 2]);
+}
+
+/**
+ * Send a MySQL Replication Semi-Sync ACK to the master server.
+ *
+ * @param router The router instance.
+ * @param pos The binlog position for the ACK reply.
+ * @return 1 if the packect is sent, 0 on errors
+ */
+
+static int
+blr_send_semisync_ack (ROUTER_INSTANCE *router, uint64_t pos) {
+    int seqno = 0;
+    int semi_sync_flag = 0xef;
+    GWBUF   *buf;
+    int     len;
+    uint8_t *data;
+
+    /* payload */
+    len = strlen(router->binlog_name) + 1 + 8;
+
+    /* add network header to size */
+    if ((buf = gwbuf_alloc(len+4)) == NULL)
+        return 0;
+
+        data = GWBUF_DATA(buf);
+
+        encode_value(&data[0], len, 24);  // Payload length
+        data[3] = 0;                      // Sequence ID
+        data[4] = semi_sync_flag;         // Semi-sync indicator
+
+    /**
+     * Next Bytes are: 8 bytes log position + len bin_log filename
+     */
+
+    /* Position */
+    encode_value(&data[5], pos, 64);
+
+    /* Binlog filename */
+    strncpy((char *)&data[13], router->binlog_name, BINLOG_FNAMELEN);
+
+    router->master->func.write(router->master, buf);
+
+    return 1;
+}
+
+/**
+ * Check the master semisync capability.
+ *
+ * @param buf The GWBUF data with master reply.
+ * @return Semisync value: non available, enabled, disabled
+ */
+static int
+blr_get_master_semisync(GWBUF *buf)
+{
+    char *key;
+    char *val = NULL;
+    int  master_semisync = MASTER_SEMISYNC_NOT_AVAILABLE;
+
+    key = blr_extract_column(buf, 1);
+
+    if (key && strlen(key))
+        val = blr_extract_column(buf, 2);
+    free(key);
+
+    if (val) {
+        if (strncasecmp(val, "ON", 4) == 0)
+            master_semisync = MASTER_SEMISYNC_ENABLED;
+        else
+            master_semisync = MASTER_SEMISYNC_DISABLED;
+    }
+    free(val);
+
+    return master_semisync;
+}
