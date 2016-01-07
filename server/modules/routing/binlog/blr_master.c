@@ -885,7 +885,7 @@ int			preslen = -1;
 int			prev_length = -1;
 int			n_bufs = -1, pn_bufs = -1;
 int			semi_sync_send_ack = 0;
-int			check_packet_len = MASTER_BYTES_BEFORE_EVENT;
+int			check_packet_len;
 
 	/*
 	 * Prepend any residual buffer to the buffer chain we have
@@ -1043,8 +1043,11 @@ int			check_packet_len = MASTER_BYTES_BEFORE_EVENT;
 				blr_extract_header_semisync(ptr, &hdr);
 
 				ptr += 2;
-			} else
+			} else {
+				check_packet_len = MASTER_BYTES_BEFORE_EVENT;
+
 				blr_extract_header(ptr, &hdr);
+			}
 
 			/* Sanity check */
 			if (hdr.ok == 0 && hdr.event_size != len - check_packet_len)
