@@ -99,7 +99,7 @@ extern int blr_check_heartbeat(ROUTER_INSTANCE *router);
 extern char * blr_last_event_description(ROUTER_INSTANCE *router);
 static void blr_log_identity(ROUTER_INSTANCE *router);
 static void blr_distribute_error_message(ROUTER_INSTANCE *router, char *message, char *state, unsigned int err_code);
-void blr_extract_header_semisync(uint8_t *pkt, REP_HEADER *hdr);
+static void blr_extract_header_semisync(uint8_t *pkt, REP_HEADER *hdr);
 static int blr_send_semisync_ack (ROUTER_INSTANCE *router, uint64_t pos);
 static int blr_get_master_semisync(GWBUF *buf);
 
@@ -654,7 +654,8 @@ char	task_name[BLRM_TASK_NAME_LEN + 1] = "";
 		gwbuf_consume(buf, GWBUF_LENGTH(buf));
 
 		/* if semisync option is set, check for master semi-sync availability */
-		if (router->request_semi_sync) {
+		if (router->request_semi_sync)
+		{
 			MXS_NOTICE("%s: checking Semi-Sync replication capability for master server %s:%d",
 				router->service->name,
 				router->service->dbref->server->name,
@@ -665,36 +666,53 @@ char	task_name[BLRM_TASK_NAME_LEN + 1] = "";
 			router->master->func.write(router->master, buf);
 
 			break;
-		} else {
+		}
+		else
+		{
+			/* Continue */
 			router->master_state = BLRM_REQUEST_BINLOGDUMP;
 		}
 	case BLRM_CHECK_SEMISYNC:
 		{
-			if (router->master_state == BLRM_CHECK_SEMISYNC) {
+			/**
+			 * This branch could be reached as fallthrough from BLRM_REGISTER
+			 * if request_semi_sync option is false
+			 */
+			if (router->master_state == BLRM_CHECK_SEMISYNC)
+			{
 				/* Get master semi-sync installed, enabled, disabled */
 				router->master_semi_sync = blr_get_master_semisync(buf);
 
 				/* Discard buffer */
 				gwbuf_consume(buf, GWBUF_LENGTH(buf));
 
-				if (router->master_semi_sync == MASTER_SEMISYNC_NOT_AVAILABLE) { /* not installed */
-					MXS_NOTICE("%s: master server %s:%d doesn't have semy_sync capability",
+				if (router->master_semi_sync == MASTER_SEMISYNC_NOT_AVAILABLE)
+				{
+					/* not installed */
+					MXS_NOTICE("%s: master server %s:%d doesn't have semi_sync capability",
 						router->service->name,
 						router->service->dbref->server->name,
 						router->service->dbref->server->port);
 
+					/* Continue */
 					router->master_state = BLRM_REQUEST_BINLOGDUMP;
 
-				} else if (router->master_semi_sync == MASTER_SEMISYNC_DISABLED) {
-					MXS_NOTICE(stderr, "%s: master server %s:%d doesn't have semy_sync enabled",
+				}
+				else if (router->master_semi_sync == MASTER_SEMISYNC_DISABLED)
+				{
+					/* installed but not enabled */
+					MXS_NOTICE(stderr, "%s: master server %s:%d doesn't have semi_sync enabled",
 						router->service->name,
 						router->service->dbref->server->name,
 						router->service->dbref->server->port);
 
+					/* Continue */
 					router->master_state = BLRM_REQUEST_BINLOGDUMP;
-				} else {
+				}
+				else
+				{
 					/* Request semi-sync only if master value is ON */
-					MXS_NOTICE(stderr, "%s: master server %s:%d has semy_sync enabled, Requesting Semi-Sync Replication");
+					MXS_NOTICE(stderr, "%s: master server %s:%d has semi_sync enabled, Requesting Semi-Sync Replication");
 						router->service->name,
 						router->service->dbref->server->name,
 						router->service->dbref->server->port);
@@ -708,14 +726,25 @@ char	task_name[BLRM_TASK_NAME_LEN + 1] = "";
 			}
 		}
 	case BLRM_REQUEST_SEMISYNC:
-		if (router->master_state == BLRM_REQUEST_SEMISYNC) {
+		/**
+		 * This branch could be reached as fallthrough from BLRM_REGISTER or BLRM_CHECK_SEMISYNC
+		 * if request_semi_sync option is false or master doesn't support semisync or it's not enabled
+		 */
+		if (router->master_state == BLRM_REQUEST_SEMISYNC)
+		{
 			/* discard master reply */
 			gwbuf_consume(buf, GWBUF_LENGTH(buf));
 
+			/* Continue */
 			router->master_state = BLRM_REQUEST_BINLOGDUMP;
 		}
 	case BLRM_REQUEST_BINLOGDUMP:
-		/* Request a dump of the binlog file */
+		/**
+		 * This branch is reached after semi-sync check/request or 
+		 * just after sending COM_REGISTER_SLAVE if request_semi_sync option is false
+		 */
+
+		/* Request now a dump of the binlog file */
 		buf = blr_make_binlog_dump(router);
 
 		router->master_state = BLRM_BINLOGDUMP;
@@ -1338,9 +1367,7 @@ int			check_packet_len;
 
 							blr_send_semisync_ack(router, hdr.next_pos);
 
-							spinlock_acquire(&router->lock);
 							semi_sync_send_ack = 0;
-							spinlock_release(&router->lock);
 						}
 
 						/* Check for rotete event */
@@ -2350,7 +2377,7 @@ ROUTER_SLAVE    *slave;
  * @param pkt   The incoming packet in a GWBUF chain
  * @param hdr   The packet header to populate
  */
-void
+static void
 blr_extract_header_semisync(register uint8_t *ptr, register REP_HEADER *hdr)
 {
 
@@ -2375,25 +2402,26 @@ blr_extract_header_semisync(register uint8_t *ptr, register REP_HEADER *hdr)
  */
 
 static int
-blr_send_semisync_ack (ROUTER_INSTANCE *router, uint64_t pos) {
+blr_send_semisync_ack(ROUTER_INSTANCE *router, uint64_t pos) {
     int seqno = 0;
-    int semi_sync_flag = 0xef;
+    int semi_sync_flag = BLR_MASTER_SEMI_SYNC_INDICATOR;
     GWBUF   *buf;
     int     len;
     uint8_t *data;
+    int     binlog_file_len = strlen(router->binlog_name); 
 
-    /* payload */
-    len = strlen(router->binlog_name) + 1 + 8;
+    /* payload is: 1 byte semi-sync indicator + 8 bytes position + binlog name len */
+    len = 1 + 8 + binlog_file_len;
 
     /* add network header to size */
-    if ((buf = gwbuf_alloc(len+4)) == NULL)
+    if ((buf = gwbuf_alloc(len + 4)) == NULL)
         return 0;
 
-        data = GWBUF_DATA(buf);
+    data = GWBUF_DATA(buf);
 
-        encode_value(&data[0], len, 24);  // Payload length
-        data[3] = 0;                      // Sequence ID
-        data[4] = semi_sync_flag;         // Semi-sync indicator
+    encode_value(&data[0], len, 24);  // Payload length
+    data[3] = 0;                      // Sequence ID
+    data[4] = semi_sync_flag;         // Semi-sync indicator
 
     /**
      * Next Bytes are: 8 bytes log position + len bin_log filename
@@ -2403,7 +2431,7 @@ blr_send_semisync_ack (ROUTER_INSTANCE *router, uint64_t pos) {
     encode_value(&data[5], pos, 64);
 
     /* Binlog filename */
-    strncpy((char *)&data[13], router->binlog_name, BINLOG_FNAMELEN);
+    memcpy((char *)&data[13], router->binlog_name, binlog_file_len);
 
     router->master->func.write(router->master, buf);
 
