@@ -29,9 +29,7 @@
  *
  * @endverbatim
  */
-
 #include <buffer.h>
-#include <spinlock.h>
 #include <string.h>
 #include <mysql_client_server_protocol.h>
 #include <modutil.h>
@@ -184,11 +182,10 @@ modutil_MySQL_Query(GWBUF *buf, char **sql, int *length, int *residual)
  * @return the length of MySQL packet and writes missing bytecount to
  * nbytes_missing.
  */
-int
-modutil_MySQL_query_len(GWBUF* buf, int* nbytes_missing)
+int modutil_MySQL_query_len(GWBUF* buf, int* nbytes_missing)
 {
-    int     len;
-    int     buflen;
+    int len;
+    int buflen;
 
     if (!modutil_is_SQL(buf))
     {
@@ -196,10 +193,10 @@ modutil_MySQL_query_len(GWBUF* buf, int* nbytes_missing)
         goto retblock;
     }
     len = MYSQL_GET_PACKET_LEN((uint8_t *)GWBUF_DATA(buf));
-    *nbytes_missing = len-1;
+    *nbytes_missing = len - 1;
     buflen = gwbuf_length(buf);
 
-    *nbytes_missing -= buflen-5;
+    *nbytes_missing -= buflen - 5;
 
 retblock:
     return len;
@@ -460,22 +457,21 @@ GWBUF *modutil_create_mysql_err_msg(int        packet_number,
  *
  * Send a MySQL protocol Generic ERR message, to the dcb
  *
- * @param dcb               The DCB to send the packet
- * @param packet_number     MySQL protocol sequence number in the packet
- * @param in_affected_rows  MySQL affected rows
- * @param mysql_errno       The MySQL errno
- * @param sqlstate_msg      The MySQL State Message
- * @param mysql_message     The Error Message
- * @return	0 for successful dcb write or 1 on failure
+ * @param dcb                   The DCB to send the packet
+ * @param packet_number         MySQL protocol sequence number in the packet
+ * @param in_affected_rows      MySQL affected rows
+ * @param mysql_errno           The MySQL errno
+ * @param sqlstate_msg          The MySQL State Message
+ * @param mysql_message         The Error Message
+ * @return      0 for successful dcb write or 1 on failure
  *
  */
-int modutil_send_mysql_err_packet (
-	DCB		*dcb,
-	int		packet_number,
-	int		in_affected_rows,
-	int		mysql_errno,
-	const char	*sqlstate_msg,
-	const char	*mysql_message)
+int modutil_send_mysql_err_packet(DCB        *dcb,
+                                  int        packet_number,
+                                  int        in_affected_rows,
+                                  int        mysql_errno,
+                                  const char *sqlstate_msg,
+                                  const char *mysql_message)
 {
     GWBUF* buf;
 
