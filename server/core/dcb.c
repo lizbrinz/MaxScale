@@ -121,7 +121,7 @@ static inline void dcb_write_tidy_up(DCB *dcb, bool below_water);
 static void dcb_log_ssl_read_error(DCB *dcb, int ssl_errno, int rc);
 static int gw_write(DCB *dcb, bool *stop_writing);
 static int gw_write_SSL(DCB *dcb, bool *stop_writing);
-static void dcb_log_errors_SSL (DCB *dcb, const char *called_by);
+static void dcb_log_errors_SSL (DCB *dcb, const char *called_by, int ret);
 
 size_t dcb_get_session_id(
     DCB *dcb)
@@ -1192,12 +1192,15 @@ dcb_basic_read_SSL(DCB *dcb, int *nsingleread)
         *nsingleread = 0;
         break;
 
+    case SSL_ERROR_SYSCALL:
+        dcb_log_errors_SSL(dcb, __func__, *nsingleread);
+        *nsingleread = -1;
+        break;
+
     default:
-        {
-            dcb_log_errors_SSL(dcb, __func__);
-            *nsingleread = -1;
-            break;
-        }
+        dcb_log_errors_SSL(dcb, __func__, 0);
+        *nsingleread = -1;
+        break;
     }
     return buffer;
 }
@@ -1207,10 +1210,11 @@ dcb_basic_read_SSL(DCB *dcb, int *nsingleread)
  *
  * @param dcb       The DCB of the client
  * @param called_by Name of the calling function
+ * @param ret       Return code from SSL operation if error is SSL_ERROR_SYSCALL
  * @return          void
  */
 static void
-dcb_log_errors_SSL (DCB *dcb, const char *called_by)
+dcb_log_errors_SSL (DCB *dcb, const char *called_by, int ret)
 {
     char errbuf[STRERROR_BUFLEN];
     unsigned long ssl_errno;
@@ -1222,10 +1226,23 @@ dcb_log_errors_SSL (DCB *dcb, const char *called_by)
         STRDCBSTATE(dcb->state),
         dcb->fd);
 
-    while ((ssl_errno = ERR_get_error()) != 0)
+    ssl_errno = ERR_get_error();
+    if (ret && !ssl_errno)
     {
-        ERR_error_string_n(ssl_errno, errbuf, STRERROR_BUFLEN);
-        MXS_ERROR("%s", errbuf);
+        int local_errno = errno;
+        MXS_ERROR("SSL error caused by TCP error %d %s",
+            local_errno,
+            strerror_r(local_errno, errbuf, sizeof(errbuf))
+            );
+    }
+    else
+    {
+        while (ssl_errno != 0)
+        {
+            ERR_error_string_n(ssl_errno, errbuf, STRERROR_BUFLEN);
+            MXS_ERROR("%s", errbuf);
+            ssl_errno = ERR_get_error();
+        }
     }
 }
 
@@ -2151,13 +2168,13 @@ void dcb_hashtable_stats(
 static int
 gw_write_SSL(DCB *dcb, bool *stop_writing)
 {
-    int written, ssl_errno;
+    int written;
     char errbuf[STRERROR_BUFLEN];
 
     written = SSL_write(dcb->ssl, GWBUF_DATA(dcb->writeq), GWBUF_LENGTH(dcb->writeq));
 
     *stop_writing = false;
-    switch ((ssl_errno = SSL_get_error(dcb->ssl, written)))
+    switch ((SSL_get_error(dcb->ssl, written)))
     {
     case SSL_ERROR_NONE:
         /* Successful write */
@@ -2185,27 +2202,16 @@ gw_write_SSL(DCB *dcb, bool *stop_writing)
         dcb->ssl_write_want_write = true;
         break;
 
+    case SSL_ERROR_SYSCALL:
+        *stop_writing = true;
+        dcb_log_errors_SSL(dcb, __func__, written);
+        poll_fake_hangup_event(dcb);
+        break;
+
     default:
         /* Report error(s) and shutdown the connection */
         *stop_writing = true;
-        MXS_ERROR("[%s] Read failed, dcb %p in state "
-                  "%s fd %d, SSL error %d: %s.",
-                  __func__,
-                  dcb,
-                  STRDCBSTATE(dcb->state),
-                  dcb->fd,
-                  ssl_errno,
-                  strerror_r(errno, errbuf, sizeof(errbuf)));
-
-        if (ssl_errno == SSL_ERROR_SSL ||
-            ssl_errno == SSL_ERROR_SYSCALL)
-        {
-            while ((ssl_errno = ERR_get_error()) != 0)
-            {
-                ERR_error_string_n(ssl_errno, errbuf, STRERROR_BUFLEN);
-                MXS_ERROR("%s", errbuf);
-            }
-        }
+        dcb_log_errors_SSL(dcb, __func__, 0);
         poll_fake_hangup_event(dcb);
         break;
     }
@@ -2877,103 +2883,25 @@ int dcb_accept_SSL(DCB* dcb)
 
         case SSL_ERROR_ZERO_RETURN:
             MXS_DEBUG("SSL error, shut down cleanly during SSL accept %s", dcb->remote);
-            dcb_log_errors_SSL(dcb, __func__);
+            dcb_log_errors_SSL(dcb, __func__, 0);
             poll_fake_hangup_event(dcb);
             return 0;
             break;
 
+        case SSL_ERROR_SYSCALL:
+            MXS_DEBUG("SSL connection SSL_ERROR_SYSCALL error during accept %s", dcb->remote);
+            dcb_log_errors_SSL(dcb, __func__, ssl_rval);
+            poll_fake_hangup_event(dcb);
+            return -1;
+            break;
+
         default:
             MXS_DEBUG("SSL connection shut down with error during SSL accept %s", dcb->remote);
-            dcb_log_errors_SSL(dcb, __func__);
+            dcb_log_errors_SSL(dcb, __func__, 0);
             poll_fake_hangup_event(dcb);
             return -1;
             break;
     }
-}
-
-int old_dcb_accept_SSL(DCB* dcb)
-{
-    int rval = 0, ssl_rval, ssl_errnum = 0, fd, b = 0, pending;
-    int err_errnum;
-    char errbuf[SSL_ERRBUF_LEN];
-    fd = dcb->fd;
-
-    do
-    {
-        ssl_rval = SSL_accept(dcb->ssl);
-
-        MXS_DEBUG("[dcb_accept_SSL] SSL_accept %d, error %d", ssl_rval,ssl_errnum);
-        switch(ssl_rval)
-        {
-        case 0:
-            ssl_errnum = SSL_get_error(dcb->ssl,ssl_rval);
-            MXS_ERROR("SSL authentication failed (SSL error %d):", ssl_errnum);
-
-            if (ssl_errnum == SSL_ERROR_SSL ||
-               ssl_errnum == SSL_ERROR_SYSCALL)
-            {
-                while ((err_errnum = ERR_get_error()) != 0)
-                {
-                    ERR_error_string_n(err_errnum,errbuf,sizeof(errbuf));
-                    MXS_ERROR("%s", errbuf);
-                }
-            }
-            rval = -1;
-            break;
-        case 1:
-            rval = 1;
-            MXS_DEBUG("[dcb_accept_SSL] SSL_accept done for %s", dcb->remote);
-            return rval;
-
-        case -1:
-            ssl_errnum = SSL_get_error(dcb->ssl,ssl_rval);
-
-            if (ssl_errnum == SSL_ERROR_WANT_READ || ssl_errnum == SSL_ERROR_WANT_WRITE)
-            {
-                /** Not all of the data has been read. Go back to the poll
-                    queue and wait for more.*/
-                rval = 0;
-                MXS_DEBUG("[dcb_accept_SSL] SSL_accept ongoing for %s", dcb->remote);
-                return rval;
-            }
-            else
-            {
-                rval = -1;
-                MXS_ERROR("Fatal error in SSL_accept for %s: (SSL version: %s SSL error code: %d)",
-                          dcb->remote,
-                          SSL_get_version(dcb->ssl),
-                          ssl_errnum);
-                if (ssl_errnum == SSL_ERROR_SSL ||
-                   ssl_errnum == SSL_ERROR_SYSCALL)
-                {
-                    while ((err_errnum = ERR_get_error()) != 0)
-                    {
-                        ERR_error_string_n(err_errnum,errbuf,sizeof(errbuf));
-                        MXS_ERROR("%s", errbuf);
-                    }
-                    if (errno)
-                    {
-                        MXS_ERROR("SSL authentication failed due to system"
-                                  " error %d: %s", errno, strerror_r(errno, errbuf, sizeof(errbuf)));
-                    }
-                }
-            }
-            break;
-
-        default:
-            MXS_ERROR("Fatal library error in SSL_accept, returned value was %d.", ssl_rval);
-            rval = -1;
-            break;
-        }
-        ioctl(fd,FIONREAD,&b);
-        pending = SSL_pending(dcb->ssl);
-#ifdef SS_DEBUG
-        MXS_DEBUG("[dcb_accept_SSL] fd %d: %d bytes, %d pending", fd, b, pending);
-#endif
-    }
-    while ((b > 0 || pending > 0) && rval != -1);
-
-    return rval;
 }
 
 /**
@@ -3010,14 +2938,21 @@ int dcb_connect_SSL(DCB* dcb)
 
         case SSL_ERROR_ZERO_RETURN:
             MXS_DEBUG("SSL error, shut down cleanly during SSL connect %s", dcb->remote);
-            dcb_log_errors_SSL(dcb, __func__);
+            dcb_log_errors_SSL(dcb, __func__, 0);
             poll_fake_hangup_event(dcb);
             return 0;
             break;
 
+        case SSL_ERROR_SYSCALL:
+            MXS_DEBUG("SSL connection shut down with SSL_ERROR_SYSCALL during SSL connect %s", dcb->remote);
+            dcb_log_errors_SSL(dcb, __func__, ssl_rval);
+            poll_fake_hangup_event(dcb);
+            return -1;
+            break;
+
         default:
             MXS_DEBUG("SSL connection shut down with error during SSL connect %s", dcb->remote);
-            dcb_log_errors_SSL(dcb, __func__);
+            dcb_log_errors_SSL(dcb, __func__, 0);
             poll_fake_hangup_event(dcb);
             return -1;
             break;
