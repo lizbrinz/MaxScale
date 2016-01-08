@@ -49,6 +49,8 @@
  * 28/06/13     Mark Riddoch        Initial implementation
  * 20/08/15     Martin Brampton     Added caveats about limitations (above)
  * 17/10/15     Martin Brampton     Added display of bitmask
+ * 04/01/16     Martin Brampton     Changed bitmask_clear to not lock and return
+ *                                  whether bitmask is clear; added bitmask_clear_with_lock.
  *
  * @endverbatim
  */
@@ -138,14 +140,14 @@ bitmask_set(GWBITMASK *bitmask, int bit)
  * Note that this function does not lock the bitmask, but assumes that
  * it is under the exclusive control of the caller.  If you want to use the
  * bitmask spinlock to protect access while clearing the bit, then call
- * the alternative bitmask_clear_with_lock.
+ * the alternative bitmask_clear.
  *
  * @param bitmask       Pointer the bitmask
  * @param bit           Bit to clear
  * @return int          1 if the bitmask is all clear after the operation, else 0.
  */
 int
-bitmask_clear(GWBITMASK *bitmask, int bit)
+bitmask_clear_without_spinlock(GWBITMASK *bitmask, int bit)
 {
     unsigned char *ptr = bitmask->bits;
     int i;
@@ -172,30 +174,28 @@ bitmask_clear(GWBITMASK *bitmask, int bit)
 
 /**
  * Clear the bit at the specified bit position in the bitmask using a spinlock.
- * See bitmask_clear for more details
+ * See bitmask_clear_without_spinlock for more details
  *
  * @param bitmask       Pointer the bitmask
  * @param bit           Bit to clear
  * @return int          1 if the bitmask is all clear after the operation, else 0
  */
 int
-bitmask_clear_with_lock(GWBITMASK *bitmask, int bit)
+bitmask_clear(GWBITMASK *bitmask, int bit)
 {
     int result;
 
     spinlock_acquire(&bitmask->lock);
-    result = bitmask_clear(bitmask, bit);
+    result = bitmask_clear_without_spinlock(bitmask, bit);
     spinlock_release(&bitmask->lock);
     return result;
 }
 
 /**
  * Return a non-zero value if the bit at the specified bit
- * position in the bitmask is set.
- * The bitmask will automatically be extended if the bit is
- * beyond the current bitmask length. The work is done in the function
- * bitmask_isset_without_spinlock, which can be called when a spinlock
- * has already been acquired.
+ * position in the bitmask is set. If the specified bit is outside the
+ * bitmask, it is assumed to be unset; the bitmask is not extended.
+ * This function wraps bitmask_isset_without_spinlock with a spinlock.
  *
  * @param bitmask       Pointer the bitmask
  * @param bit           Bit to test
@@ -214,11 +214,9 @@ bitmask_isset(GWBITMASK *bitmask, int bit)
 /**
  * Return a non-zero value if the bit at the specified bit
  * position in the bitmask is set.  Should be called while holding a
- * lock on the bitmask.
+ * lock on the bitmask or having control of it in some other way.
  *
- * The bitmask will automatically be extended if the bit is
- * beyond the current bitmask length. This could be optimised
- * by assuming that a bit beyond the length is unset.
+ * Bits beyond the current length are deemed unset.
  *
  * @param bitmask       Pointer the bitmask
  * @param bit           Bit to test

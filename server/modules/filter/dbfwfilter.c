@@ -30,14 +30,16 @@
  *@code{.unparsed}
  *		rules=<path to file>			Location of the rule file
  *@endcode
- * Rules are defined in a separate rule file that lists all the rules and the users to whom the rules are applied.
+ * Rules are defined in a separate rule file that lists all the rules and the users to whom the
+ * rules are applied.
  * Rules follow a simple syntax that denies the queries that meet the requirements of the rules.
  * For example, to define a rule denying users from accessing the column 'salary' between
  * the times 15:00 and 17:00, the following rule is to be configured into the configuration file:
  *@code{.unparsed}
  *		rule block_salary deny columns salary at_times 15:00:00-17:00:00
  *@endcode
- * The users are matched by username and network address. Wildcard values can be provided by using the '%' character.
+ * The users are matched by username and network address. Wildcard values can be provided by
+ * using the '%' character.
  * For example, to apply this rule to users John, connecting from any address
  * that starts with the octets 198.168.%, and Jane, connecting from the address 192.168.0.1:
  *@code{.unparsed}
@@ -51,7 +53,9 @@
  * @subsection secRule Rule syntax
  * This is the syntax used when defining rules.
  *@code{.unparsed}
- * rule NAME deny [wildcard | columns VALUE ... | regex REGEX | limit_queries COUNT TIMEPERIOD HOLDOFF | no_where_clause] [at_times VALUE...] [on_queries [select|update|insert|delete]]
+ * rule NAME deny [wildcard | columns VALUE ... | regex REGEX |
+ *           limit_queries COUNT TIMEPERIOD HOLDOFF | no_where_clause] [at_times VALUE...]
+ *           [on_queries [select|update|insert|delete]]
  *@endcode
  * @subsection secUser User syntax
  * This is the syntax used when linking users to rules. It takes one or more
@@ -384,7 +388,8 @@ char* strip_tags(char* str)
  * Parses a string that contains an IP address and converts the last octet to '%'.
  * This modifies the string passed as the parameter.
  * @param str String to parse
- * @return Pointer to modified string or NULL if an error occurred or the string can't be made any less specific
+ * @return Pointer to modified string or NULL if an error occurred or the string can't
+ *         be made any less specific
  */
 char* next_ip_class(char* str)
 {
@@ -573,7 +578,8 @@ static TIMERANGE* parse_time(const char* str)
 /**
  * Splits the reversed timerange into two.
  *@param tr A reversed timerange
- *@return If the timerange is reversed, returns a pointer to the new TIMERANGE otherwise returns a NULL pointer
+ *@return If the timerange is reversed, returns a pointer to the new TIMERANGE
+ *        otherwise returns a NULL pointer
  */
 TIMERANGE* split_reverse_time(TIMERANGE* tr)
 {
@@ -690,7 +696,8 @@ bool link_rules(char* orig, FW_INSTANCE* instance)
     if ((userptr == NULL || ruleptr == NULL || modeptr == NULL) ||
         (userptr > modeptr || userptr > ruleptr || modeptr > ruleptr))
     {
-        MXS_ERROR("dbfwfilter: Rule syntax incorrect, right keywords not found in the correct order: %s", orig);
+        MXS_ERROR("dbfwfilter: Rule syntax incorrect, "
+                  "right keywords not found in the correct order: %s", orig);
         rval = false;
         goto parse_err;
     }
@@ -702,7 +709,8 @@ bool link_rules(char* orig, FW_INSTANCE* instance)
 
     if (tok == NULL)
     {
-        MXS_ERROR("dbfwfilter: Rule syntax incorrect, right keywords not found in the correct order: %s", orig);
+        MXS_ERROR("dbfwfilter: Rule syntax incorrect, "
+                  "right keywords not found in the correct order: %s", orig);
         rval = false;
         goto parse_err;
     }
@@ -731,7 +739,8 @@ bool link_rules(char* orig, FW_INSTANCE* instance)
         }
         else
         {
-            MXS_ERROR("dbfwfilter: Rule syntax incorrect, 'match' was not followed by correct keyword: %s", orig);
+            MXS_ERROR("dbfwfilter: Rule syntax incorrect, "
+                      "'match' was not followed by correct keyword: %s", orig);
             rval = false;
             goto parse_err;
         }
@@ -989,7 +998,7 @@ bool parse_rule_definition(FW_INSTANCE* instance, RULE* ruledef, char* rule, cha
             {
                 bool escaped = false;
                 regex_t *re;
-                char* start, *str;
+                char* start;
                 tok = strtok_r(NULL, " ", saveptr);
                 char delim = '\'';
                 int n_char = 0;
@@ -1037,25 +1046,19 @@ bool parse_rule_definition(FW_INSTANCE* instance, RULE* ruledef, char* rule, cha
 
                 if (n_char >= 2048)
                 {
-                    MXS_ERROR("dbfwfilter: Failed to parse rule, regular expression length is over 2048 characters.");
+                    MXS_ERROR("dbfwfilter: Failed to parse rule, "
+                              "regular expression length is over 2048 characters.");
                     rval = false;
                     goto retblock;
                 }
 
-                str = calloc(((tok - start) + 1), sizeof(char));
-                if (str == NULL)
-                {
-                    MXS_ERROR("Fatal Error: malloc returned NULL.");
-                    rval = false;
-                    goto retblock;
-                }
+                char str[(tok - start) + 1];
                 re = (regex_t*) malloc(sizeof(regex_t));
 
                 if (re == NULL)
                 {
                     MXS_ERROR("Fatal Error: malloc returned NULL.");
                     rval = false;
-                    free(str);
                     goto retblock;
                 }
 
@@ -1073,7 +1076,6 @@ bool parse_rule_definition(FW_INSTANCE* instance, RULE* ruledef, char* rule, cha
                     ruledef->type = RT_REGEX;
                     ruledef->data = (void*) re;
                 }
-                free(str);
 
             }
             else if (strcmp(tok, "limit_queries") == 0)
@@ -1267,11 +1269,8 @@ createInstance(char **options, FILTER_PARAMETER **params)
     {
         if (strcmp(params[i]->name, "rules") == 0)
         {
-            if (filename)
-            {
-                free(filename);
-            }
-            filename = strdup(params[i]->value);
+            filename = params[i]->value;
+            break;
         }
     }
 
@@ -1282,6 +1281,7 @@ createInstance(char **options, FILTER_PARAMETER **params)
             if (strcmp(options[i], "ignorecase") == 0)
             {
                 my_instance->regflags |= REG_ICASE;
+                break;
             }
         }
     }
@@ -1300,7 +1300,6 @@ createInstance(char **options, FILTER_PARAMETER **params)
         MXS_ERROR("Error while opening rule file for firewall filter.");
         hashtable_free(my_instance->htable);
         free(my_instance);
-        free(filename);
         return NULL;
     }
 
@@ -1350,16 +1349,15 @@ createInstance(char **options, FILTER_PARAMETER **params)
     if (file_empty)
     {
         MXS_ERROR("dbfwfilter: File is empty: %s", filename);
-        free(filename);
         err = true;
         goto retblock;
     }
 
     fclose(file);
-    free(filename);
 
     /**Apply the rules to users*/
     ptr = my_instance->userstrings;
+    my_instance->userstrings = NULL;
 
     if (ptr == NULL)
     {
@@ -1585,7 +1583,12 @@ bool rule_is_active(RULE* rule)
  * @param query Pointer to the null-terminated query string
  * @return true if the query matches the rule
  */
-bool rule_matches(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *queue, USER* user, RULELIST *rulelist, char* query)
+bool rule_matches(FW_INSTANCE* my_instance,
+                  FW_SESSION* my_session,
+                  GWBUF *queue,
+                  USER* user,
+                  RULELIST *rulelist,
+                  char* query)
 {
     char *ptr, *where, *msg = NULL;
     char emsg[512];
@@ -1607,13 +1610,8 @@ bool rule_matches(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *queue
 
     if (is_sql)
     {
-        if (!query_is_parsed(queue))
-        {
-            parse_query(queue);
-        }
         optype = query_classifier_get_operation(queue);
         is_real = skygw_is_real_query(queue);
-
     }
 
     if (rulelist->rule->on_queries == QUERY_OP_UNDEFINED || rulelist->rule->on_queries & optype)
@@ -1713,7 +1711,8 @@ bool rule_matches(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *queue
 
                             matches = true;
                             msg = strdup("Usage of wildcard denied.");
-                            MXS_INFO("dbfwfilter: rule '%s': query contains a wildcard.", rulelist->rule->name);
+                            MXS_INFO("dbfwfilter: rule '%s': query contains a wildcard.",
+                                     rulelist->rule->name);
                             goto queryresolved;
                         }
                         free(where);
@@ -1761,10 +1760,12 @@ bool rule_matches(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *queue
                     if (difftime(time_now, queryspeed->triggered) < queryspeed->cooldown)
                     {
 
-                        double blocked_for = queryspeed->cooldown - difftime(time_now, queryspeed->triggered);
+                        double blocked_for =
+                            queryspeed->cooldown - difftime(time_now, queryspeed->triggered);
 
                         sprintf(emsg, "Queries denied for %f seconds", blocked_for);
-                        MXS_INFO("dbfwfilter: rule '%s': user denied for %f seconds", rulelist->rule->name, blocked_for);
+                        MXS_INFO("dbfwfilter: rule '%s': user denied for %f seconds",
+                                 rulelist->rule->name, blocked_for);
                         msg = strdup(emsg);
                         matches = true;
                     }
@@ -1788,7 +1789,8 @@ bool rule_matches(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *queue
                                  queryspeed->limit,
                                  queryspeed->period,
                                  queryspeed->cooldown);
-                        double blocked_for = queryspeed->cooldown - difftime(time_now, queryspeed->triggered);
+                        double blocked_for =
+                            queryspeed->cooldown - difftime(time_now, queryspeed->triggered);
                         sprintf(emsg, "Queries denied for %f seconds", blocked_for);
                         msg = strdup(emsg);
                     }
@@ -1860,11 +1862,6 @@ bool check_match_any(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *qu
 
     if (is_sql)
     {
-        if (!query_is_parsed(queue))
-        {
-            parse_query(queue);
-        }
-
         qlen = gw_mysql_get_byte3(memptr);
         qlen = qlen < 0xffffff ? qlen : 0xffffff;
         fullquery = malloc((qlen) * sizeof(char));
@@ -1908,7 +1905,11 @@ retblock:
  * @param user The user whose rulelist is checked
  * @return True if the query matches all of the rules otherwise false
  */
-bool check_match_all(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *queue, USER* user, bool strict_all)
+bool check_match_all(FW_INSTANCE* my_instance,
+                     FW_SESSION* my_session,
+                     GWBUF *queue,
+                     USER* user,
+                     bool strict_all)
 {
     bool is_sql, rval = true;
     bool have_active_rule = false;
@@ -1921,11 +1922,6 @@ bool check_match_all(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *qu
 
     if (is_sql)
     {
-        if (!query_is_parsed(queue))
-        {
-            parse_query(queue);
-        }
-
         qlen = gw_mysql_get_byte3(memptr);
         qlen = qlen < 0xffffff ? qlen : 0xffffff;
         fullquery = malloc((qlen) * sizeof(char));
@@ -2181,6 +2177,10 @@ bool parse_at_times(const char** tok, char** saveptr, RULE* ruledef)
     if (success)
     {
         ruledef->active = tr;
+    }
+    else
+    {
+        free(tr);
     }
 
     return success;

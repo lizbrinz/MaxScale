@@ -483,7 +483,7 @@ dcb_process_zombies(int threadid)
         else
         {
 
-            if (bitmask_clear(&zombiedcb->memdata.bitmask, threadid))
+            if (bitmask_clear_without_spinlock(&zombiedcb->memdata.bitmask))
             {
                 /**
                  * Remove the DCB from the zombie queue
@@ -635,6 +635,9 @@ dcb_process_victim_queue(DCB *listofdcb)
             }
             else
             {
+#if defined(FAKE_CODE)
+                conn_open[dcb->fd] = false;
+#endif /* FAKE_CODE */
                 dcb->fd = DCBFD_CLOSED;
 
                 MXS_DEBUG("%lu [dcb_process_victim_queue] Closed socket "
@@ -642,9 +645,6 @@ dcb_process_victim_queue(DCB *listofdcb)
                           pthread_self(),
                           dcb->fd,
                           dcb);
-#if defined(FAKE_CODE)
-                conn_open[dcb->fd] = false;
-#endif /* FAKE_CODE */
             }
         }
 

@@ -88,4 +88,5 @@ int  parse_bindconfig(char *, unsigned short, struct sockaddr_in *);
 int setipaddress(struct in_addr *, char *);
 char* get_libdir();
 long get_processor_count();
+void clean_up_pathname(char *path);
 #endif

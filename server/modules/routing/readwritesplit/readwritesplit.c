@@ -833,6 +833,7 @@ static void* newSession(
          */
         client_rses->rses_autocommit_enabled = true;
         client_rses->rses_transaction_active = false;
+        client_rses->have_tmp_tables = false;
         
         router_nservers = router_get_servercount(router);
         
@@ -1380,8 +1381,6 @@ static route_target_t get_route_target (
 	 * These queries are not affected by hints
 	 */
 	if (!load_active && (QUERY_IS_TYPE(qtype, QUERY_TYPE_SESSION_WRITE) ||
-		QUERY_IS_TYPE(qtype, QUERY_TYPE_PREPARE_STMT) ||
-		QUERY_IS_TYPE(qtype, QUERY_TYPE_PREPARE_NAMED_STMT) ||
 		/** Configured to allow writing variables to all nodes */
 		(use_sql_variables_in == TYPE_ALL &&
 			QUERY_IS_TYPE(qtype, QUERY_TYPE_GSYSVAR_WRITE)) ||
@@ -1755,6 +1754,11 @@ static void check_create_tmp_table(
 	GWBUF*  querybuf,
 	skygw_query_type_t type)
 {
+    if (!QUERY_IS_TYPE(type, QUERY_TYPE_CREATE_TMP_TABLE))
+    {
+        return;
+    }
+
   int klen = 0;
   char *hkey,*dbname;
   MYSQL_session* data;
@@ -1776,6 +1780,7 @@ static void check_create_tmp_table(
       return;
   }
 
+  router_cli_ses->have_tmp_tables = true;
   rses_prop_tmp = router_cli_ses->rses_properties[RSES_PROP_TYPE_TMPTABLES];
   master_dcb = router_cli_ses->rses_master_ref->bref_dcb;
 
@@ -1800,8 +1805,6 @@ static void check_create_tmp_table(
   dbname = (char*)data->db;
 
 
-  if (QUERY_IS_TYPE(type, QUERY_TYPE_CREATE_TMP_TABLE))
-    {
       bool  is_temp = true;
       char* tblname = NULL;
 		
@@ -1877,7 +1880,6 @@ static void check_create_tmp_table(
 	  
       free(hkey);
       free(tblname);
-    }
 }
 
 /**
@@ -2131,14 +2133,14 @@ static bool route_single_stmt(
 		case MYSQL_COM_DEBUG:       /*< 0d all servers dump debug info to stdout */
 		case MYSQL_COM_PING:        /*< 0e all servers are pinged */
 		case MYSQL_COM_CHANGE_USER: /*< 11 all servers change it accordingly */
-		case MYSQL_COM_STMT_CLOSE:  /*< free prepared statement */
-		case MYSQL_COM_STMT_SEND_LONG_DATA: /*< send data to column */
-		case MYSQL_COM_STMT_RESET:  /*< resets the data of a prepared statement */
 			qtype = QUERY_TYPE_SESSION_WRITE;
 			break;
 			
 		case MYSQL_COM_CREATE_DB:   /**< 5 DDL must go to the master */
 		case MYSQL_COM_DROP_DB:     /**< 6 DDL must go to the master */
+		case MYSQL_COM_STMT_CLOSE:  /*< free prepared statement */
+		case MYSQL_COM_STMT_SEND_LONG_DATA: /*< send data to column */
+		case MYSQL_COM_STMT_RESET:  /*< resets the data of a prepared statement */
 			qtype = QUERY_TYPE_WRITE;
 			break;
 			
@@ -2176,9 +2178,16 @@ static bool route_single_stmt(
     /**
      * Check if the query has anything to do with temporary tables.
      */
-	qtype = is_read_tmp_table(rses, querybuf, qtype);
+    if(rses->have_tmp_tables && (packet_type == MYSQL_COM_QUERY ||
+                                 packet_type == MYSQL_COM_DROP_DB))
+    {
+        check_drop_tmp_table(rses, querybuf,qtype);
+        if(packet_type == MYSQL_COM_QUERY)
+        {
+            qtype = is_read_tmp_table(rses, querybuf, qtype);
+        }
+    }
 	check_create_tmp_table(rses, querybuf, qtype);
-	check_drop_tmp_table(rses, querybuf,qtype);
 
     /**
      * Check if this is a LOAD DATA LOCAL INFILE query. If so, send all queries

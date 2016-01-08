@@ -37,8 +37,8 @@
  *                                      the gwbuf_append process
  * 09/11/2015   Martin Brampton         Add buffer tracing (conditional compilation),
  *                                      accessed by "show buffers" maxadmin command
- * 20/12/2015   Martin Brampton         Change gwbuf_free to free the whole list;
- *                                      add the gwbuf_count function.
+ * 20/12/2015   Martin Brampton         Change gwbuf_free to free the whole list; add the
+ *                                      gwbuf_count and gwbuf_alloc_and_load functions.
  *
  * @endverbatim
  */
@@ -256,7 +256,7 @@ dprintAllBuffers(void *pdcb)
 /**
  * Free a list of gateway buffers
  *
- * @param buf The list of buffers to free
+ * @param buf The head of the list of buffers to free
  */
 void
 gwbuf_free(GWBUF *buf)
