@@ -44,8 +44,6 @@
  * 11/06/2015   Martin Brampton         COM_QUIT suppressed for persistent connections
  * 04/09/2015   Martin Brampton         Introduce DUMMY session to fulfill guarantee DCB always has session
  * 09/09/2015   Martin Brampton         Modify error handler calls
- * 04/01/2016   Martin Brampton         Update mechanism for freeing buffers after use,
- *                                      remove separate SSL processing for read or write.
  */
 #include <skygw_utils.h>
 #include <log_manager.h>
@@ -75,6 +73,8 @@ static int gw_error_client_event(DCB *dcb);
 static int gw_client_close(DCB *dcb);
 static int gw_client_hangup_event(DCB *dcb);
 int gw_read_client_event_SSL(DCB* dcb);
+int gw_MySQLWrite_client_SSL(DCB *dcb, GWBUF *queue);
+int gw_write_client_event_SSL(DCB *dcb);
 int mysql_send_ok(DCB *dcb, int packet_number, int in_affected_rows, const char* mysql_message);
 int MySQLSendHandshake(DCB* dcb);
 static int gw_mysql_do_authentication(DCB *dcb, GWBUF **queue);
@@ -646,6 +646,25 @@ int gw_MySQLWrite_client(DCB *dcb, GWBUF *queue)
     return dcb_write(dcb, queue);
 }
 
+
+/**
+ * Write function for client DCB: writes data from MaxScale to Client using SSL
+ * encryption. The SSH handshake must have already been done.
+ *
+ * @param dcb   The DCB of the client
+ * @param queue Queue of buffers to write
+ */
+int gw_MySQLWrite_client_SSL(DCB *dcb, GWBUF *queue)
+{
+    CHK_DCB(dcb);
+#ifdef SS_DEBUG
+    MySQLProtocol  *protocol = NULL;
+    protocol = DCB_PROTOCOL(dcb, MySQLProtocol);
+    CHK_PROTOCOL(protocol);
+#endif
+    return dcb_write_SSL(dcb, queue);
+}
+
 /**
  * Client read event triggered by EPOLLIN
  *
@@ -755,8 +774,10 @@ int gw_read_client_event(DCB* dcb)
                                   2,
                                   0,
                                   "failed to create new session");
-            gwbuf_free(read_buffer);
-            read_buffer = NULL;
+            while (read_buffer)
+            {
+                read_buffer = gwbuf_consume(read_buffer, GWBUF_LENGTH(read_buffer));
+            }
             return 0;
         }
 
@@ -844,8 +865,10 @@ int gw_read_client_event(DCB* dcb)
                 /** SSL was requested and the handshake is either done or
                  * still ongoing. After the handshake is done, the client
                  * will send another auth packet. */
-                gwbuf_free(read_buffer);
-                read_buffer = NULL;
+                while ((read_buffer = gwbuf_consume(read_buffer,GWBUF_LENGTH(read_buffer))))
+                {
+                    ;
+                }
                 break;
             }
 
@@ -939,8 +962,7 @@ int gw_read_client_event(DCB* dcb)
 
                 dcb_close(dcb);
             }
-            gwbuf_free(read_buffer);
-            read_buffer = NULL;
+            read_buffer = gwbuf_consume(read_buffer, nbytes_read);
         }
         break;
 
@@ -1040,8 +1062,7 @@ int gw_read_client_event(DCB* dcb)
 
                 dcb_close(dcb);
             }
-            gwbuf_free(read_buffer);
-            read_buffer = NULL;
+            read_buffer = gwbuf_consume(read_buffer, nbytes_read);
         }
         break;
 
@@ -1151,8 +1172,10 @@ int gw_read_client_event(DCB* dcb)
                                       "Session will be closed.");
 
                         }
-                        gwbuf_free(read_buffer);
-                        read_buffer = NULL;
+                        while (read_buffer)
+                        {
+                            read_buffer = gwbuf_consume(read_buffer, GWBUF_LENGTH(read_buffer));
+                        }
                     }
                 }
             }
@@ -1233,6 +1256,56 @@ int gw_write_client_event(DCB *dcb)
     if (protocol->protocol_auth_state == MYSQL_IDLE)
     {
         dcb_drain_writeq(dcb);
+        goto return_1;
+    }
+
+return_1:
+#if defined(SS_DEBUG)
+    if (dcb->state == DCB_STATE_POLLING ||
+        dcb->state == DCB_STATE_NOPOLLING ||
+        dcb->state == DCB_STATE_ZOMBIE)
+    {
+        CHK_PROTOCOL(protocol);
+    }
+#endif
+    return 1;
+}
+
+/**
+ * EPOLLOUT event arrived and as a consequence, client input buffer (writeq) is
+ * flushed. The data is encrypted and SSL is used. The SSL handshake must have
+ * been successfully completed prior to this function being called.
+ * @param client dcb
+ * @return constantly 1
+ */
+int gw_write_client_event_SSL(DCB *dcb)
+{
+    MySQLProtocol *protocol = NULL;
+
+    CHK_DCB(dcb);
+
+    ss_dassert(dcb->state != DCB_STATE_DISCONNECTED);
+
+    if (dcb == NULL)
+    {
+        goto return_1;
+    }
+
+    if (dcb->state == DCB_STATE_DISCONNECTED)
+    {
+        goto return_1;
+    }
+
+    if (dcb->protocol == NULL)
+    {
+        goto return_1;
+    }
+    protocol = (MySQLProtocol *)dcb->protocol;
+    CHK_PROTOCOL(protocol);
+
+    if (protocol->protocol_auth_state == MYSQL_IDLE)
+    {
+        dcb_drain_writeq_SSL(dcb);
         goto return_1;
     }
 
@@ -1909,6 +1982,11 @@ int do_ssl_accept(MySQLProtocol* protocol)
         protocol->protocol_auth_state = MYSQL_AUTH_SSL_HANDSHAKE_DONE;
         protocol->use_ssl = true;
         spinlock_release(&protocol->protocol_lock);
+
+        spinlock_acquire(&dcb->authlock);
+        dcb->func.write = gw_MySQLWrite_client_SSL;
+        dcb->func.write_ready = gw_write_client_event_SSL;
+        spinlock_release(&dcb->authlock);
 
         rval = 1;
 
