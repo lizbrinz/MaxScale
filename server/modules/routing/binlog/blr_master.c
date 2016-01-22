@@ -109,8 +109,9 @@ static int keepalive = 1;
 typedef enum
 {
     BLRM_NO_TRANSACTION, /*< No transaction */
-    BLRM_PENDING_COMMIT_EVENT, /*< Waiting for the COMMIT event in the current transaction */
-    BLRM_PENDING_XID_EVENT /*< Waiting for the XID event of current transaction */
+    BLRM_TRANSACTION_START, /*< A transaction is open*/
+    BLRM_COMMIT_SEEN, /*< Received COMMIT event in the current transaction */
+    BLRM_XID_EVENT_SEEN /*< Received XID event of current transaction */
 } master_transaction_t;
 
 /** Master Semi-Sync capability */
@@ -698,24 +699,25 @@ char	task_name[BLRM_TASK_NAME_LEN + 1] = "";
 					router->master_state = BLRM_REQUEST_BINLOGDUMP;
 
 				}
-				else if (router->master_semi_sync == MASTER_SEMISYNC_DISABLED)
-				{
-					/* installed but not enabled */
-					MXS_NOTICE(stderr, "%s: master server %s:%d doesn't have semi_sync enabled",
-						router->service->name,
-						router->service->dbref->server->name,
-						router->service->dbref->server->port);
-
-					/* Continue */
-					router->master_state = BLRM_REQUEST_BINLOGDUMP;
-				}
 				else
 				{
-					/* Request semi-sync only if master value is ON */
-					MXS_NOTICE(stderr, "%s: master server %s:%d has semi_sync enabled, Requesting Semi-Sync Replication");
-						router->service->name,
-						router->service->dbref->server->name,
-						router->service->dbref->server->port);
+					if (router->master_semi_sync == MASTER_SEMISYNC_DISABLED)
+					{
+						/* Installed but not enabled,  right now */
+						MXS_NOTICE("%s: master server %s:%d doesn't have semi_sync enabled right now, "
+							"Requesting Semi-Sync Replication",
+							router->service->name,
+							router->service->dbref->server->name,
+							router->service->dbref->server->port);
+					}
+					else
+					{
+						/* Installed and enabled */
+						MXS_NOTICE("%s: master server %s:%d has semi_sync enabled, Requesting Semi-Sync Replication",
+							router->service->name,
+							router->service->dbref->server->name,
+							router->service->dbref->server->port);
+					}
 
 					buf = blr_make_query("SET @rpl_semi_sync_slave = 1");
 					router->master_state = BLRM_REQUEST_SEMISYNC;
@@ -1359,7 +1361,9 @@ int			check_packet_len;
 						if (router->master_semi_sync != MASTER_SEMISYNC_NOT_AVAILABLE &&
 							semi_sync_send_ack == BLR_MASTER_SEMI_SYNC_ACK_REQ) {
 
-							MXS_DEBUG("%s:binlog record in binlog file %s, pos %lu has SEMI_SYNC_ACK_REQ and needs a Semi-Sync ACK packet to be sent to the master server",
+							MXS_DEBUG("%s: binlog record in file %s, pos %lu has "
+								"SEMI_SYNC_ACK_REQ and needs a Semi-Sync ACK packet to "
+								"be sent to the master server %s:%d",
 								router->service->name, router->binlog_name,
 								router->current_pos,
 								router->service->dbref->server->name,
