@@ -488,7 +488,7 @@ struct	stat	statb;
 	if (strcmp(router->binlog_name, file->binlogname) == 0 &&
 			pos >= router->binlog_position)
 	{
-		if (pos > router->binlog_position && !router->rotating)
+		if (pos > router->binlog_position)
 		{
 			/* Unsafe position, slave will be disconnected by the calling routine */
 			snprintf(errmsg, BINLOG_ERROR_MSG_LEN, "Requested binlog position %lu. Position is unsafe so disconnecting. "
