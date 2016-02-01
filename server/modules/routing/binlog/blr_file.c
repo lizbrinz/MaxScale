@@ -189,77 +189,59 @@ blr_file_rotate(ROUTER_INSTANCE *router, char *file, uint64_t pos)
  * binlog files need an initial 4 magic bytes at the start. blr_file_add_magic()
  * adds them.
  *
- * @param fd            file descriptor to the open binlog file
- * @return              True if the magic string could be written to the file.
+ * @param router	The router instance
+ * @param fd		file descriptor to the open binlog file
+ * @return		Nothing
  */
-static bool
-blr_file_add_magic(int fd)
+static void
+blr_file_add_magic(ROUTER_INSTANCE *router, int fd)
 {
-    static const unsigned char magic[] = BINLOG_MAGIC;
+unsigned char	magic[] = BINLOG_MAGIC;
 
-    ssize_t written = write(fd, magic, BINLOG_MAGIC_SIZE);
-
-    return written == BINLOG_MAGIC_SIZE;
+	write(fd, magic, 4);
+	router->current_pos = 4;			/* Initial position after the magic number */
+	router->binlog_position = 4;			/* Initial position after the magic number */
+	router->current_safe_event = 4;
+	router->last_written = 0;
 }
 
 
 /**
  * Create a new binlog file for the router to use.
  *
- * @param router        The router instance
- * @param file          The binlog file name
- * @return              Non-zero if the fie creation succeeded
+ * @param router	The router instance
+ * @param file		The binlog file name
+ * @return		Non-zero if the fie creation succeeded
  */
 static int
 blr_file_create(ROUTER_INSTANCE *router, char *file)
 {
-    int created = 0;
-    char err_msg[STRERROR_BUFLEN];
+char		path[PATH_MAX + 1] = "";
+int		fd;
 
-    char path[PATH_MAX + 1] = "";
+	strcpy(path, router->binlogdir);
+	strcat(path, "/");
+	strcat(path, file);
 
-    strcpy(path, router->binlogdir);
-    strcat(path, "/");
-    strcat(path, file);
+	if ((fd = open(path, O_RDWR|O_CREAT, 0666)) != -1)
+	{
+		blr_file_add_magic(router,fd);
+	}
+	else
+	{
+		char err_msg[STRERROR_BUFLEN];
 
-    int fd = open(path, O_RDWR|O_CREAT, 0666);
-
-    if (fd != -1)
-    {
-        if (blr_file_add_magic(fd))
-        {
-            close(router->binlog_fd);
-            spinlock_acquire(&router->binlog_lock);
-            strncpy(router->binlog_name, file, BINLOG_FNAMELEN);
-            router->binlog_fd = fd;
-            router->current_pos = BINLOG_MAGIC_SIZE;     /* Initial position after the magic number */
-            router->binlog_position = BINLOG_MAGIC_SIZE;
-            router->current_safe_event = BINLOG_MAGIC_SIZE;
-            router->last_written = 0;
-            spinlock_release(&router->binlog_lock);
-
-            created = 1;
-        }
-        else
-        {
-            MXS_ERROR("%s: Failed to write magic string to created binlog file %s, %s.",
-                      router->service->name, path, strerror_r(errno, err_msg, sizeof(err_msg)));
-            close(fd);
-
-            if (!unlink(path))
-            {
-                MXS_ERROR("%s: Failed to delete file %s, %s.",
+		MXS_ERROR("%s: Failed to create binlog file %s, %s.",
                           router->service->name, path, strerror_r(errno, err_msg, sizeof(err_msg)));
-            }
-        }
-    }
-    else
-    {
-        MXS_ERROR("%s: Failed to create binlog file %s, %s.",
-                  router->service->name, path, strerror_r(errno, err_msg, sizeof(err_msg)));
-    }
-
-    return created;
+		return 0;
+	}
+	fsync(fd);
+	close(router->binlog_fd);
+	spinlock_acquire(&router->binlog_lock);
+	strncpy(router->binlog_name, file, BINLOG_FNAMELEN);
+	router->binlog_fd = fd;
+	spinlock_release(&router->binlog_lock);
+	return 1;
 }
 
 /**
@@ -291,15 +273,7 @@ int		fd;
 	router->current_pos = lseek(fd, 0L, SEEK_END);
 	if (router->current_pos < 4) {
 		if (router->current_pos == 0) {
-			if (blr_file_add_magic(fd))
-			{
-				router->current_pos = BINLOG_MAGIC_SIZE;
-				router->binlog_position = BINLOG_MAGIC_SIZE;
-				router->current_safe_event = BINLOG_MAGIC_SIZE;
-				router->last_written = 0;
-			} else {
-			    MXS_ERROR("%s: Could not write magic to binlog file.", router->service->name);
-			}
+			blr_file_add_magic(router, fd);
 		} else {
 			/* If for any reason the file's length is between 1 and 3 bytes
 			 * then report an error. */
