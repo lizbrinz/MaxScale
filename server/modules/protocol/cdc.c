@@ -121,7 +121,7 @@ GetModuleObject()
 /**
  * Read event for EPOLLIN on the CDC protocol module.
  *
- * @param dcb	The descriptor control block
+ * @param dcb    The descriptor control block
  * @return
  */
 static int
@@ -147,43 +147,6 @@ cdc_read_event(DCB* dcb)
                 switch (protocol->state)
                 {
                     case CDC_STATE_WAIT_FOR_AUTH:
-                        /*
-                        auth_obj = load_module("cdc_auth_v1", MODULE_AUTH);
-                        // do_authentication should also fill dcb->data
-                        // and there should be an error message field to use with write_auth_err()
-                        
-                        auth_rc = auth_obj->do_auth(dcb, head, (void *)client_data);
-
-                        while ((head = gwbuf_consume(head, GWBUF_LENGTH(head))) != NULL);
-
-                        if (auth_rc == PLUGIN_AUTH_OK)
-                        {
-                            protocol->state = CDC_STATE_REGISTRATION;
-
-                            auth_obj>write_auth_ack(dcb);
-
-                            MXS_INFO("%s: Client [%s] authenticated with user [%s]",
-                                     dcb->service->name, dcb->remote != NULL ? dcb->remote : "",
-                                     (CDC_session *)client_data->user);
-                            break;
-                        }
-                        else
-                        {
-                            MXS_ERROR("%s: authentication failure from [%s]",
-                                       dcb->service->name, dcb->remote != NULL ? dcb->remote : "");
-
-                            protocol->state = CDC_STATE_AUTH_ERR;
-
-                            dcb_printf(dcb, "ERR, code 11, msg: abcd");
-                            auth_obj>write_auth_err(dcb);
-
-                            // force the client connecton close 
-                            dcb_close(dcb);
-
-                            return 0;
-                        }
-                        */
-
                         auth_rc = do_auth(dcb, head, (void *)client_data);
 
                         while ((head = gwbuf_consume(head, GWBUF_LENGTH(head))) != NULL);
@@ -310,7 +273,7 @@ cdc_read_event(DCB* dcb)
 /**
  * EPOLLOUT handler for the CDC protocol module.
  *
- * @param dcb	The descriptor control block
+ * @param dcb    The descriptor control block
  * @return
  */
 static int
@@ -339,7 +302,7 @@ cdc_write(DCB *dcb, GWBUF *queue)
 /**
  * Handler for the EPOLLERR event.
  *
- * @param dcb	The descriptor control block
+ * @param dcb    The descriptor control block
  */
 static int
 cdc_error(DCB *dcb)
@@ -351,7 +314,7 @@ cdc_error(DCB *dcb)
 /**
  * Handler for the EPOLLHUP event.
  *
- * @param dcb	The descriptor control block
+ * @param dcb    The descriptor control block
  */
 static int
 cdc_hangup(DCB *dcb)
@@ -364,7 +327,7 @@ cdc_hangup(DCB *dcb)
  * Handler for the EPOLLIN event when the DCB refers to the listening
  * socket for the protocol.
  *
- * @param dcb	The descriptor control block
+ * @param dcb    The descriptor control block
  */
 static int
 cdc_accept(DCB *dcb)
@@ -484,7 +447,7 @@ int n_connect = 0;
  * The close handler for the descriptor. Called by the gateway to
  * explicitly close a connection.
  *
- * @param dcb	The descriptor control block
+ * @param dcb   The descriptor control block
  */
 
 static int
@@ -504,8 +467,8 @@ cdc_close(DCB *dcb)
 /**
  * CDC protocol listener entry point
  *
- * @param	listener	The Listener DCB
- * @param	config		Configuration (ip:port)
+ * @param   listener    The Listener DCB
+ * @param   config      Configuration (ip:port)
  */
 static int
 cdc_listen(DCB *listener, char *config)
@@ -575,7 +538,7 @@ cdc_listen(DCB *listener, char *config)
  * Allocate a new CDC protocol structure
  *
  * @param  dcb    The DCB where protocol is added
- * @return New allocated protocol or NULL on errors
+ * @return        New allocated protocol or NULL on errors
  *
  */
 static CDC_protocol *
@@ -635,6 +598,15 @@ cdc_protocol_done(DCB* dcb)
    spinlock_release(&p->lock);
 }
 
+
+/**
+ * Hande the REGISTRATION comannd in CDC protocol
+ *
+ * @param dcb    DCB with allocateid protocol
+ * @param data   GWBUF with registration message
+ * @return       1 for successful registration 0 otherwise
+ *
+ */
 static int
 cdc_do_registration(DCB *dcb, GWBUF *data)
 {
@@ -712,6 +684,7 @@ cdc_do_registration(DCB *dcb, GWBUF *data)
  * @param dcb    Current client DCB
  * @param buffer Authenticatio data from client
  * @param data   Structure that holds auht data
+ * @return       1 for successful authentication, 0 otherwise
  *
  */
 static int
