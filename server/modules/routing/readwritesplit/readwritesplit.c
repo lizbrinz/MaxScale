@@ -1567,8 +1567,6 @@ void check_drop_tmp_table(
   char** tbl = NULL;
   char *hkey,*dbname;
   MYSQL_session* data;
-
-  DCB*               master_dcb     = NULL;
   rses_property_t*   rses_prop_tmp;
 
   if(router_cli_ses == NULL || querybuf == NULL)
@@ -1578,27 +1576,14 @@ void check_drop_tmp_table(
       return;
   }
 
-  if(router_cli_ses->rses_master_ref == NULL)
+  if(router_cli_ses->client_dcb == NULL)
   {
-      MXS_ERROR("[%s] Error: Master server reference is NULL.",
-                __FUNCTION__);
+      MXS_ERROR("[%s] Error: Client DCB is NULL.", __FUNCTION__);
       return;
   }
 
   rses_prop_tmp = router_cli_ses->rses_properties[RSES_PROP_TYPE_TMPTABLES];
-  master_dcb = router_cli_ses->rses_master_ref->bref_dcb;
-
-  if(master_dcb == NULL || master_dcb->session == NULL)
-  {
-      MXS_ERROR("[%s] Error: Master server DBC is NULL. "
-                "This means that the connection to the master server is already "
-                "closed while a query is still being routed.",__FUNCTION__);
-      return;
-  }
-
-  CHK_DCB(master_dcb);
-
-  data = (MYSQL_session*)master_dcb->session->data;
+  data = (MYSQL_session*)router_cli_ses->client_dcb->session->data;
 
   if(data == NULL)
   {
@@ -1657,8 +1642,6 @@ static skygw_query_type_t is_read_tmp_table(
   char *dbname;
   char hkey[MYSQL_DATABASE_MAXLEN+MYSQL_TABLE_MAXLEN+2];
   MYSQL_session* data;
-
-  DCB*               master_dcb     = NULL;
   skygw_query_type_t qtype = type;
   rses_property_t*   rses_prop_tmp;
 
@@ -1669,30 +1652,18 @@ static skygw_query_type_t is_read_tmp_table(
       return type;
   }
 
-  if(router_cli_ses->rses_master_ref == NULL)
+  if(router_cli_ses->client_dcb == NULL)
   {
-      MXS_ERROR("[%s] Error: Master server reference is NULL.",
-                __FUNCTION__);
+      MXS_ERROR("[%s] Error: Client DCB is NULL.", __FUNCTION__);
       return type;
   }
 
   rses_prop_tmp = router_cli_ses->rses_properties[RSES_PROP_TYPE_TMPTABLES];
-  master_dcb = router_cli_ses->rses_master_ref->bref_dcb;
-
-  if(master_dcb == NULL || master_dcb->session == NULL)
-  {
-      MXS_ERROR("[%s] Error: Master server DBC is NULL. "
-                "This means that the connection to the master server is already "
-                "closed while a query is still being routed.",__FUNCTION__);
-      return qtype;
-  }
-  CHK_DCB(master_dcb);
-
-  data = (MYSQL_session*)master_dcb->session->data;
+  data = (MYSQL_session*)router_cli_ses->client_dcb->session->data;
 
   if(data == NULL)
   {
-      MXS_ERROR("[%s] Error: User data in master server DBC is NULL.",__FUNCTION__);
+      MXS_ERROR("[%s] Error: User data in client DBC is NULL.",__FUNCTION__);
       return qtype;
   }
 
@@ -1758,7 +1729,6 @@ static void check_create_tmp_table(
   int klen = 0;
   char *hkey,*dbname;
   MYSQL_session* data;
-  DCB* master_dcb = NULL;
   rses_property_t* rses_prop_tmp;
   HASHTABLE* h;
 
@@ -1769,27 +1739,14 @@ static void check_create_tmp_table(
       return;
   }
 
-  if(router_cli_ses->rses_master_ref == NULL)
+  if(router_cli_ses->client_dcb == NULL)
   {
-      MXS_ERROR("[%s] Error: Master server reference is NULL.",
-                __FUNCTION__);
+      MXS_ERROR("[%s] Error: Client DCB is NULL.", __FUNCTION__);
       return;
   }
 
   rses_prop_tmp = router_cli_ses->rses_properties[RSES_PROP_TYPE_TMPTABLES];
-  master_dcb = router_cli_ses->rses_master_ref->bref_dcb;
-
-  if(master_dcb == NULL || master_dcb->session == NULL)
-  {
-      MXS_ERROR("[%s] Error: Master server DCB is NULL. "
-                "This means that the connection to the master server is already "
-                "closed while a query is still being routed.",__FUNCTION__);
-      return;
-  }
-
-  CHK_DCB(master_dcb);
-
-  data = (MYSQL_session*)master_dcb->session->data;
+  data = (MYSQL_session*)router_cli_ses->client_dcb->session->data;
 
   if(data == NULL)
   {
@@ -2095,7 +2052,6 @@ static bool route_single_stmt(
 	if ((master_dcb = rses->rses_master_ref->bref_dcb) == NULL)
 	{
 		char* query_str = modutil_get_query(querybuf);
-		CHK_DCB(master_dcb);
 		MXS_ERROR("Can't route %s:%s:\"%s\" to "
                           "backend server. Session doesn't have a Master "
                           "node",
@@ -2107,6 +2063,7 @@ static bool route_single_stmt(
 		goto retblock;
 	}
 
+	CHK_DCB(master_dcb);
 	packet = GWBUF_DATA(querybuf);
 	packet_len = gw_mysql_get_byte3(packet);
 	
@@ -2836,21 +2793,17 @@ static void clientReply (
 			uint8_t* replybuf = (uint8_t *)GWBUF_DATA(writebuf);
 			size_t   len      = MYSQL_GET_PACKET_LEN(buf);
 			size_t   replylen = MYSQL_GET_PACKET_LEN(replybuf);
-			char*    cmdstr   = strndup(&((char *)buf)[5], len-4);
 			char*    err      = strndup(&((char *)replybuf)[8], 5);
 			char*    replystr = strndup(&((char *)replybuf)[13], 
 						    replylen-4-5);
 			
                         ss_dassert(len+4 == GWBUF_LENGTH(scur->scmd_cur_cmd->my_sescmd_buf));
                         
-                        MXS_ERROR("Failed to execute %s in %s:%d. %s %s",
-                                  cmdstr, 
+                        MXS_ERROR("Failed to execute session command in %s:%d. Error was: %s %s",
                                   bref->bref_backend->backend_server->name,
                                   bref->bref_backend->backend_server->port,
                                   err,
                                   replystr);
-                        
-                        free(cmdstr);
 			free(err);
 			free(replystr);
                 }

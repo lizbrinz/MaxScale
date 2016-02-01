@@ -467,6 +467,8 @@ MaxScale normally suppresses warning messages about failed authentication. Enabl
 
 #### `connection_timeout`
 
+**NOTE**: This parameter is not safe to use in version 1.3.0. Please do not use it.
+
 The connection_timeout parameter is used to disconnect sessions to MaxScale that have been idle for too long. The session timeouts are disabled by default. To enable them, define the timeout in seconds in the service's configuration section.
 
 Example:
@@ -770,6 +772,8 @@ and short notations
 192.%
 192.%.%
 192.168.%
+
+Note that currently wildcards are only supported in conjunction with IP-addresses, not with domain names.
 
 ## Error Reporting
 
