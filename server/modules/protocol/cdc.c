@@ -449,7 +449,6 @@ int n_connect = 0;
  *
  * @param dcb   The descriptor control block
  */
-
 static int
 cdc_close(DCB *dcb)
 {
@@ -597,7 +596,6 @@ cdc_protocol_done(DCB* dcb)
 
    spinlock_release(&p->lock);
 }
-
 
 /**
  * Hande the REGISTRATION comannd in CDC protocol
