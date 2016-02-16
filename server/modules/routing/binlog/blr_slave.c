@@ -152,6 +152,7 @@ static int blr_slave_handle_status_variables(ROUTER_INSTANCE *router, ROUTER_SLA
 static int blr_slave_send_columndef_with_status_schema(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, char *name, int type, int len, uint8_t seqno);
 static void blr_send_slave_heartbeat(void *inst);
 static int blr_slave_send_heartbeat(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave);
+bool blr_send_event(ROUTER_SLAVE *slave, REP_HEADER *hdr, uint8_t *buf);
 
 void poll_fake_write_event(DCB *dcb);
 
@@ -2021,20 +2022,11 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 #ifdef BLSLAVE_IN_FILE
         slave->file = file;
 #endif
+	int events_before = slave->stats.n_events;
 
 	while (burst-- && burst_size > 0 &&
 		(record = blr_read_binlog(router, file, slave->binlog_pos, &hdr, read_errmsg)) != NULL)
 	{
-		head = gwbuf_alloc(5);
-		ptr = GWBUF_DATA(head);
-		encode_value(ptr, hdr.event_size + 1, 24);
-		ptr += 3;
-		*ptr++ = slave->seqno++;
-		*ptr++ = 0;		// OK
-		head = gwbuf_append(head, record);
-		slave->lastEventTimestamp = hdr.timestamp;
-		slave->lastEventReceived = hdr.event_type;
-
 		if (hdr.event_type == ROTATE_EVENT)
 		{
 			unsigned long beat1 = hkheartbeat;
@@ -2085,15 +2077,18 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 				MXS_ERROR("blr_open_binlog took %lu beats",
                                           hkheartbeat - beat1);
 		}
-		slave->stats.n_bytes += gwbuf_length(head);
-		written = slave->dcb->func.write(slave->dcb, head);
-		if (written && hdr.event_type != ROTATE_EVENT)
-		{
-			slave->binlog_pos = hdr.next_pos;
-		}
-		rval = written;
-		slave->stats.n_events++;
-		burst_size -= hdr.event_size;
+
+        if (blr_send_event(slave, &hdr, (uint8_t*) record->start))
+        {
+            if (hdr.event_type != ROTATE_EVENT)
+            {
+                slave->binlog_pos = hdr.next_pos;
+            }
+            slave->stats.n_events++;
+            burst_size -= hdr.event_size;
+        }
+        gwbuf_free(record);
+        record = NULL;
 
 		/* set lastReply for slave heartbeat check */
 		if (router->send_slave_heartbeat)
@@ -2162,24 +2157,16 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 
 		if (hdr.ok == SLAVE_POS_READ_UNSAFE) {
 
-			MXS_ERROR("%s: Slave %s:%i, server-id %d, binlog '%s', %s",
+			MXS_NOTICE("%s: Slave %s:%i, server-id %d, binlog '%s', read %d events, "
+				"current committed transaction event being sent: %lu, %s",
 				router->service->name,
 				slave->dcb->remote,
 				ntohs((slave->dcb->ipv4).sin_port),
 				slave->serverid,
 				slave->binlogfile,
+				slave->stats.n_events - events_before,
+				router->current_safe_event,
 				read_errmsg);
-
-			/*
-			 * Close the slave session and socket
-			 * The slave will try to reconnect
-			 */
-			dcb_close(slave->dcb);
-
-#ifndef BLFILE_IN_SLAVE
-                        blr_close_binlog(router, file);
-#endif
-			return 0;
 		}
 	}
 	spinlock_acquire(&slave->catch_lock);
@@ -4682,4 +4669,3 @@ int filename_len = strlen(slave->binlogfile);
 	/* Write the packet */
 	return slave->dcb->func.write(slave->dcb, resp);
 }
-

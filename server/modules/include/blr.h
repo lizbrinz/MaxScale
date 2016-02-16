@@ -45,6 +45,7 @@
 #include <stdint.h>
 #include <memlog.h>
 #include <zlib.h>
+#include <mysql_client_server_protocol.h>
 
 #define BINLOG_FNAMELEN		255
 #define BLR_PROTOCOL		"MySQLBackend"
@@ -198,6 +199,17 @@
 #define MYSQL_ERROR_CODE(buf)	((uint8_t *)GWBUF_DATA(buf) + 5)
 #define MYSQL_ERROR_MSG(buf)	((uint8_t *)GWBUF_DATA(buf) + 7)
 #define MYSQL_COMMAND(buf)	(*((uint8_t *)GWBUF_DATA(buf) + 4))
+
+/** Possible states of an event sent by the master */
+enum blr_event_state
+{
+    BLR_EVENT_DONE, /*< No event being processed  */
+    BLR_EVENT_STARTED, /*< The first packet of an event which spans multiple packets
+                        * has been received */
+    BLR_EVENT_ONGOING, /*< Other packets of a multi-packet event are being processed */
+    BLR_EVENT_COMPLETE /*< A multi-packet event has been successfully processed
+                        * but the router is not yet ready to process another one */
+};
 
 /* Master Server configuration struct */
 typedef struct master_server_config {
@@ -416,6 +428,13 @@ typedef struct router_instance {
 	SPINLOCK		binlog_lock;	/*< Lock to control update of the binlog position */
 	int			trx_safe;	/*< Detect and handle partial transactions */
 	int			pending_transaction; /*< Pending transaction */
+	enum blr_event_state master_event_state; /*< Packet read state */
+	uint32_t	stored_checksum; /*< The current value of the checksum */
+	uint8_t	partial_checksum[MYSQL_CHECKSUM_LEN]; /*< The partial value of the checksum
+										  * received from the master */
+	uint8_t		partial_checksum_bytes; /*< How many bytes of the checksum we have read	 */
+	uint64_t	checksum_size; /*< Data size for the checksum */
+	REP_HEADER	stored_header; /*< Relication header of the event the master is sending */
 	uint64_t		last_safe_pos; /* last committed transaction */
 	char			binlog_name[BINLOG_FNAMELEN+1];
 					/*< Name of the current binlog file */
@@ -426,7 +445,8 @@ typedef struct router_instance {
 	int			binlog_fd;	/*< File descriptor of the binlog
 					 *  file being written
 					 */
-	uint64_t	  last_written;	/*< Position of last event written */
+	uint64_t	  last_written;	/*< Position of the last write operation */
+	uint64_t	  last_event_pos;	/*< Position of last event written */
 	uint64_t	  current_safe_event;
 	/*< Position of the latest safe event being sent to slaves */
 	char		  prevbinlog[BINLOG_FNAMELEN+1];
@@ -454,6 +474,8 @@ typedef struct router_instance {
 	int		  send_slave_heartbeat; /*< Enable sending heartbeat to slaves */
 	bool		  request_semi_sync;	/*< Request Semi-Sync replication to master */
 	int		  master_semi_sync;	/*< Semi-Sync replication status of master server */
+    int       semi_sync_send_ack; /*< Whether the semisync ACK needs to be sent
+                                   * for the current event being processed */
 	struct router_instance	*next;
 } ROUTER_INSTANCE;
 
@@ -562,7 +584,7 @@ extern int blr_slave_catchup(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, bool 
 extern void blr_init_cache(ROUTER_INSTANCE *);
 
 extern int  blr_file_init(ROUTER_INSTANCE *);
-extern int  blr_write_binlog_record(ROUTER_INSTANCE *, REP_HEADER *,uint8_t *);
+extern int  blr_write_binlog_record(ROUTER_INSTANCE *, REP_HEADER *, uint32_t pos, uint8_t *);
 extern int  blr_file_rotate(ROUTER_INSTANCE *, char *, uint64_t);
 extern void blr_file_flush(ROUTER_INSTANCE *);
 extern BLFILE *blr_open_binlog(ROUTER_INSTANCE *, char *);

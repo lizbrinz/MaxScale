@@ -280,6 +280,7 @@ char		task_name[BLRM_TASK_NAME_LEN+1] = "";
 	inst->mariadb10_compat = false;
 	inst->request_semi_sync = 0;
 	inst->master_semi_sync = false;
+    inst->semi_sync_send_ack = 0;
 
 	inst->user = strdup(service->credentials.name);
 	inst->password = strdup(service->credentials.authdata);
@@ -514,6 +515,7 @@ char		task_name[BLRM_TASK_NAME_LEN+1] = "";
 	inst->binlog_position = 0;
 	inst->current_pos = 0;
 	inst->current_safe_event = 0;
+	inst->master_event_state = BLR_EVENT_DONE;
 
 	strcpy(inst->binlog_name, "");
 	strcpy(inst->prevbinlog, "");
