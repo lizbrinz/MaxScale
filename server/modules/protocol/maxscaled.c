@@ -262,13 +262,12 @@ static int maxscaled_accept(DCB *dcb)
         else
         {
             atomic_add(&dcb->stats.n_accepts, 1);
-            client_dcb = dcb_alloc(DCB_ROLE_REQUEST_HANDLER);
+            client_dcb = dcb_alloc(DCB_ROLE_CLIENT_HANDLER, dcb->listener);
             if (client_dcb == NULL)
             {
                 close(so);
                 return n_connect;
             }
-            client_dcb->listen_ssl = dcb->listen_ssl;
             client_dcb->fd = so;
             client_dcb->remote = strdup(inet_ntoa(addr.sin_addr));
             memcpy(&client_dcb->func, &MyObject, sizeof(GWPROTOCOL));

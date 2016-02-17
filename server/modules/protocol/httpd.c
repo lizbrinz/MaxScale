@@ -355,9 +355,8 @@ static int httpd_accept(DCB *dcb)
         {
             atomic_add(&dcb->stats.n_accepts, 1);
 
-            if ((client = dcb_alloc(DCB_ROLE_REQUEST_HANDLER)))
+            if ((client = dcb_alloc(DCB_ROLE_CLIENT_HANDLER, dcb->listener)))
             {
-                client->listen_ssl = dcb->listen_ssl;
                 client->fd = so;
                 client->remote = strdup(inet_ntoa(addr.sin_addr));
                 memcpy(&client->func, &MyObject, sizeof(GWPROTOCOL));

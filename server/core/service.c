@@ -224,15 +224,13 @@ serviceStartPort(SERVICE *service, SERV_LISTENER *port)
     char config_bind[40];
     GWPROTOCOL *funcs;
 
-    port->listener = dcb_alloc(DCB_ROLE_SERVICE_LISTENER);
+    port->listener = dcb_alloc(DCB_ROLE_SERVICE_LISTENER, port);
 
     if (port->listener == NULL)
     {
         MXS_ERROR("Failed to create listener for service %s.", service->name);
         goto retblock;
     }
-
-    port->listener->listen_ssl = port->ssl;
 
     if (port->ssl)
     {

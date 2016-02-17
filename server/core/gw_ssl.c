@@ -58,7 +58,7 @@ int ssl_authenticate_client(DCB *dcb, bool is_capable)
     char *remote = dcb->remote ? dcb->remote : "";
     char *service = (dcb->service && dcb->service->name) ? dcb->service->name : "";
 
-    if (NULL == dcb->listen_ssl)
+    if (NULL == dcb->listener || NULL == dcb->listener->ssl)
     {
         /* Not an SSL connection on account of listener configuration */
         return SSL_AUTH_CHECKS_OK;
@@ -130,7 +130,9 @@ ssl_is_connection_healthy(DCB *dcb)
      * then everything is as we wish. Otherwise, either there is a problem or
      * more to be done.
      */
-    return (NULL == dcb->listen_ssl || dcb->ssl_state == SSL_ESTABLISHED);
+    return (NULL == dcb->listener ||
+        NULL == dcb->listener->ssl ||
+        dcb->ssl_state == SSL_ESTABLISHED);
 }
 
 /* Looks to be redundant - can remove include for ioctl too */
@@ -168,7 +170,7 @@ ssl_check_data_to_process(DCB *dcb)
 bool
 ssl_required_by_dcb(DCB *dcb)
 {
-    return NULL != dcb->listen_ssl;
+    return NULL != dcb->listener && NULL != dcb->listener->ssl;
 }
 
 /**
@@ -184,5 +186,7 @@ ssl_required_by_dcb(DCB *dcb)
 bool
 ssl_required_but_not_negotiated(DCB *dcb)
 {
-    return (NULL != dcb->listen_ssl && SSL_HANDSHAKE_UNKNOWN == dcb->ssl_state);
+    return (NULL != dcb->listener &&
+        NULL != dcb->listener->ssl &&
+        SSL_HANDSHAKE_UNKNOWN == dcb->ssl_state);
 }

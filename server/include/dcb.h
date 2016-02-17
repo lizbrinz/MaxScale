@@ -31,6 +31,7 @@
 struct session;
 struct server;
 struct service;
+struct servlistener;
 
 /**
  * @file dcb.h  The Descriptor Control Block
@@ -145,7 +146,8 @@ typedef enum
 typedef enum
 {
     DCB_ROLE_SERVICE_LISTENER,      /*< Receives initial connect requests from clients */
-    DCB_ROLE_REQUEST_HANDLER,       /*< Serves dedicated client */
+    DCB_ROLE_CLIENT_HANDLER,        /*< Serves dedicated client */
+    DCB_ROLE_BACKEND_HANDLER,       /*< Serves back end connection */
     DCB_ROLE_INTERNAL               /*< Internal DCB not connected to the outside */
 } dcb_role_t;
 
@@ -215,7 +217,7 @@ typedef struct dcb
     char            *protoname;     /**< Name of the protocol */
     void            *protocol;      /**< The protocol specific state */
     struct session  *session;       /**< The owning session */
-    SSL_LISTENER    *listen_ssl;    /**< For a client DCB, the SSL descriptor, if any */
+    struct servlistener *listener;  /**< For a client DCB, the listener data */
     GWPROTOCOL      func;           /**< The functions for this descriptor */
 
     int             writeqlen;      /**< Current number of byes in the write queue */
@@ -292,7 +294,7 @@ int           fail_accept_errno;
 
 DCB *dcb_get_zombies(void);
 int dcb_write(DCB *, GWBUF *);
-DCB *dcb_alloc(dcb_role_t);
+DCB *dcb_alloc(dcb_role_t, struct servlistener *);
 void dcb_free(DCB *);
 DCB *dcb_connect(struct server *, struct session *, const char *);
 DCB *dcb_clone(DCB *);
@@ -309,7 +311,6 @@ void dListDCBs(DCB *);                       /* List all DCBs in the system */
 void dListClients(DCB *);                    /* List al the client DCBs */
 const char *gw_dcb_state2string(int);              /* DCB state to string */
 void dcb_printf(DCB *, const char *, ...);   /* DCB version of printf */
-int dcb_isclient(DCB *);                    /* the DCB is the client of the session */
 void dcb_hashtable_stats(DCB *, void *);     /**< Print statisitics */
 int dcb_add_callback(DCB *, DCB_REASON, int (*)(struct dcb *, DCB_REASON, void *), void *);
 int dcb_remove_callback(DCB *, DCB_REASON, int (*)(struct dcb *, DCB_REASON, void *), void *);

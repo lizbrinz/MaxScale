@@ -81,6 +81,7 @@ static int gw_client_hangup_event(DCB *dcb);
 static int mysql_send_ok(DCB *dcb, int packet_number, int in_affected_rows, const char* mysql_message);
 static int MySQLSendHandshake(DCB* dcb);
 static int route_by_statement(SESSION *, GWBUF **);
+static void mysql_client_auth_error_handling(DCB *dcb, int auth_val);
 extern char* create_auth_fail_str(char *username, char *hostaddr, char *sha1, char *db,int);
 
 /*
@@ -790,7 +791,7 @@ return_rc:
  * @param auth_val The type of authentication failure
  * @note Authentication status codes are defined in mysql_client_server_protocol.h
  */
-void
+static void
 mysql_client_auth_error_handling(DCB *dcb, int auth_val)
 {
     int packet_number, message_len;
@@ -1264,7 +1265,7 @@ int gw_MySQLAccept(DCB *listener)
         }
         setnonblocking(c_sock);
 
-        client_dcb = dcb_alloc(DCB_ROLE_REQUEST_HANDLER);
+        client_dcb = dcb_alloc(DCB_ROLE_CLIENT_HANDLER, listener->listener);
 
         if (client_dcb == NULL)
         {
@@ -1274,7 +1275,6 @@ int gw_MySQLAccept(DCB *listener)
             goto return_rc;
         }
 
-        client_dcb->listen_ssl = listener->listen_ssl;
         client_dcb->service = listener->session->service;
         client_dcb->session = session_set_dummy(client_dcb);
         client_dcb->fd = c_sock;

@@ -86,6 +86,7 @@
 #include <skygw_utils.h>
 #include <log_manager.h>
 #include <hashtable.h>
+#include <listener.h>
 #include <hk_heartbeat.h>
 
 #define SSL_ERRBUF_LEN 140
@@ -179,7 +180,7 @@ dcb_get_zombies(void)
  * @return A newly allocated DCB or NULL if non could be allocated.
  */
 DCB *
-dcb_alloc(dcb_role_t role)
+dcb_alloc(dcb_role_t role, SERV_LISTENER *listener)
 {
     DCB *newdcb;
 
@@ -226,7 +227,7 @@ dcb_alloc(dcb_role_t role)
     newdcb->callbacks = NULL;
     newdcb->data = NULL;
 
-    newdcb->listen_ssl = NULL;
+    newdcb->listener = listener;
     newdcb->ssl_state = SSL_HANDSHAKE_UNKNOWN;
 
     newdcb->remote = NULL;
@@ -279,13 +280,12 @@ dcb_clone(DCB *orig)
 {
     DCB *clonedcb;
 
-    if ((clonedcb = dcb_alloc(DCB_ROLE_REQUEST_HANDLER)))
+    if ((clonedcb = dcb_alloc(orig->dcb_role, orig->listener)))
     {
         clonedcb->fd = DCBFD_CLOSED;
         clonedcb->flags |= DCBF_CLONE;
         clonedcb->state = orig->state;
         clonedcb->data = orig->data;
-        clonedcb->listen_ssl = orig->listen_ssl;
         clonedcb->ssl_state = orig->ssl_state;
         if (orig->remote)
         {
@@ -740,7 +740,7 @@ dcb_connect(SERVER *server, SESSION *session, const char *protocol)
         }
     }
 
-    if ((dcb = dcb_alloc(DCB_ROLE_REQUEST_HANDLER)) == NULL)
+    if ((dcb = dcb_alloc(DCB_ROLE_BACKEND_HANDLER, NULL)) == NULL)
     {
         return NULL;
     }
@@ -958,7 +958,7 @@ static inline int
 dcb_read_no_bytes_available(DCB *dcb, int nreadtotal)
 {
     /** Handle closed client socket */
-    if (nreadtotal == 0 && dcb_isclient(dcb))
+    if (nreadtotal == 0 && DCB_ROLE_CLIENT_HANDLER == dcb->dcb_role)
     {
         char c;
         int l_errno = 0;
@@ -1317,15 +1317,15 @@ dcb_write(DCB *dcb, GWBUF *queue)
 static inline void
 dcb_write_fake_code(DCB *dcb)
 {
-    if (dcb->dcb_role == DCB_ROLE_REQUEST_HANDLER && dcb->session != NULL)
+    if (dcb->session != NULL)
     {
-        if (dcb_isclient(dcb) && fail_next_client_fd)
+        if (dcb->dcb_role == DCB_ROLE_CLIENT_HANDLER && fail_next_client_fd)
         {
             dcb_fake_write_errno[dcb->fd] = 32;
             dcb_fake_write_ev[dcb->fd] = 29;
             fail_next_client_fd = false;
         }
-        else if (!dcb_isclient(dcb) && fail_next_backend_fd)
+        else if (dcb->dcb_role == DCB_ROLE_BACKEND_HANDLER && fail_next_backend_fd)
         {
             dcb_fake_write_errno[dcb->fd] = 32;
             dcb_fake_write_ev[dcb->fd] = 29;
@@ -1455,7 +1455,7 @@ dcb_log_write_failure(DCB *dcb, GWBUF *queue, int eno)
             char errbuf[STRERROR_BUFLEN];
             MXS_DEBUG("%lu [dcb_write] Writing to %s socket failed due %d, %s.",
                       pthread_self(),
-                      dcb_isclient(dcb) ? "client" : "backend server",
+                      DCB_ROLE_CLIENT_HANDLER == dcb->dcb_role ? "client" : "backend server",
                       eno,
                       strerror_r(eno, errbuf, sizeof(errbuf)));
         }
@@ -1953,7 +1953,7 @@ dListClients(DCB *pdcb)
     dcb_printf(pdcb, "-----------------+------------------+----------------------+------------\n");
     while (dcb)
     {
-        if (dcb_isclient(dcb) && dcb->dcb_role == DCB_ROLE_REQUEST_HANDLER)
+        if (dcb->dcb_role == DCB_ROLE_CLIENT_HANDLER)
         {
             dcb_printf(pdcb, " %-15s | %16p | %-20s | %10p\n",
                        (dcb->remote ? dcb->remote : ""),
@@ -2119,26 +2119,6 @@ dcb_printf(DCB *dcb, const char *fmt, ...)
 
     buf->end = GWBUF_DATA(buf) + strlen(GWBUF_DATA(buf));
     dcb->func.write(dcb, buf);
-}
-
-/**
- * Determine the role that a DCB plays within a session.
- *
- * @param dcb
- * @return Non-zero if the DCB is the client of the session
- */
-int
-dcb_isclient(DCB *dcb)
-{
-    if (dcb->state != DCB_STATE_LISTENING && dcb->session)
-    {
-        if (dcb->session->client)
-        {
-            return (dcb->session && dcb == dcb->session->client);
-        }
-    }
-
-    return 0;
 }
 
 /**
@@ -2795,7 +2775,7 @@ dcb_count_by_usage(DCB_USAGE usage)
         switch (usage)
         {
         case DCB_USAGE_CLIENT:
-            if (dcb_isclient(ptr))
+            if (DCB_ROLE_CLIENT_HANDLER == ptr->dcb_role)
             {
                 rval++;
             }
@@ -2807,14 +2787,14 @@ dcb_count_by_usage(DCB_USAGE usage)
             }
             break;
         case DCB_USAGE_BACKEND:
-            if (dcb_isclient(ptr) == 0
-                && ptr->dcb_role == DCB_ROLE_REQUEST_HANDLER)
+            if (ptr->dcb_role == DCB_ROLE_BACKEND_HANDLER)
             {
                 rval++;
             }
             break;
         case DCB_USAGE_INTERNAL:
-            if (ptr->dcb_role == DCB_ROLE_REQUEST_HANDLER)
+            if (ptr->dcb_role == DCB_ROLE_CLIENT_HANDLER ||
+                ptr->dcb_role == DCB_ROLE_BACKEND_HANDLER)
             {
                 rval++;
             }
@@ -2845,12 +2825,14 @@ dcb_count_by_usage(DCB_USAGE usage)
 static int
 dcb_create_SSL(DCB* dcb)
 {
-    if (NULL == dcb->listen_ssl || listener_init_SSL(dcb->listen_ssl) != 0)
+    if (NULL == dcb->listener ||
+        NULL == dcb->listener->ssl ||
+        listener_init_SSL(dcb->listener->ssl) != 0)
     {
         return -1;
     }
 
-    if ((dcb->ssl = SSL_new(dcb->listen_ssl->ctx)) == NULL)
+    if ((dcb->ssl = SSL_new(dcb->listener->ssl->ctx)) == NULL)
     {
         MXS_ERROR("Failed to initialize SSL for connection.");
         return -1;
@@ -3011,9 +2993,13 @@ dcb_role_name(DCB *dcb)
         {
             strcat(name, "Service Listener");
         }
-        else if (DCB_ROLE_REQUEST_HANDLER == dcb->dcb_role)
+        else if (DCB_ROLE_CLIENT_HANDLER == dcb->dcb_role)
         {
-            strcat(name, "Request Handler");
+            strcat(name, "Client Request Handler");
+        }
+        else if (DCB_ROLE_BACKEND_HANDLER == dcb->dcb_role)
+        {
+            strcat(name, "Backend Request Handler");
         }
         else if (DCB_ROLE_INTERNAL == dcb->dcb_role)
         {
