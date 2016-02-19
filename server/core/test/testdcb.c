@@ -37,7 +37,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#include <listener.h>
 #include <dcb.h>
 
 /**
@@ -53,11 +53,11 @@ int     bite1 = 35;
 int     bite2 = 60;
 int     bite3 = 10;
 int     buflen;
-
+SERV_LISTENER dummy;
         /* Single buffer tests */
         ss_dfprintf(stderr,
                     "testdcb : creating buffer with type DCB_ROLE_SERVICE_LISTENER"); 
-        dcb = dcb_alloc(DCB_ROLE_SERVICE_LISTENER);
+        dcb = dcb_alloc(DCB_ROLE_SERVICE_LISTENER, &dummy);
         printDCB(dcb);
         ss_info_dassert(dcb_isvalid(dcb), "New DCB must be valid");
         ss_dfprintf(stderr, "\t..done\nAllocated dcb.");

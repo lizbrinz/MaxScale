@@ -41,7 +41,7 @@
 #include <secrets.h>
 #include <dbusers.h>
 #include <mysql_client_server_protocol.h>
-
+#include <listener.h>
 #include <arpa/inet.h>
 
 extern int setipaddress();
@@ -56,10 +56,10 @@ int set_and_get_single_mysql_users_ipv4(char *username, unsigned long ipv4, char
 	char *db="";
 	DCB *dcb;
 	SERVICE *service;
-
+    SERV_LISTENER dummy;
 	unsigned long fix_ipv4;
 
-        dcb = dcb_alloc(DCB_ROLE_INTERNAL);
+        dcb = dcb_alloc(DCB_ROLE_INTERNAL, &dummy);
 
         if (dcb == NULL) {
                 fprintf(stderr, "dcb_alloc() failed\n");
@@ -189,8 +189,9 @@ int set_and_get_mysql_users_wildcards(char *username, char *hostname, char *pass
 	DCB	*dcb;
 	SERVICE *service;
 	MYSQL_session *data;
+    SERV_LISTENER dummy;
 
-	dcb = dcb_alloc(DCB_ROLE_INTERNAL);
+	dcb = dcb_alloc(DCB_ROLE_INTERNAL, &dummy);
 
 	if (dcb == NULL) {
 		fprintf(stderr, "dcb_alloc() failed\n");
