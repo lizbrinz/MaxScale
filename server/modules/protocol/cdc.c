@@ -217,40 +217,38 @@ cdc_read_event(DCB* dcb)
                            }
                         }
                     case CDC_STATE_HANDLE_REQUEST:
-                        // handle CLOSE command, it shoudl be routed as well and closed after last transmission
+                        // handle CLOSE command, it shoudl be routed as well and client connection closed after last transmission
                         if (strncmp(GWBUF_DATA(head), "CLOSE", GWBUF_LENGTH(head)) == 0)
                         {
-                            MXS_INFO("%s: Client [%s] has requested CLOSE action",
-                                     dcb->service->name, dcb->remote != NULL ? dcb->remote : "");
+                               MXS_INFO("%s: Client [%s] has requested CLOSE action",
+                                         dcb->service->name, dcb->remote != NULL ? dcb->remote : "");
+         
+                               // gwbuf_set_type(head, GWBUF_TYPE_CDC);
+                               // the router will close the client connection
+                               //rc = SESSION_ROUTE_QUERY(session, head);
+                                                                                             
+                               // buffer not handled by router right now, consume it
+                               while ((head = gwbuf_consume(head, GWBUF_LENGTH(head))) != NULL);
 
-                            // gwbuf_set_type(head, GWBUF_TYPE_CDC);
-                            // the router will close the client connection
-                            //rc = SESSION_ROUTE_QUERY(session, head);
-                            
-                            // buffer not handled by router right now
-                            while ((head = gwbuf_consume(head, GWBUF_LENGTH(head))) != NULL);
+                               /* right now, just force the client connecton close */
+                               dcb_close(dcb);
 
-                            /* right now, just force the client connecton close */
-                            dcb_close(dcb);
-                            return 0;
+                               return 0;
                         }
                         else
-                        {
+			{
                             char *request = strndup(GWBUF_DATA(head), GWBUF_LENGTH(head));
-
-                            // gwbuf_set_type(head, GWBUF_TYPE_CDC);
-                            rc = SESSION_ROUTE_QUERY(session, head);
 
                             MXS_INFO("%s: Client [%s] requested [%s] action", dcb->service->name,
                                      dcb->remote != NULL ? dcb->remote : "", request);
 
                             free(request);
 
-                            // buffer not handled by router right now
-                            while ((head = gwbuf_consume(head, GWBUF_LENGTH(head))) != NULL);
+                            // gwbuf_set_type(head, GWBUF_TYPE_CDC);
+                            rc = SESSION_ROUTE_QUERY(session, head);
 
                             break;
-                        }
+			}
                     default:
                         MXS_INFO("%s: Client [%s] in unknown state %d", dcb->service->name,
                                  dcb->remote != NULL ? dcb->remote : "", protocol->state);
