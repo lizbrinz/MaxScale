@@ -13,7 +13,7 @@ add_executable(maxscale atomic.c buffer.c spinlock.c gateway.c
 	gw_utils.c utils.c dcb.c load_utils.c session.c service.c server.c 
 	poll.c config.c users.c hashtable.c dbusers.c thread.c gwbitmask.c 
 	monitor.c adminusers.c secrets.c filter.c modutil.c hint.c
-	housekeeper.c memlog.c resultset.c  gwdirs.c externcmd.c random_jkiss.c maxscale_pcre2.c)
+	housekeeper.c memlog.c resultset.c  gwdirs.c externcmd.c random_jkiss.c maxscale_pcre2.c mysql_utils.c mysql_binlog.c)
 add_dependencies(maxscale pcre2)
 
 if(WITH_JEMALLOC)
