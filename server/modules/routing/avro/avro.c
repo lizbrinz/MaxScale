@@ -78,7 +78,7 @@
 #include <ini.h>
 #include <sys/stat.h>
 
-#include <avro.h>
+#include <mxs_avro.h>
 
 static char *version_str = "V2.0.0";
 

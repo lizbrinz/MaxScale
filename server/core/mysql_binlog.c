@@ -25,6 +25,7 @@
 #include <stdlib.h>
 #include <log_manager.h>
 #include <string.h>
+#include <skygw_debug.h>
 
 /**
  * @brief Extract a table map from a table map event
@@ -38,8 +39,9 @@
 TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len)
 {
     uint64_t table_id = 0;
-    memcpy(&table_id, ptr, post_header_len);
-    ptr += post_header_len;
+    size_t id_size = post_header_len == 6 ? 4 : 6;
+    memcpy(&table_id, ptr, id_size);
+    ptr += id_size;
 
     uint16_t flags = 0;
     memcpy(&flags, ptr, 2);
@@ -251,6 +253,29 @@ static void unpack_datetime(uint64_t val, struct tm *dest)
     dest->tm_sec = second;
 }
 
+
+/**
+ * @brief Unpack a TIME
+ *
+ * The ETIME is stored as a 3 byte value with the values stored as multiples
+ * of 100. This means that the stored value is in the format HHMMSS.
+ * @param val Value read from the binary log
+ * @param dest Pointer where the unpacked value is stored
+ */
+static void unpack_time(uint64_t val, struct tm *dest)
+{
+    uint32_t second = val - ((val / 100) * 100);
+    val /= 100;
+    uint32_t minute = val - ((val / 100) * 100);
+    val /= 100;
+    uint32_t hour = val;
+
+    memset(dest, 0, sizeof(struct tm));
+    dest->tm_hour = hour;
+    dest->tm_min = minute;
+    dest->tm_sec = second;
+}
+
 /**
  * @brief Unpack a DATE value
  * @param val Packed value
@@ -293,8 +318,7 @@ void unpack_temporal_value(uint8_t type, uint64_t val, struct tm *tm)
             break;
 
         case TABLE_COL_TYPE_TIME:
-            // TODO: add TIME extraction
-            memset(tm, 0, sizeof(struct tm));
+            unpack_time(val, tm);
             break;
 
         case TABLE_COL_TYPE_DATE:
@@ -308,6 +332,36 @@ void unpack_temporal_value(uint8_t type, uint64_t val, struct tm *tm)
     }
 }
 
+void format_temporal_value(char *str, size_t size, uint8_t type, struct tm *tm)
+{
+    const char *format = "";
+
+    switch (type)
+    {
+        case TABLE_COL_TYPE_DATETIME:
+            format = "%Y-%m-%d %H:%M:%S";
+            break;
+
+        case TABLE_COL_TYPE_TIME:
+            format = "%H:%M:%S";
+            break;
+
+        case TABLE_COL_TYPE_DATE:
+            format = "%Y-%m-%d";
+            break;
+
+        case TABLE_COL_TYPE_TIMESTAMP:
+            // TODO: implement TIMESTAMP extraction
+            //format = "%Y-%m-%d %H:%M:%S";
+            break;
+            
+        default:
+            MXS_ERROR("Unexpected temporal type: %x", type);
+            ss_dassert(false);
+            break;
+    }
+    strftime(str, size, format, tm);
+}
 /**
  * @brief Extract a value from a row event
  *

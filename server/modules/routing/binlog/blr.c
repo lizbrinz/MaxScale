@@ -136,6 +136,10 @@ static void rses_end_locked_router_action(ROUTER_SLAVE *);
 void my_uuid_init(ulong seed1, ulong seed2);
 void my_uuid(unsigned char *guid);
 GWBUF *blr_cache_read_response(ROUTER_INSTANCE *router, char *response);
+int table_id_hash(void *data);
+int table_id_cmp(void *a, void *b);
+void* i64dup(void *data);
+void* i64free(void *data);
 
 static SPINLOCK	instlock;
 static ROUTER_INSTANCE *instances;
@@ -277,6 +281,7 @@ char		task_name[BLRM_TASK_NAME_LEN+1] = "";
 	inst->binlogdir = NULL;
 	inst->heartbeat = BLR_HEARTBEAT_DEFAULT_INTERVAL;
 	inst->mariadb10_compat = false;
+    memset(inst->event_type_hdr_lens, 0, sizeof(inst->event_type_hdr_lens));
 
 	inst->user = strdup(service->credentials.name);
 	inst->password = strdup(service->credentials.authdata);
@@ -296,6 +301,11 @@ char		task_name[BLRM_TASK_NAME_LEN+1] = "";
 
 	inst->serverid = 0;
 
+    inst->table_maps = hashtable_alloc(1000, table_id_hash, table_id_cmp);
+    hashtable_memory_fns(inst->table_maps, i64dup, NULL, i64free, NULL);
+    inst->schemas = hashtable_alloc(1000, table_id_hash, table_id_cmp);
+    hashtable_memory_fns(inst->schemas, i64dup, NULL, i64free, NULL);
+    
 	my_uuid_init((ulong)rand()*12345,12345);
 	if ((defuuid = (unsigned char *)malloc(20)) != NULL)
 	{

@@ -82,6 +82,7 @@ typedef struct table_map
     uint8_t *column_types;
     char *table;
     char *database;
+    const char *gtid; /*< the current GTID event or NULL if GTID is not enabled */
 } TABLE_MAP;
 
 TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len);
@@ -93,6 +94,7 @@ bool column_is_string_type(uint8_t type);
 /** Temporal values */
 bool is_temporal_value(uint8_t type);
 void unpack_temporal_value(uint8_t type, uint64_t val, struct tm *tm);
+void format_temporal_value(char *str, size_t size, uint8_t type, struct tm *tm);
 
 /** Field value extraction */
 uint64_t extract_field_value(uint8_t *ptr, uint8_t type, uint64_t* val);

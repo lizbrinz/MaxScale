@@ -27,6 +27,7 @@
 
 #include <mysql_utils.h>
 #include <string.h>
+#include <stdbool.h>
 #include <log_manager.h>
 #include <skygw_debug.h>
 

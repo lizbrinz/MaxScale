@@ -31,10 +31,10 @@ set_target_properties(maxscaled PROPERTIES VERSION "1.0.0")
 install(TARGETS maxscaled DESTINATION ${MAXSCALE_LIBDIR})
 
 
-add_library(CDC SHARED cdc.c)
-target_link_libraries(CDC log_manager)
-set_target_properties(CDC PROPERTIES VERSION "1.0.1")
-install(TARGETS CDC DESTINATION ${MAXSCALE_LIBDIR})
+#add_library(CDC SHARED cdc.c)
+#target_link_libraries(CDC log_manager)
+#set_target_properties(CDC PROPERTIES VERSION "1.0.1")
+#install(TARGETS CDC DESTINATION ${MAXSCALE_LIBDIR})
 
 
 

@@ -23,6 +23,7 @@ install(TARGETS cli DESTINATION ${MAXSCALE_LIBDIR})
 
 add_subdirectory(readwritesplit)
 add_subdirectory(schemarouter)
+add_subdirectory(avro)
 if(BUILD_BINLOG)
   add_subdirectory(binlog)
 endif()

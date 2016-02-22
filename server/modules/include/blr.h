@@ -182,6 +182,8 @@
 /* string len for master registration query  */
 #define BLRM_MASTER_REGITRATION_QUERY_LEN	255
 
+#define GTID_MAX_LEN 200
+
 /* Read Binlog position states */
 #define SLAVE_POS_READ_OK			0x00
 #define SLAVE_POS_READ_ERR			0xff
@@ -444,6 +446,11 @@ typedef struct router_instance {
 	int			binlog_fd;	/*< File descriptor of the binlog
 					 *  file being written
 					 */
+    uint8_t event_types;
+    uint8_t event_type_hdr_lens[MAX_EVENT_TYPE_END];
+    char    current_gtid[GTID_MAX_LEN];
+    HASHTABLE     *table_maps;
+    HASHTABLE     *schemas;
 	uint64_t	  last_written;	/*< Position of the last write operation */
 	uint64_t	  last_event_pos;	/*< Position of last event written */
 	uint64_t	  current_safe_event;
