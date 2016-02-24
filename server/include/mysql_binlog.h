@@ -70,6 +70,12 @@
 /** The table ID used for end of statement row events */
 #define TABLE_DUMMY_ID 0x00ffffff
 
+/** How many numbers each table version has (db.table.000001.avro) */
+#define TABLE_MAP_VERSION_DIGITS 6
+
+/** Maximum version number*/
+#define TABLE_MAP_VERSION_MAX 999999
+
 /** A representation of a table map event read from a binary log. A table map
  * maps a table to a unique ID which can be used to match row events to table map
  * events. The table map event tells us how the table is laid out and gives us
@@ -80,6 +86,8 @@ typedef struct table_map
     uint64_t columns;
     uint16_t flags;
     uint8_t *column_types;
+    int version;
+    char version_string[TABLE_MAP_VERSION_DIGITS + 1];
     char *table;
     char *database;
     const char *gtid; /*< the current GTID event or NULL if GTID is not enabled */
@@ -87,6 +95,7 @@ typedef struct table_map
 
 TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len);
 void table_map_free(TABLE_MAP *map);
+void table_map_rotate(TABLE_MAP *map);
 
 const char* table_type_to_string(uint8_t type);
 bool column_is_string_type(uint8_t type);

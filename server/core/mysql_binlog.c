@@ -72,6 +72,8 @@ TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len)
     if (map)
     {
         map->id = table_id;
+        map->version = 1;
+        snprintf(map->version_string, sizeof(map->version_string), "%d", map->version);
         map->flags = flags;
         map->columns = column_count;
         map->column_types = malloc(column_count);
@@ -112,6 +114,18 @@ void table_map_free(TABLE_MAP *map)
         free(map->table);
         free(map);
     }
+}
+
+/**
+ * @brief Rotate a table map
+ *
+ * This
+ * @param map Map to rotate
+ */
+void table_map_rotate(TABLE_MAP *map)
+{
+    map->version++;
+    snprintf(map->version_string, sizeof(map->version_string), "%d", map->version);
 }
 
 /**

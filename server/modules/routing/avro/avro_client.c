@@ -37,7 +37,7 @@
  * 07/05/2015   Massimiliano Pinto	Added MariaDB 10 Compatibility
  * 11/05/2015   Massimiliano Pinto	Only MariaDB 10 Slaves can register to binlog router with a MariaDB 10 Master
  * 25/05/2015	Massimiliano Pinto	Addition of BLRM_SLAVE_STOPPED state and blr_start/stop_slave.
- *					New commands STOP SLAVE, START SLAVE added.	
+ *					New commands STOP SLAVE, START SLAVE added.
  * 29/05/2015	Massimiliano Pinto	Addition of CHANGE MASTER TO ...
  * 05/06/2015	Massimiliano Pinto	router->service->dbref->sever->name instead of master->remote
  *					in blr_slave_send_slave_status()
@@ -191,7 +191,7 @@ avro_encode_value(unsigned char *data, unsigned int value, int len)
 }
 
 /**
- * We have a registered slave that is behind the current leading edge of the 
+ * We have a registered slave that is behind the current leading edge of the
  * binlog. We must replay the log entries to bring this node up to speed.
  *
  * There may be a large number of records to send to the slave, the process
@@ -203,7 +203,7 @@ avro_encode_value(unsigned char *data, unsigned int value, int len)
  *
  * The slave catchup routine will send a burst of replication events per single
  * call. The paramter "long" control the number of events in the burst. The
- * short burst is intended to be used when the master receive an event and 
+ * short burst is intended to be used when the master receive an event and
  * needs to put the slave into catchup mode. This prevents the slave taking
  * too much time away from the thread that is processing the master events.
  *
