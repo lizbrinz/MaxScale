@@ -126,6 +126,7 @@ static inline void dcb_write_tidy_up(DCB *dcb, bool below_water);
 static int gw_write(DCB *dcb, bool *stop_writing);
 static int gw_write_SSL(DCB *dcb, bool *stop_writing);
 static void dcb_log_errors_SSL (DCB *dcb, const char *called_by, int ret);
+static int dcb_accept_one_connection(DCB *listener);
 
 size_t dcb_get_session_id(
     DCB *dcb)
@@ -2972,6 +2973,178 @@ int dcb_connect_SSL(DCB* dcb)
             return -1;
             break;
     }
+}
+
+DCB *
+dcb_accept(DCB *listener)
+{
+    DCB *client_dcb = NULL;
+    int c_sock;
+    int sendbuf;
+    int syseno;
+    struct sockaddr client_conn;
+    socklen_t optlen = sizeof(sendbuf);
+    char errbuf[STRERROR_BUFLEN];
+
+    if ((c_sock = dcb_accept_one_connection(listener)) >= 0)
+    {
+        listener->stats.n_accepts++;
+#if defined(SS_DEBUG)
+        MXS_DEBUG("%lu [gw_MySQLAccept] Accepted fd %d.",
+                  pthread_self(),
+                  c_sock);
+#endif /* SS_DEBUG */
+#if defined(FAKE_CODE)
+        conn_open[c_sock] = true;
+#endif /* FAKE_CODE */
+        /* set nonblocking  */
+        sendbuf = GW_CLIENT_SO_SNDBUF;
+
+        if ((syseno = setsockopt(c_sock, SOL_SOCKET, SO_SNDBUF, &sendbuf, optlen)) != 0)
+        {
+            MXS_ERROR("Failed to set socket options. Error %d: %s",
+                      errno, strerror_r(errno, errbuf, sizeof(errbuf)));
+        }
+
+        sendbuf = GW_CLIENT_SO_RCVBUF;
+
+        if ((syseno = setsockopt(c_sock, SOL_SOCKET, SO_RCVBUF, &sendbuf, optlen)) != 0)
+        {
+            MXS_ERROR("Failed to set socket options. Error %d: %s",
+                      errno, strerror_r(errno, errbuf, sizeof(errbuf)));
+        }
+        setnonblocking(c_sock);
+
+        client_dcb = dcb_alloc(DCB_ROLE_CLIENT_HANDLER, listener->listener);
+
+        if (client_dcb == NULL)
+        {
+            MXS_ERROR("Failed to create DCB object for client connection.");
+            close(c_sock);
+        }
+        else
+        {
+            client_dcb->service = listener->session->service;
+            client_dcb->session = session_set_dummy(client_dcb);
+            client_dcb->fd = c_sock;
+
+            // get client address
+            if (client_conn.sa_family == AF_UNIX)
+            {
+                // client address
+                client_dcb->remote = strdup("localhost_from_socket");
+                // set localhost IP for user authentication
+                (client_dcb->ipv4).sin_addr.s_addr = 0x0100007F;
+            }
+            else
+            {
+                /* client IPv4 in raw data*/
+                memcpy(&client_dcb->ipv4,
+                   (struct sockaddr_in *)&client_conn,
+                   sizeof(struct sockaddr_in));
+                /* client IPv4 in string representation */
+                client_dcb->remote = (char *)calloc(INET_ADDRSTRLEN+1, sizeof(char));
+
+                if (client_dcb->remote != NULL)
+                {
+                    inet_ntop(AF_INET,
+                          &(client_dcb->ipv4).sin_addr,
+                          client_dcb->remote,
+                          INET_ADDRSTRLEN);
+                }
+            }
+        }
+    }
+    return client_dcb;
+}
+
+static int
+dcb_accept_one_connection(DCB *listener)
+{
+    int c_sock;
+
+    /* Try up to 10 times to get a file descriptor by use of accept */
+    for (int i = 0; i < 10; i++)
+    {
+        struct sockaddr client_conn;
+        socklen_t client_len = sizeof(struct sockaddr_storage);
+        int eno = 0;
+
+#if defined(FAKE_CODE)
+        if (fail_next_accept > 0)
+        {
+            c_sock = -1;
+            eno = fail_accept_errno;
+            fail_next_accept -= 1;
+        }
+        else
+        {
+            fail_accept_errno = 0;
+#endif /* FAKE_CODE */
+
+        /* new connection from client */
+        c_sock = accept(listener->fd,
+            (struct sockaddr *) &client_conn,
+            &client_len);
+        eno = errno;
+        errno = 0;
+#if defined(FAKE_CODE)
+        }
+#endif /* FAKE_CODE */
+
+        if (c_sock == -1)
+        {
+            /* Did not get a file descriptor */
+            if (eno == EAGAIN || eno == EWOULDBLOCK)
+            {
+                /**
+                 * We have processed all incoming connections, break out
+                 * of loop for return of -1.
+                 */
+                break;
+            }
+            else if (eno == ENFILE || eno == EMFILE)
+            {
+                struct timespec ts1;
+                ts1.tv_sec = 0;
+
+                /**
+                 * Exceeded system's (ENFILE) or processes
+                 * (EMFILE) max. number of files limit.
+                 */
+                char errbuf[STRERROR_BUFLEN];
+                MXS_DEBUG("%lu [dcb_accept_one_connection] Error %d, %s. ",
+                    pthread_self(),
+                    eno,
+                    strerror_r(eno, errbuf, sizeof(errbuf)));
+
+                /* Log an error the first time this happens */
+                if (i == 0)
+                {
+                    char errbuf[STRERROR_BUFLEN];
+                    MXS_ERROR("Error %d, %s. Failed to accept new client connection.",
+                        eno,
+                        strerror_r(eno, errbuf, sizeof(errbuf)));
+                }
+                ts1.tv_nsec = 100 * i * i * 1000000;
+                nanosleep(&ts1, NULL);
+
+                /* Remain in loop for up to the loop limit, retries. */
+            }
+            else
+            {
+                /**
+                 * Other error, log it then break out of loop for return of -1.
+                 */
+                char errbuf[STRERROR_BUFLEN];
+                MXS_ERROR("Failed to accept new client connection due to %d, %s.",
+                    eno,
+                    strerror_r(eno, errbuf, sizeof(errbuf)));
+                break;
+            }
+        }
+    }
+    return c_sock;
 }
 
 /**

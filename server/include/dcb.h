@@ -294,6 +294,7 @@ int           fail_accept_errno;
 
 DCB *dcb_get_zombies(void);
 int dcb_write(DCB *, GWBUF *);
+DCB *dcb_accept(DCB *listener);
 DCB *dcb_alloc(dcb_role_t, struct servlistener *);
 void dcb_free(DCB *);
 DCB *dcb_connect(struct server *, struct session *, const char *);
