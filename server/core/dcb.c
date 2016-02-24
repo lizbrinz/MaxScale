@@ -2975,6 +2975,18 @@ int dcb_connect_SSL(DCB* dcb)
     }
 }
 
+/**
+ * @brief Accept a new client connection, given a listener, return new DCB
+ *
+ * Calls dcb_accept_one_connection to do the basic work of obtaining a new
+ * connection from a listener.  If that succeeds, some settings are fixed and
+ * a client DCB is created to handle the new connection. Further DCB details
+ * are set before returning the new DCB to the caller, or returning NULL if
+ * no new connection could be achieved.
+ *
+ * @param dcb Listener DCB that has detected new connection request
+ * @return DCB - The new client DCB for the new connection, or NULL if failed
+ */
 DCB *
 dcb_accept(DCB *listener)
 {
@@ -3058,6 +3070,16 @@ dcb_accept(DCB *listener)
     return client_dcb;
 }
 
+/**
+ * @brief Accept a new client connection, given listener, return file descriptor
+ *
+ * Up to 10 retries will be attempted in case of non-permanent errors.  Calls
+ * the accept function and analyses the return, logging any errors and making
+ * an appropriate return.
+ *
+ * @param dcb Listener DCB that has detected new connection request
+ * @return -1 for failure, or a file descriptor for the new connection
+ */
 static int
 dcb_accept_one_connection(DCB *listener)
 {

@@ -1119,16 +1119,14 @@ int gw_MySQLListener(DCB *listen_dcb, char *config_bind)
 
 
 /**
- * @node (write brief function description here)
+ * @node Accept a new connection, using the DCB code for the basic work
  *
- * Parameters:
- * @param listener - <usage>
- *          <description>
+ * For as long as dcb_accept can return new client DCBs for new connections,
+ * continue to loop. The code will always give a failure return, since it
+ * continues to try to create new connections until a failure occurs.
  *
+ * @param listener - The Listener DCB that picks up new connection requests
  * @return 0 in success, 1 in failure
- *
- *
- * @details (write detailed description here)
  *
  */
 int gw_MySQLAccept(DCB *listener)
@@ -1194,7 +1192,6 @@ int gw_MySQLAccept(DCB *listener)
                       pthread_self(),
                       client_dcb,
                       client_dcb->fd);
-            return 0;
         }
     } /**< while client_dcb != NULL */
 
