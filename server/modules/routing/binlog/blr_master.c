@@ -1091,7 +1091,7 @@ int			check_packet_len;
 			if (hdr.ok == 0)
 			{
                 if (hdr.event_size != len - check_packet_len &&
-                    hdr.event_size + 1 < MYSQL_PACKET_LENGTH_MAX)
+                    hdr.event_size + (check_packet_len - MYSQL_HEADER_LEN) < MYSQL_PACKET_LENGTH_MAX)
 					{
 						MXS_ERROR("Packet length is %d, but event size is %d, "
 							"binlog file %s position %lu "
@@ -1119,7 +1119,7 @@ int			check_packet_len;
 
 						break;
 					}
-                    else if ((hdr.event_size + 1) >= MYSQL_PACKET_LENGTH_MAX)
+                    else if (hdr.event_size + (check_packet_len - MYSQL_HEADER_LEN) >= MYSQL_PACKET_LENGTH_MAX)
                     {
                         router->master_event_state = BLR_EVENT_STARTED;
 
@@ -1172,9 +1172,9 @@ int			check_packet_len;
                     /** Don't write the OK byte into the binlog */
                     if (router->master_event_state == BLR_EVENT_STARTED)
                     {
-                        offset = check_packet_len;
+                        offset = MYSQL_HEADER_LEN + 1;
                         router->master_event_state = BLR_EVENT_ONGOING;
-                        extra_bytes = check_packet_len;
+                        extra_bytes = MYSQL_HEADER_LEN + 1;
                     }
 
                     if (router->master_chksum)
@@ -1221,8 +1221,8 @@ int			check_packet_len;
                 {
                     /** Set the pointer offset to the first byte after
                      * the header and OK byte */
-                    offset = check_packet_len;
-                    size = len - check_packet_len - MYSQL_CHECKSUM_LEN;
+                    offset = MYSQL_HEADER_LEN + 1;
+                    size = len - (MYSQL_HEADER_LEN + MYSQL_CHECKSUM_LEN + 1);
                 }
 
                 size = MIN(size, router->checksum_size);
@@ -2687,7 +2687,7 @@ bool blr_send_event(ROUTER_SLAVE *slave, REP_HEADER *hdr, uint8_t *buf)
 void extract_checksum(ROUTER_INSTANCE* router, uint8_t *cksumptr, uint8_t len)
 {
     uint8_t *ptr = cksumptr;
-    while (ptr - cksumptr < len)
+    while (ptr - cksumptr < len && router->partial_checksum_bytes < MYSQL_CHECKSUM_LEN)
     {
         router->partial_checksum[router->partial_checksum_bytes] = *ptr;
         ptr++;
