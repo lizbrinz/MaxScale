@@ -1181,20 +1181,27 @@ int			check_packet_len;
                         extra_bytes = MYSQL_HEADER_LEN + 1;
                     }
 
+                    ss_dassert(len - extra_bytes - semisync_bytes > 0);
+                    uint32_t bytes_available = len - extra_bytes - semisync_bytes;
+
                     if (router->master_chksum)
                     {
-                        uint32_t size = MIN(len - extra_bytes, router->checksum_size);
+                        uint32_t size = MIN(len - extra_bytes - semisync_bytes,
+                                            router->checksum_size);
+
                         router->stored_checksum = crc32(router->stored_checksum,
                                                         ptr + offset, size);
                         router->checksum_size -= size;
 
-                        if (router->checksum_size == 0 && size < len - offset)
+                        if (router->checksum_size == 0 && size < bytes_available)
                         {
-                            extract_checksum(router, ptr + offset + size, len - offset - size);
+                            extract_checksum(router, ptr + offset + size,
+                                             bytes_available - size);
                         }
                     }
 
-                    if (blr_write_data_into_binlog(router, len - offset, ptr + offset) == 0)
+                    if (blr_write_data_into_binlog(router, bytes_available,
+                                                   ptr + offset) == 0)
                     {
                         /** Failed to write to the binlog file, destroy the buffer
                          * chain and close the connection with the master */
