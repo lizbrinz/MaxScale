@@ -1040,12 +1040,13 @@ int			check_packet_len;
 			n_bufs = 1;
 		}
 
+		int semisync_bytes = 0;
+
 		/*
 		 * ptr now points at the current message in a contiguous buffer,
 		 * this buffer is either within the GWBUF or in a malloc'd
 		 * copy if the message straddles GWBUF's.
 		 */
-
 		if (len < BINLOG_EVENT_HDR_LEN && router->master_event_state != BLR_EVENT_ONGOING)
 		{
 		char	*msg = "";
@@ -1079,7 +1080,10 @@ int			check_packet_len;
 
 				blr_extract_header_semisync(ptr, &hdr);
 
+				/** Remove the semi-sync bytes */
+				memmove(ptr, ptr + 2, 5);
 				ptr += 2;
+				semisync_bytes = 2;
 			} else {
                 router->semi_sync_send_ack = 0;
 				check_packet_len = MASTER_BYTES_BEFORE_EVENT;
@@ -1214,7 +1218,7 @@ int			check_packet_len;
              */
             if (router->master_chksum)
             {
-                uint32_t pktsum, offset = MYSQL_HEADER_LEN;
+                uint32_t offset = MYSQL_HEADER_LEN;
                 uint32_t size = len - MYSQL_HEADER_LEN - MYSQL_CHECKSUM_LEN;
 
                 if (router->master_event_state == BLR_EVENT_DONE)
@@ -1222,7 +1226,7 @@ int			check_packet_len;
                     /** Set the pointer offset to the first byte after
                      * the header and OK byte */
                     offset = MYSQL_HEADER_LEN + 1;
-                    size = len - (MYSQL_HEADER_LEN + MYSQL_CHECKSUM_LEN + 1);
+                    size = len - (check_packet_len + MYSQL_CHECKSUM_LEN);
                 }
 
                 size = MIN(size, router->checksum_size);
@@ -1230,26 +1234,26 @@ int			check_packet_len;
                 if (router->checksum_size > 0)
                 {
                     router->stored_checksum = crc32(router->stored_checksum,
-                                                    ptr + offset,
-                                                    size);
+                                                    ptr + offset, size);
                     router->checksum_size -= size;
                 }
 
-                if(router->checksum_size == 0 && size < len - offset)
+                if(router->checksum_size == 0 && size < len - offset - semisync_bytes)
                 {
-                    extract_checksum(router, ptr + offset + size, len - offset - size);
+                    extract_checksum(router, ptr + offset + size,
+                                     len - offset - size - semisync_bytes);
                 }
 
                 if (router->partial_checksum_bytes == MYSQL_CHECKSUM_LEN)
                 {
-                    pktsum = EXTRACT32(&router->partial_checksum);
+                    uint32_t pktsum = EXTRACT32(&router->partial_checksum);
                     if (pktsum != router->stored_checksum)
                     {
                         router->stats.n_badcrc++;
                         free(msg);
                         msg = NULL;
                         MXS_ERROR("%s: Checksum error in event from master, "
-                            "binlog %s @ %lu. Closing master connection.",
+                                  "binlog %s @ %lu. Closing master connection.",
                                   router->service->name, router->binlog_name,
                                   router->current_pos);
                         blr_master_close(router);
@@ -1339,7 +1343,7 @@ int			check_packet_len;
 						db_name_len = ptr[4+20+ 4 + 4];
 						var_block_len = ptr[4+20+ 4 + 4 + 1 + 2];
 
-						statement_len = len - (4+20+4+4+1+2+2+var_block_len+1+db_name_len);
+						statement_len = len - (4+20+4+4+1+2+2+var_block_len+1+db_name_len) - semisync_bytes;
 						statement_sql = calloc(1, statement_len+1);
 						strncpy(statement_sql, (char *)ptr+4+20+4+4+1+2+2+var_block_len+1+db_name_len, statement_len);
 
@@ -1452,8 +1456,8 @@ int			check_packet_len;
 						if (router->master_event_state == BLR_EVENT_STARTED ||
 							router->master_event_state == BLR_EVENT_DONE)
 						{
-							ptr += check_packet_len - MYSQL_HEADER_LEN;
-							offset += check_packet_len - MYSQL_HEADER_LEN;
+							ptr += 1;
+							offset += 1;
 						}
 
 						if (hdr.event_type == ROTATE_EVENT)
@@ -1469,7 +1473,7 @@ int			check_packet_len;
 						 * empty packet should be discarded. */
 
 						if (len > MYSQL_HEADER_LEN &&
-							blr_write_binlog_record(router, &hdr, len - offset, ptr) == 0)
+							blr_write_binlog_record(router, &hdr, len - offset - semisync_bytes, ptr) == 0)
 						{
 							/*
 							 * Failed to write to the
