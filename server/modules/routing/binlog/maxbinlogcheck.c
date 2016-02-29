@@ -173,7 +173,23 @@ int main(int argc, char **argv) {
 
 	ptr = strrchr(path, '/');
 	if (ptr)
-		strncpy(inst->binlog_name, ptr+1, BINLOG_FNAMELEN);
+        {
+            int offset = ptr - path;
+            strncpy(inst->binlog_name, ptr+1, BINLOG_FNAMELEN);
+            inst->fileroot = malloc(offset+1);
+            if (inst->fileroot == NULL)
+            {
+	        MXS_NOTICE("maxbinlogcheck : Error allocating memory for fileroot");
+		mxs_log_flush_sync();
+		mxs_log_finish();
+
+		free(inst);
+
+		return 1;
+            }
+            strncpy(inst->fileroot, path, offset);
+            inst->fileroot[offset] = '\0';
+        }
 	else
 		strncpy(inst->binlog_name, path, BINLOG_FNAMELEN);
 

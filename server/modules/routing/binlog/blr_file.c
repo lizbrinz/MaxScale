@@ -959,6 +959,8 @@ blr_read_events_all_events(ROUTER_INSTANCE *router, int fix, int debug)
     BINLOG_EVENT_DESC last_event;
     BINLOG_EVENT_DESC fde_event;
     int fde_seen = 0;
+    bool rotate_seen = false;
+    bool stop_seen = false;
 
     memset(&first_event, '\0', sizeof(first_event));
     memset(&last_event, '\0', sizeof(last_event));
@@ -990,6 +992,44 @@ blr_read_events_all_events(ROUTER_INSTANCE *router, int fix, int debug)
                     MXS_NOTICE("End of binlog file [%s] at %llu.",
                               router->binlog_name,
                               pos);
+
+                    if (!rotate_seen && !stop_seen)
+                    {
+                        /* create a new routine for this */
+                        int filenum;
+                        filenum = blr_file_get_next_binlogname(router);
+                        if (filenum)
+                        {
+                            char buf[BLRM_BINLOG_NAME_STR_LEN +1];
+                            char filename[PATH_MAX +1];
+                            char next_file[BLRM_BINLOG_NAME_STR_LEN + 1];
+                            char *sptr;
+
+                            sptr = strrchr(router->binlog_name, '.');
+                            if (sptr)
+                            {
+                                int offset = sptr - router->binlog_name;
+                                strncpy(buf, router->binlog_name, offset);
+                                buf[offset] ='\0';
+                                sprintf(next_file, BINLOG_NAMEFMT, buf, filenum);
+                                snprintf(filename, PATH_MAX, "%s/%s", router->fileroot, next_file);
+                                filename[PATH_MAX] = '\0';
+
+                                /* Next file in sequence doesn't exist */
+                                if (access(filename, R_OK) == -1)
+                                {
+                                    MXS_DEBUG("This file is still being written.");
+                                }
+                                else
+                                {
+                                   MXS_NOTICE("Warning: the next binlog file %s exists: "
+                                              "the current binlog file is missing Rotate or Stop event. "
+                                              "Client should read next one", next_file);
+                                }
+                            }
+                        }
+                    }
+
                     if (n_transactions)
                         average_events = (double) ((double) total_events / (double) n_transactions) * (1.0);
                     if (n_transactions)
@@ -1407,6 +1447,34 @@ blr_read_events_all_events(ROUTER_INSTANCE *router, int fix, int debug)
         last_event.event_type = hdr.event_type;
         last_event.event_pos = pos;
 
+    /* Decode CLOSE/STOP Event */
+    if (hdr.event_type == STOP_EVENT)
+    {
+        char *sptr;
+        char buf[BLRM_BINLOG_NAME_STR_LEN +1];
+        char  next_file[BLRM_BINLOG_NAME_STR_LEN + 1];
+        int filenum;
+
+        stop_seen = true;
+
+        /* Checking 'filestem.sequence' binlog filename format */
+        if ((sptr = strrchr(router->binlog_name, '.')) == NULL)
+        {
+            MXS_ERROR("binlog file %s doesn't have format 'filestem.sequence'", router->binlog_name);
+        }
+        else 
+        {
+            int offset = sptr - router->binlog_name;
+            filenum = atoi(sptr + 1);
+            strncpy(buf, router->binlog_name, offset);
+            buf[offset] ='\0';
+            sprintf(next_file, BINLOG_NAMEFMT, buf, filenum + 1);
+
+            if (debug)
+                MXS_NOTICE("- Stop Event at @%llu, client should read next file in sequence if exists: %s", pos, next_file);
+        }
+    }
+
         /* Decode ROTATE EVENT */
         if (hdr.event_type == ROTATE_EVENT)
         {
@@ -1425,6 +1493,8 @@ blr_read_events_all_events(ROUTER_INSTANCE *router, int fix, int debug)
                 slen = BINLOG_FNAMELEN;
             memcpy(file, ptr + 8, slen);
             file[slen] = 0;
+
+            rotate_seen = true;
 
             if (debug)
                 MXS_NOTICE("- Rotate event @ %llu, next file is [%s] @ %lu",
