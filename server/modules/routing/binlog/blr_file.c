@@ -68,6 +68,8 @@
 #include <avro.h>
 #include <rbr.h>
 
+#include <maxscale_pcre2.h>
+
 void handle_table_map_event(ROUTER_INSTANCE *router, REP_HEADER *hdr,  uint64_t pos);
 void handle_row_event(ROUTER_INSTANCE *router, REP_HEADER *hdr,
                             HASHTABLE *maphash, uint64_t pos);
@@ -304,7 +306,7 @@ blr_file_create(ROUTER_INSTANCE *router, char *file)
  * @param router	The router instance
  * @param file		The binlog file name
  */
-static void
+void
 blr_file_append(ROUTER_INSTANCE *router, char *file)
 {
     char path[PATH_MAX + 1] = "";
@@ -321,7 +323,10 @@ blr_file_append(ROUTER_INSTANCE *router, char *file)
         return;
     }
     fsync(fd);
-    close(router->binlog_fd);
+    if(router->binlog_fd != -1)
+    {
+        close(router->binlog_fd);
+    }
     spinlock_acquire(&router->binlog_lock);
     memmove(router->binlog_name, file, BINLOG_FNAMELEN);
     router->current_pos = lseek(fd, 0L, SEEK_END);
@@ -996,38 +1001,6 @@ blr_read_events_all_events(ROUTER_INSTANCE *router, int fix, int debug)
                     if (!rotate_seen && !stop_seen)
                     {
                         /* create a new routine for this */
-                        int filenum;
-                        filenum = blr_file_get_next_binlogname(router);
-                        if (filenum)
-                        {
-                            char buf[BLRM_BINLOG_NAME_STR_LEN +1];
-                            char filename[PATH_MAX +1];
-                            char next_file[BLRM_BINLOG_NAME_STR_LEN + 1];
-                            char *sptr;
-
-                            sptr = strrchr(router->binlog_name, '.');
-                            if (sptr)
-                            {
-                                int offset = sptr - router->binlog_name;
-                                strncpy(buf, router->binlog_name, offset);
-                                buf[offset] ='\0';
-                                sprintf(next_file, BINLOG_NAMEFMT, buf, filenum);
-                                snprintf(filename, PATH_MAX, "%s/%s", router->fileroot, next_file);
-                                filename[PATH_MAX] = '\0';
-
-                                /* Next file in sequence doesn't exist */
-                                if (access(filename, R_OK) == -1)
-                                {
-                                    MXS_DEBUG("This file is still being written.");
-                                }
-                                else
-                                {
-                                   MXS_NOTICE("Warning: the next binlog file %s exists: "
-                                              "the current binlog file is missing Rotate or Stop event. "
-                                              "Client should read next one", next_file);
-                                }
-                            }
-                        }
                     }
 
                     if (n_transactions)
@@ -1568,6 +1541,30 @@ blr_read_events_all_events(ROUTER_INSTANCE *router, int fix, int debug)
             statement_sql = calloc(1, statement_len + 1);
             strncpy(statement_sql, (char *) ptr + 4 + 4 + 1 + 2 + 2 + var_block_len + 1 + db_name_len, statement_len);
 
+            /** Very simple detection of CREATE TABLE statements */
+            int reg_err = 0;
+            if(mxs_pcre2_simple_match("(?i)create[[:space:]]+table", statement_sql,
+                                      0, &reg_err) == MXS_PCRE2_MATCH)
+            {
+                MXS_NOTICE("Create table statement: %s", statement_sql);
+                char *nameptr = strchr(statement_sql, '(');
+                while(nameptr)
+                {
+                    nameptr++;
+                    while (isspace(*nameptr))
+                    {
+                        nameptr++;
+                    }
+                    char colname[64 + 1];
+                    char *end = strchr(nameptr, ' ');
+                    if(end)
+                    {
+                        sprintf(colname, "%.*s", (int)(end - nameptr), nameptr);
+                        MXS_NOTICE("Column name: %s", colname);
+                    }
+                    nameptr = strchr(nameptr, ',');
+                }
+            }
             /* A transaction starts with this event */
             if (strncmp(statement_sql, "BEGIN", 5) == 0)
             {
@@ -1974,4 +1971,43 @@ blr_print_binlog_details(ROUTER_INSTANCE *router, BINLOG_EVENT_DESC first_event,
     MXS_NOTICE("%lu @ %llu, %s, (%s), Last EventTime",
                last_event.event_time, last_event.event_pos,
                event_desc != NULL ? event_desc : "unknown", buf_t);
+}
+
+bool blr_next_binlog_exists(const char* binlogdir, const char* binlog)
+{
+    bool rval = false;
+    int filenum = blr_file_get_next_binlogname(binlog);
+
+    if (filenum)
+    {
+        char *sptr = strrchr(binlog, '.');
+
+        if (sptr)
+        {
+            char buf[BLRM_BINLOG_NAME_STR_LEN +1];
+            char filename[PATH_MAX +1];
+            char next_file[BLRM_BINLOG_NAME_STR_LEN + 1];
+            int offset = sptr - binlog;
+            strncpy(buf, binlog, offset);
+            buf[offset] ='\0';
+            sprintf(next_file, BINLOG_NAMEFMT, buf, filenum);
+            snprintf(filename, PATH_MAX, "%s/%s", binlogdir, next_file);
+            filename[PATH_MAX] = '\0';
+
+            /* Next file in sequence doesn't exist */
+            if (access(filename, R_OK) == -1)
+            {
+                MXS_DEBUG("This file is still being written.");
+            }
+            else
+            {
+                MXS_NOTICE("Warning: the next binlog file %s exists: "
+                    "the current binlog file is missing Rotate or Stop event. "
+                    "Client should read next one", next_file);
+                rval = true;
+            }
+        }
+    }
+
+    return rval;
 }

@@ -28,6 +28,7 @@
  *
  * @endverbatim
  */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,6 +54,11 @@
 #include <sys/stat.h>
 
 #include <mxs_avro.h>
+#include <random_jkiss.h>
+
+#ifndef BINLOG_NAMEFMT
+#define BINLOG_NAMEFMT		"%s.%06d"
+#endif
 
 static char *version_str = "V1.0.0";
 
@@ -84,6 +90,9 @@ extern char *decryptPassword(char *crypt);
 extern char *create_hex_sha1_sha1_passwd(char *passwd);
 extern int MaxScaleUptime();
 void converter_func(void* data);
+void blr_file_use_binlog(ROUTER_INSTANCE *router, char *file);
+bool blr_next_binlog_exists(const char* binlogdir, const char* binlog);
+int blr_file_get_next_binlogname(ROUTER_INSTANCE *router);
 
 /** The module object definition */
 static ROUTER_OBJECT MyObject = {
@@ -295,7 +304,7 @@ char		task_name[BLRM_TASK_NAME_LEN+1] = "";
 
 	inst->binlog_position = 0;
 
-	strcpy(inst->binlog_name, "");
+	sprintf(inst->binlog_name, BINLOG_NAMEFMT, inst->fileroot, 1);
 	strcpy(inst->prevbinlog, "");
 
     /* Hashtable alloc */
@@ -1173,5 +1182,13 @@ uint32_t	rval = 0, shift = 0;
 void converter_func(void* data)
 {
     AVRO_INSTANCE* router = (AVRO_INSTANCE*)data;
-    // add routine
+
+    while (blr_next_binlog_exists(router->binlogdir, router->binlog_name))
+    {
+        blr_file_use_binlog(router, router->binlog_name);
+        lseek(router->binlog_fd, 0L, SEEK_SET);
+        blr_read_events_all_events(router, 0, 0);
+        sprintf(router->binlog_name, BINLOG_NAMEFMT, router->fileroot,
+                blr_file_get_next_binlogname(router->binlog_name));
+    }
 }

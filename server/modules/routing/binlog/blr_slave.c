@@ -3624,7 +3624,7 @@ blr_set_master_logfile(ROUTER_INSTANCE *router, char *filename, char *error) {
 		}
 	
 		/* get next binlog file name, assuming filestem is the same */
-		next_binlog_seqname = blr_file_get_next_binlogname(router);
+		next_binlog_seqname = blr_file_get_next_binlogname(router->binlog_name);
 
 		if (!next_binlog_seqname) {
 

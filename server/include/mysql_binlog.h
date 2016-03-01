@@ -76,6 +76,9 @@
 /** Maximum version number*/
 #define TABLE_MAP_VERSION_MAX 999999
 
+/** Maximum column name length */
+#define TABLE_MAP_MAX_NAME_LEN 64
+
 /** A representation of a table map event read from a binary log. A table map
  * maps a table to a unique ID which can be used to match row events to table map
  * events. The table map event tells us how the table is laid out and gives us
@@ -86,6 +89,7 @@ typedef struct table_map
     uint64_t columns;
     uint16_t flags;
     uint8_t *column_types;
+    char **column_names;
     int version;
     char version_string[TABLE_MAP_VERSION_DIGITS + 1];
     char *table;

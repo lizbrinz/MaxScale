@@ -77,15 +77,17 @@ TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len)
         map->flags = flags;
         map->columns = column_count;
         map->column_types = malloc(column_count);
+        map->column_names = malloc(column_count * sizeof(char*));
         map->database = strdup(schema_name);
         map->table = strdup(table_name);
-        if (map->column_types && map->database && map->table)
+        if (map->column_types && map->database && map->table && map->column_names)
         {
             memcpy(map->column_types, column_types, column_count);
         }
         else
         {
             free(map->column_types);
+            free(map->column_names);
             free(map->database);
             free(map->table);
             free(map);
