@@ -88,6 +88,10 @@
 #include <hashtable.h>
 #include <listener.h>
 #include <hk_heartbeat.h>
+#include <netinet/tcp.h>
+#include <sys/stat.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 #define SSL_ERRBUF_LEN 140
 
@@ -127,6 +131,9 @@ static int gw_write(DCB *dcb, bool *stop_writing);
 static int gw_write_SSL(DCB *dcb, bool *stop_writing);
 static void dcb_log_errors_SSL (DCB *dcb, const char *called_by, int ret);
 static int dcb_accept_one_connection(DCB *listener);
+static int dcb_listen_create_socket_inet(char *config_bind);
+static int dcb_listen_create_socket_unix(char *config_bind);
+static int dcb_set_socket_option(int sockfd, int level, int optname, void *optval, socklen_t optlen);
 
 size_t dcb_get_session_id(
     DCB *dcb)
@@ -3165,8 +3172,231 @@ dcb_accept_one_connection(DCB *listener)
                 break;
             }
         }
+        else
+        {
+            break;
+        }
     }
     return c_sock;
+}
+
+/**
+ * @brief Create a listener, add new information to the given DCB
+ *
+ * Does stuff
+ *
+ * @param dcb Listener DCB that is being created
+ * @return 0 if new listener created successfully, otherwise -1
+ */
+int
+dcb_listen(DCB *listener, char *config)
+{
+    int listener_socket;
+
+    listener->fd = -1;
+    if (strchr(config,'/'))
+    {
+        listener_socket = dcb_listen_create_socket_unix(config);
+    }
+    else
+    {
+        listener_socket = dcb_listen_create_socket_inet(config);
+    }
+    if (listener_socket < 0)
+    {
+        return -1;
+    }
+
+    if (listen(listener_socket, 10 * SOMAXCONN) != 0)
+    {
+        char errbuf[STRERROR_BUFLEN];
+        MXS_ERROR("Failed to start listening on '%s': %d, %s",
+                  config,
+                  errno,
+                  strerror_r(errno, errbuf, sizeof(errbuf)));
+        close(listener_socket);
+        return -1;
+    }
+
+    MXS_NOTICE("Listening MySQL connections at %s", config);
+
+    // assign listener_socket to dcb
+    listener->fd = listener_socket;
+
+    // add listening socket to poll structure
+    if (poll_add_dcb(listener) != 0)
+    {
+        MXS_ERROR("MaxScale encountered system limit while "
+                  "attempting to register on an epoll instance.");
+        return -1;
+    }
+    return 0;
+}
+
+/**
+ * @brief Create a listener, add new information to the given DCB
+ *
+ * Does stuff
+ *
+ * @param dcb Listener DCB that is being created
+ * @return socket if successful, -1 otherwise
+ */
+static int
+dcb_listen_create_socket_inet(char *config_bind)
+{
+    int listener_socket;
+    struct sockaddr_in server_address;
+    int one = 1;
+
+    memset(&server_address, 0, sizeof(server_address));
+    /* This is partially dead code, MaxScale will never start without explicit
+     * ports defined for all listeners. Thus the default port is never used.
+     */
+    if (!parse_bindconfig(config_bind, 4406, &server_address))
+    {
+        MXS_ERROR("Error in parse_bindconfig for [%s]", config_bind);
+        return -1;
+    }
+
+    /** Create the TCP socket */
+    if ((listener_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    {
+        char errbuf[STRERROR_BUFLEN];
+        MXS_ERROR("Can't create socket: %i, %s",
+                  errno,
+                  strerror_r(errno, errbuf, sizeof(errbuf)));
+        return -1;
+    }
+
+    // socket options
+    if (dcb_set_socket_option(listener_socket, SOL_SOCKET, SO_REUSEADDR, (char *) &one, sizeof(one)) != 0 ||
+        dcb_set_socket_option(listener_socket, IPPROTO_TCP, TCP_NODELAY, (char *) &one, sizeof(one)) != 0)
+    {
+        return -1;
+    }
+
+    // set NONBLOCKING mode
+    if (setnonblocking(listener_socket) != 0)
+    {
+        MXS_ERROR("Failed to set socket to non-blocking mode.");
+        close(listener_socket);
+        return -1;
+    }
+
+    if (bind(listener_socket, (struct sockaddr *) &server_address, sizeof(server_address)) < 0)
+    {
+        char errbuf[STRERROR_BUFLEN];
+        MXS_ERROR("Failed to bind on '%s': %i, %s",
+                  config_bind,
+                  errno,
+                  strerror_r(errno, errbuf, sizeof(errbuf)));
+        close(listener_socket);
+        return -1;
+    }
+    return listener_socket;
+}
+
+/**
+ * @brief Create a listener, add new information to the given DCB
+ *
+ * Does stuff
+ *
+ * @param dcb Listener DCB that is being created
+ * @return socket if successful, -1 otherwise
+ */
+static int
+dcb_listen_create_socket_unix(char *config_bind)
+{
+    int listener_socket;
+    struct sockaddr_un local_addr;
+    int one = 1;
+
+    char *tmp = strrchr(config_bind, ':');
+    if (tmp)
+    {
+        *tmp = '\0';
+    }
+
+    // UNIX socket create
+    if ((listener_socket = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
+    {
+        char errbuf[STRERROR_BUFLEN];
+        MXS_ERROR("Can't create UNIX socket: %i, %s",
+                  errno,
+                  strerror_r(errno, errbuf, sizeof(errbuf)));
+        return -1;
+    }
+
+    // socket options
+    if (dcb_set_socket_option(listener_socket, SOL_SOCKET, SO_REUSEADDR, (char *) &one, sizeof(one)) != 0)
+    {
+        return -1;
+    }
+
+    // set NONBLOCKING mode
+    if (setnonblocking(listener_socket) != 0)
+    {
+        MXS_ERROR("Failed to set socket to non-blocking mode.");
+        close(listener_socket);
+        return -1;
+    }
+
+    memset(&local_addr, 0, sizeof(local_addr));
+    local_addr.sun_family = AF_UNIX;
+    strncpy(local_addr.sun_path, config_bind, sizeof(local_addr.sun_path) - 1);
+
+    if ((-1 == unlink(config_bind)) && (errno != ENOENT))
+    {
+        char errbuf[STRERROR_BUFLEN];
+        MXS_ERROR("Failed to unlink Unix Socket %s: %d %s",
+                  config_bind, errno, strerror_r(errno, errbuf, sizeof(errbuf)));
+    }
+
+    /* Bind the socket to the Unix domain socket */
+    if (bind(listener_socket, (struct sockaddr *) &local_addr, sizeof(local_addr)) < 0)
+    {
+        char errbuf[STRERROR_BUFLEN];
+        MXS_ERROR("Failed to bind to UNIX Domain socket '%s': %i, %s",
+                  config_bind,
+                  errno,
+                  strerror_r(errno, errbuf, sizeof(errbuf)));
+        close(listener_socket);
+        return -1;
+    }
+
+    /* set permission for all users */
+    if (chmod(config_bind, 0777) < 0)
+    {
+        char errbuf[STRERROR_BUFLEN];
+        MXS_ERROR("Failed to change permissions on UNIX Domain socket '%s': %i, %s",
+                  config_bind,
+                  errno,
+                  strerror_r(errno, errbuf, sizeof(errbuf)));
+    }
+    return listener_socket;
+}
+
+/**
+ * @brief Set socket options, log an error if fails
+ *
+ * Simply calls the setsockopt function with the same parameters, but also
+ * checks for success and logs an error if necessary.
+ *
+ * @param dcb Listener DCB that is being created
+ * @return 0 if successful, otherwise -1
+ */
+static int
+dcb_set_socket_option(int sockfd, int level, int optname, void *optval, socklen_t optlen)
+{
+    if (setsockopt(sockfd, level, optname, optval, optlen) != 0)
+    {
+        char errbuf[STRERROR_BUFLEN];
+        MXS_ERROR("Failed to set socket options. Error %d: %s",
+                  errno,
+                  strerror_r(errno, errbuf, sizeof(errbuf)));
+        return -1;
+    }
+    return 0;
 }
 
 /**
