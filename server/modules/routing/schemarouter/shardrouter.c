@@ -1018,8 +1018,8 @@ newSession(
 #endif
 
     client_rses->router = router;
-    client_rses->rses_mysql_session = (MYSQL_session*) session->data;
-    client_rses->rses_client_dcb = (DCB*) session->client;
+    client_rses->rses_mysql_session = (MYSQL_session*) session->client_dcb->data;
+    client_rses->rses_client_dcb = (DCB*) session->client_dcb;
     client_rses->rses_autocommit_enabled = true;
     client_rses->rses_transaction_active = false;
     client_rses->session = session;
@@ -1191,17 +1191,17 @@ closeSession(
         ROUTER_OBJECT* rtr;
         ROUTER* rinst;
         void *rses;
-        SESSION *ses;
+        SESSION *one_session;
 
         for(i = 0;i<router_cli_ses->n_subservice;i++)
         {
             rtr = router_cli_ses->subservice[i]->service->router;
             rinst = router_cli_ses->subservice[i]->service->router_instance;
-            ses = router_cli_ses->subservice[i]->session;
-            if(ses != NULL)
+            one_session = router_cli_ses->subservice[i]->session;
+            if(one_session != NULL)
             {
-                rses = ses->router_session;
-                ses->state = SESSION_STATE_STOPPING;
+                rses = one_session->router_session;
+                one_session->state = SESSION_STATE_STOPPING;
                 rtr->closeSession(rinst,rses);
             }
             router_cli_ses->subservice[i]->state = SUBSVC_CLOSED;

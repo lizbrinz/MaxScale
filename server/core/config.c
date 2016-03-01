@@ -133,14 +133,6 @@ static char *service_params[] =
     "version_string",
     "filters",
     "weightby",
-    /* These should no longer be required
-    "ssl_cert",
-    "ssl_ca_cert",
-    "ssl",
-    "ssl_key",
-    "ssl_version",
-    "ssl_cert_verify_depth",
-     * */
     "ignore_databases",
     "ignore_databases_regex",
     "log_auth_warnings",
@@ -184,6 +176,7 @@ static char *monitor_params[] =
     "backend_write_timeout",
     "available_when_donor",
     "disable_master_role_setting",
+    "use_priority",
     NULL
 };
 
@@ -1110,7 +1103,13 @@ make_ssl_structure (CONFIG_CONTEXT *obj, bool require_cert, int *error_count)
                 local_errors++;
             }
         }
-        else new_ssl->ssl_cert_verify_depth = 9;
+        else
+        {
+            /**
+             * Default of 9 as per Linux man page
+             */
+            new_ssl->ssl_cert_verify_depth = 9;
+        }
 
         listener_set_certificates(new_ssl, ssl_cert, ssl_key, ssl_ca_cert);
 
@@ -1388,6 +1387,9 @@ process_config_update(CONFIG_CONTEXT *context)
                         if (auth_all_servers)
                         {
                             serviceAuthAllServers(service, config_truth_value(auth_all_servers));
+                            service_set_param_value(service,
+                                                    config_get_param(obj->parameters, "auth_all_servers"),
+                                                    auth_all_servers, 0, BOOL_TYPE);
                         }
                         if (optimize_wildcard)
                         {
@@ -2257,6 +2259,9 @@ int create_new_service(CONFIG_CONTEXT *obj)
     if (auth_all_servers)
     {
         serviceAuthAllServers(obj->element, config_truth_value(auth_all_servers));
+        service_set_param_value(service,
+                                config_get_param(obj->parameters, "auth_all_servers"),
+                                auth_all_servers, 0, BOOL_TYPE);
     }
 
     char *optimize_wildcard = config_get_value(obj->parameters, "optimize_wildcard");
@@ -2404,7 +2409,7 @@ int create_new_service(CONFIG_CONTEXT *obj)
      */
 
     /** Parameters for rwsplit router only */
-    if (strcmp(router, "readwritesplit"))
+    if (strcmp(router, "readwritesplit") == 0)
     {
         if ((param = config_get_param(obj->parameters, "max_slave_connections")))
         {
@@ -2679,19 +2684,31 @@ int create_new_monitor(CONFIG_CONTEXT *context, CONFIG_CONTEXT *obj, HASHTABLE* 
         char *connect_timeout = config_get_value(obj->parameters, "backend_connect_timeout");
         if (connect_timeout)
         {
-            monitorSetNetworkTimeout(obj->element, MONITOR_CONNECT_TIMEOUT, atoi(connect_timeout));
+            if (!monitorSetNetworkTimeout(obj->element, MONITOR_CONNECT_TIMEOUT, atoi(connect_timeout)))
+            {
+                MXS_ERROR("Failed to set backend_connect_timeout");
+                error_count++;
+            }
         }
 
         char *read_timeout = config_get_value(obj->parameters, "backend_read_timeout");
         if (read_timeout)
         {
-            monitorSetNetworkTimeout(obj->element, MONITOR_READ_TIMEOUT, atoi(read_timeout));
+            if (!monitorSetNetworkTimeout(obj->element, MONITOR_READ_TIMEOUT, atoi(read_timeout)))
+            {
+                MXS_ERROR("Failed to set backend_read_timeout");
+                error_count++;
+            }
         }
 
         char *write_timeout = config_get_value(obj->parameters, "backend_write_timeout");
         if (write_timeout)
         {
-            monitorSetNetworkTimeout(obj->element, MONITOR_WRITE_TIMEOUT, atoi(write_timeout));
+            if (!monitorSetNetworkTimeout(obj->element, MONITOR_WRITE_TIMEOUT, atoi(write_timeout)))
+            {
+                MXS_ERROR("Failed to set backend_write_timeout");
+                error_count++;
+            }
         }
 
         /* get the servers to monitor */

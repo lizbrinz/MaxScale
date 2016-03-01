@@ -808,7 +808,7 @@ static void* newSession(
 #endif
 
 	client_rses->router = router;
-	client_rses->client_dcb = session->client;
+	client_rses->client_dcb = session->client_dcb;
         /**
          * If service config has been changed, reload config from service to
          * router instance first.
@@ -1595,7 +1595,7 @@ void check_drop_tmp_table(
   }
 
   rses_prop_tmp = router_cli_ses->rses_properties[RSES_PROP_TYPE_TMPTABLES];
-  data = (MYSQL_session*)router_cli_ses->client_dcb->session->data;
+  data = (MYSQL_session*)router_cli_ses->client_dcb->data;
 
   if(data == NULL)
   {
@@ -1675,7 +1675,7 @@ static qc_query_type_t is_read_tmp_table(
   if (BREF_IS_IN_USE(router_cli_ses->rses_master_ref))
   {
   rses_prop_tmp = router_cli_ses->rses_properties[RSES_PROP_TYPE_TMPTABLES];
-  data = (MYSQL_session*)router_cli_ses->client_dcb->session->data;
+  data = (MYSQL_session*)router_cli_ses->client_dcb->data;
 
   if(data == NULL)
   {
@@ -1769,7 +1769,7 @@ static void check_create_tmp_table(
 
   router_cli_ses->have_tmp_tables = true;
   rses_prop_tmp = router_cli_ses->rses_properties[RSES_PROP_TYPE_TMPTABLES];
-  data = (MYSQL_session*)router_cli_ses->client_dcb->session->data;
+  data = (MYSQL_session*)router_cli_ses->client_dcb->data;
 
   if(data == NULL)
   {
@@ -1876,9 +1876,9 @@ static DCB* rses_get_client_dcb(
 		if ((dcb = rses->rses_backend_ref[i].bref_dcb) != NULL &&
 			BREF_IS_IN_USE(&rses->rses_backend_ref[i]) &&
 			dcb->session != NULL &&
-			dcb->session->client != NULL)
+			dcb->session->client_dcb != NULL)
 		{
-			return dcb->session->client;
+			return dcb->session->client_dcb;
 		}
 	}
 	return NULL;
@@ -2764,7 +2764,7 @@ static void clientReply (
 	}
         /** Holding lock ensures that router session remains open */
         ss_dassert(backend_dcb->session != NULL);
-	client_dcb = backend_dcb->session->client;
+	client_dcb = backend_dcb->session->client_dcb;
 
         /** Unlock */
         rses_end_locked_router_action(router_cli_ses);
@@ -4086,7 +4086,7 @@ static bool execute_sescmd_in_backend(
 			MYSQL_session* data;
 			unsigned int qlen;
 
-			data = dcb->session->data;
+			data = dcb->session->client_dcb->data;
 			tmpbuf = scur->scmd_cur_cmd->my_sescmd_buf;
 			qlen = MYSQL_GET_PACKET_LEN((unsigned char*)tmpbuf->start);
 			memset(data->db,0,MYSQL_DATABASE_MAXLEN+1);
@@ -4781,7 +4781,7 @@ static void handle_error_reply_client(
 
 	spinlock_acquire(&ses->ses_lock);
 	sesstate = ses->state;
-	client_dcb = ses->client;
+	client_dcb = ses->client_dcb;
 	spinlock_release(&ses->ses_lock);
 
 	/**
@@ -4853,7 +4853,7 @@ static bool handle_error_new_connection(
 	if (BREF_IS_WAITING_RESULT(bref))
 	{
 		DCB* client_dcb;
-		client_dcb = ses->client;
+		client_dcb = ses->client_dcb;
 		client_dcb->func.write(client_dcb, gwbuf_clone(errmsg));
 		bref_clear_state(bref, BREF_WAITING_RESULT);
 	}

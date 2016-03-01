@@ -297,6 +297,7 @@ int dcb_write(DCB *, GWBUF *);
 DCB *dcb_accept(DCB *listener);
 DCB *dcb_alloc(dcb_role_t, struct servlistener *);
 void dcb_free(DCB *);
+void dcb_free_all_memory(DCB *dcb);
 DCB *dcb_connect(struct server *, struct session *, const char *);
 DCB *dcb_clone(DCB *);
 int dcb_read(DCB *, GWBUF **, int);

@@ -326,8 +326,6 @@ dcb_clone(DCB *orig)
 static void
 dcb_final_free(DCB *dcb)
 {
-    DCB_CALLBACK *cb;
-
     CHK_DCB(dcb);
     ss_info_dassert(dcb->state == DCB_STATE_DISCONNECTED ||
                     dcb->state == DCB_STATE_ALLOC,
@@ -376,22 +374,35 @@ dcb_final_free(DCB *dcb)
         SESSION *local_session = dcb->session;
         dcb->session = NULL;
         CHK_SESSION(local_session);
-        /**
-         * Set session's client pointer NULL so that other threads
-         * won't try to call dcb_close for client DCB
-         * after this call.
-         */
-        if (local_session->client == dcb)
-        {
-            spinlock_acquire(&local_session->ses_lock);
-            local_session->client = NULL;
-            spinlock_release(&local_session->ses_lock);
-        }
         if (SESSION_STATE_DUMMY != local_session->state)
         {
             session_free(local_session);
+
+            if (local_session->client_dcb == dcb)
+            {
+                /** The client DCB is freed once all other DCBs that the session
+                 * uses have been freed. This will guarantee that the authentication
+                 * data will be usable for all DCBs even if the client DCB has already
+                 * been closed. */
+                return;
+            }
         }
     }
+    dcb_free_all_memory(dcb);
+}
+
+/**
+ * Free the memory belonging to a DCB
+ *
+ * NB The DCB is fully detached from all links except perhaps the session
+ * dcb_client link.
+ *
+ * @param dcb The DCB to free
+ */
+void
+dcb_free_all_memory(DCB *dcb)
+{
+    DCB_CALLBACK *cb_dcb;
 
     if (dcb->protocol && (!DCB_IS_CLONE(dcb)))
     {
@@ -428,10 +439,10 @@ dcb_final_free(DCB *dcb)
     }
 
     spinlock_acquire(&dcb->cb_lock);
-    while ((cb = dcb->callbacks) != NULL)
+    while ((cb_dcb = dcb->callbacks) != NULL)
     {
-        dcb->callbacks = cb->next;
-        free(cb);
+        dcb->callbacks = cb_dcb->next;
+        free(cb_dcb);
     }
     spinlock_release(&dcb->cb_lock);
     if (dcb->ssl)
@@ -787,8 +798,8 @@ dcb_connect(SERVER *server, SESSION *session, const char *protocol)
                   server->name,
                   server->port,
                   dcb,
-                  session->client,
-                  session->client->fd);
+                  session->client_dcb,
+                  session->client_dcb->fd);
         dcb->state = DCB_STATE_DISCONNECTED;
         dcb_final_free(dcb);
         return NULL;
@@ -801,8 +812,8 @@ dcb_connect(SERVER *server, SESSION *session, const char *protocol)
                   server->name,
                   server->port,
                   dcb,
-                  session->client,
-                  session->client->fd);
+                  session->client_dcb,
+                  session->client_dcb->fd);
     }
     /**
      * Successfully connected to backend. Assign file descriptor to dcb
@@ -929,7 +940,7 @@ int dcb_read(DCB   *dcb,
  * @param dcb       The DCB to read from
  * @return          -1 on error, otherwise the total number of bytes available
  */
-static inline int
+static int
 dcb_bytes_readable(DCB *dcb)
 {
     int bytesavailable;
@@ -962,7 +973,7 @@ dcb_bytes_readable(DCB *dcb)
  * @param nreadtotal    Number of bytes that have been read
  * @return              -1 on error, 0 for conditions not treated as error
  */
-static inline int
+static int
 dcb_read_no_bytes_available(DCB *dcb, int nreadtotal)
 {
     /** Handle closed client socket */
@@ -997,7 +1008,7 @@ dcb_read_no_bytes_available(DCB *dcb, int nreadtotal)
  * @param nsingleread       To be set as the number of bytes read this time
  * @return                  GWBUF* buffer containing new data, or null.
  */
-static inline GWBUF *
+static GWBUF *
 dcb_basic_read(DCB *dcb, int bytesavailable, int maxbytes, int nreadtotal, int *nsingleread)
 {
     GWBUF *buffer;
@@ -1479,8 +1490,6 @@ dcb_log_write_failure(DCB *dcb, GWBUF *queue, int eno)
 static inline void
 dcb_write_tidy_up(DCB *dcb, bool below_water)
 {
-    spinlock_release(&dcb->writeqlock);
-
     if (dcb->high_water && dcb->writeqlen > dcb->high_water && below_water)
     {
         atomic_add(&dcb->stats.n_high_water, 1);
@@ -2947,38 +2956,32 @@ int dcb_connect_SSL(DCB* dcb)
         case SSL_ERROR_NONE:
             MXS_DEBUG("SSL_connect done for %s", dcb->remote);
             return 1;
-            break;
 
         case SSL_ERROR_WANT_READ:
             MXS_DEBUG("SSL_connect ongoing want read for %s", dcb->remote);
             return 0;
-            break;
 
         case SSL_ERROR_WANT_WRITE:
             MXS_DEBUG("SSL_connect ongoing want write for %s", dcb->remote);
             return 0;
-            break;
 
         case SSL_ERROR_ZERO_RETURN:
             MXS_DEBUG("SSL error, shut down cleanly during SSL connect %s", dcb->remote);
             dcb_log_errors_SSL(dcb, __func__, 0);
             poll_fake_hangup_event(dcb);
             return 0;
-            break;
 
         case SSL_ERROR_SYSCALL:
             MXS_DEBUG("SSL connection shut down with SSL_ERROR_SYSCALL during SSL connect %s", dcb->remote);
             dcb_log_errors_SSL(dcb, __func__, ssl_rval);
             poll_fake_hangup_event(dcb);
             return -1;
-            break;
 
         default:
             MXS_DEBUG("SSL connection shut down with error during SSL connect %s", dcb->remote);
             dcb_log_errors_SSL(dcb, __func__, 0);
             poll_fake_hangup_event(dcb);
             return -1;
-            break;
     }
 }
 
@@ -3437,3 +3440,4 @@ dcb_role_name(DCB *dcb)
     }
     return name;
 }
+

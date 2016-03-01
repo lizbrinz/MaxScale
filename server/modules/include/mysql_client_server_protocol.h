@@ -67,11 +67,12 @@
 #include <housekeeper.h>
 #include <mysql.h>
 
-#define GW_MYSQL_VERSION "MaxScale " MAXSCALE_VERSION
+#define GW_MYSQL_VERSION "5.5.5-"MAXSCALE_VERSION"-maxscale"
 #define GW_MYSQL_LOOP_TIMEOUT 300000000
 #define GW_MYSQL_READ 0
 #define GW_MYSQL_WRITE 1
 #define MYSQL_HEADER_LEN 4L
+#define MYSQL_CHECKSUM_LEN 4L
 
 #define GW_MYSQL_PROTOCOL_VERSION 10 // version is 10
 #define GW_MYSQL_HANDSHAKE_FILLER 0x00
@@ -81,6 +82,9 @@
 #define GW_MYSQL_MAX_PACKET_LEN 0xffffffL;
 #define GW_MYSQL_SCRAMBLE_SIZE 20
 #define GW_SCRAMBLE_LENGTH_323 8
+
+/** Maximum length of a MySQL packet */
+#define MYSQL_PACKET_LENGTH_MAX 0x00ffffff
 
 #ifndef MYSQL_SCRAMBLE_LEN
 # define MYSQL_SCRAMBLE_LEN GW_MYSQL_SCRAMBLE_SIZE
