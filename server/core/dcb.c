@@ -130,7 +130,7 @@ static inline void dcb_write_tidy_up(DCB *dcb, bool below_water);
 static int gw_write(DCB *dcb, bool *stop_writing);
 static int gw_write_SSL(DCB *dcb, bool *stop_writing);
 static void dcb_log_errors_SSL (DCB *dcb, const char *called_by, int ret);
-static int dcb_accept_one_connection(DCB *listener);
+static int dcb_accept_one_connection(DCB *listener, struct sockaddr *client_conn);
 static int dcb_listen_create_socket_inet(char *config_bind);
 static int dcb_listen_create_socket_unix(char *config_bind);
 static int dcb_set_socket_option(int sockfd, int level, int optname, void *optval, socklen_t optlen);
@@ -3004,11 +3004,11 @@ dcb_accept(DCB *listener)
     int c_sock;
     int sendbuf;
     int syseno;
-    struct sockaddr client_conn;
+    struct sockaddr_storage client_conn;
     socklen_t optlen = sizeof(sendbuf);
     char errbuf[STRERROR_BUFLEN];
 
-    if ((c_sock = dcb_accept_one_connection(listener)) >= 0)
+    if ((c_sock = dcb_accept_one_connection(listener, (struct sockaddr *)&client_conn)) >= 0)
     {
         listener->stats.n_accepts++;
 #if defined(SS_DEBUG)
@@ -3051,7 +3051,7 @@ dcb_accept(DCB *listener)
             client_dcb->fd = c_sock;
 
             // get client address
-            if (client_conn.sa_family == AF_UNIX)
+            if (((struct sockaddr *)&client_conn)->sa_family == AF_UNIX)
             {
                 // client address
                 client_dcb->remote = strdup("localhost_from_socket");
@@ -3091,14 +3091,13 @@ dcb_accept(DCB *listener)
  * @return -1 for failure, or a file descriptor for the new connection
  */
 static int
-dcb_accept_one_connection(DCB *listener)
+dcb_accept_one_connection(DCB *listener, struct sockaddr *client_conn)
 {
     int c_sock;
 
     /* Try up to 10 times to get a file descriptor by use of accept */
     for (int i = 0; i < 10; i++)
     {
-        struct sockaddr client_conn;
         socklen_t client_len = sizeof(struct sockaddr_storage);
         int eno = 0;
 
@@ -3116,7 +3115,7 @@ dcb_accept_one_connection(DCB *listener)
 
         /* new connection from client */
         c_sock = accept(listener->fd,
-            (struct sockaddr *) &client_conn,
+            client_conn,
             &client_len);
         eno = errno;
         errno = 0;
