@@ -333,53 +333,34 @@ static int httpd_hangup(DCB *dcb)
  * Handler for the EPOLLIN event when the DCB refers to the listening
  * socket for the protocol.
  *
- * @param dcb   The descriptor control block
+ * @param listener   The descriptor control block
  */
-static int httpd_accept(DCB *dcb)
+static int httpd_accept(DCB *listener)
 {
     int n_connect = 0;
+    DCB *client_dcb;
 
-    while (1)
+    while ((client_dcb = dcb_accept(listener)) != NULL)
     {
-        int so = -1;
-        struct sockaddr_in addr;
-        socklen_t addrlen;
-        DCB *client = NULL;
         HTTPD_session *client_data = NULL;
 
-        if ((so = accept(dcb->fd, (struct sockaddr *)&addr, &addrlen)) == -1)
+        memcpy(&client_dcb->func, &MyObject, sizeof(GWPROTOCOL));
+
+        /* create the session data for HTTPD */
+        if ((client_data = (HTTPD_session *)calloc(1, sizeof(HTTPD_session))) == NULL)
         {
-            return n_connect;
+            dcb_close(client_dcb);
+            break;
         }
-        else
+        client_dcb->data = client_data;
+
+        client_dcb->session = session_alloc(listener->session->service, client_dcb);
+        if (NULL == client_dcb->session || poll_add_dcb(client_dcb) == -1)
         {
-            atomic_add(&dcb->stats.n_accepts, 1);
-
-            if ((client = dcb_alloc(DCB_ROLE_CLIENT_HANDLER, dcb->listener)))
-            {
-                client->fd = so;
-                client->remote = strdup(inet_ntoa(addr.sin_addr));
-                memcpy(&client->func, &MyObject, sizeof(GWPROTOCOL));
-
-                /* create the session data for HTTPD */
-                client_data = (HTTPD_session *)calloc(1, sizeof(HTTPD_session));
-                client->data = client_data;
-
-                client->session = session_alloc(dcb->session->service, client);
-
-                if (NULL == client->session || poll_add_dcb(client) == -1)
-                {
-                    close(so);
-                    dcb_close(client);
-                    return n_connect;
-                }
-                n_connect++;
-            }
-            else
-            {
-                close(so);
-            }
+            dcb_close(client_dcb);
+            break;
         }
+        n_connect++;
     }
 
     return n_connect;
@@ -405,68 +386,7 @@ static int httpd_close(DCB *dcb)
  */
 static int httpd_listen(DCB *listener, char *config)
 {
-    struct sockaddr_in addr;
-    int one = 1;
-    int rc;
-    int syseno = 0;
-
-    memcpy(&listener->func, &MyObject, sizeof(GWPROTOCOL));
-    if (!parse_bindconfig(config, &addr))
-    {
-        return 0;
-    }
-
-    if ((listener->fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-    {
-        return 0;
-    }
-
-    /* socket options */
-    syseno = setsockopt(listener->fd,
-                        SOL_SOCKET,
-                        SO_REUSEADDR,
-                        (char *)&one,
-                        sizeof(one));
-
-    if (syseno != 0)
-    {
-        char errbuf[STRERROR_BUFLEN];
-        MXS_ERROR("Failed to set socket options. Error %d: %s",
-                  errno, strerror_r(errno, errbuf, sizeof(errbuf)));
-        return 0;
-    }
-    /* set NONBLOCKING mode */
-    setnonblocking(listener->fd);
-
-    /* bind address and port */
-    if (bind(listener->fd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
-    {
-        return 0;
-    }
-
-    rc = listen(listener->fd, SOMAXCONN);
-
-    if (rc == 0)
-    {
-        MXS_NOTICE("Listening httpd connections at %s", config);
-    }
-    else
-    {
-        int eno = errno;
-        errno = 0;
-        char errbuf[STRERROR_BUFLEN];
-        fprintf(stderr,
-                "\n* Failed to start listening http due error %d, %s\n\n",
-                eno,
-                strerror_r(eno, errbuf, sizeof(errbuf)));
-        return 0;
-    }
-
-    if (poll_add_dcb(listener) == -1)
-    {
-        return 0;
-    }
-    return 1;
+    return (dcb_listen(listener, config, "HTTPD") < 0) ? 0 : 1;
 }
 
 /**
