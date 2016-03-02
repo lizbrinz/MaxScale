@@ -131,8 +131,8 @@ static int gw_write(DCB *dcb, bool *stop_writing);
 static int gw_write_SSL(DCB *dcb, bool *stop_writing);
 static void dcb_log_errors_SSL (DCB *dcb, const char *called_by, int ret);
 static int dcb_accept_one_connection(DCB *listener, struct sockaddr *client_conn);
-static int dcb_listen_create_socket_inet(char *config_bind);
-static int dcb_listen_create_socket_unix(char *config_bind);
+static int dcb_listen_create_socket_inet(const char *config_bind);
+static int dcb_listen_create_socket_unix(const char *config_bind);
 static int dcb_set_socket_option(int sockfd, int level, int optname, void *optval, socklen_t optlen);
 
 size_t dcb_get_session_id(
@@ -3185,13 +3185,19 @@ dcb_accept_one_connection(DCB *listener, struct sockaddr *client_conn)
 /**
  * @brief Create a listener, add new information to the given DCB
  *
- * Does stuff
+ * First creates and opens a socket, either TCP or Unix according to the
+ * configuration data provided.  Then try to listen on the socket and
+ * record the socket in the given DCB.  Add the given DCB into the poll
+ * list.  The protocol name does not affect the logic, but is used in
+ * log messages.
  *
- * @param dcb Listener DCB that is being created
+ * @param listener Listener DCB that is being created
+ * @param config Configuration for port to listen on
+ * @param protocol_name Name of protocol that is listening
  * @return 0 if new listener created successfully, otherwise -1
  */
 int
-dcb_listen(DCB *listener, char *config)
+dcb_listen(DCB *listener, const char *config, const char *protocol_name)
 {
     int listener_socket;
 
@@ -3212,15 +3218,16 @@ dcb_listen(DCB *listener, char *config)
     if (listen(listener_socket, 10 * SOMAXCONN) != 0)
     {
         char errbuf[STRERROR_BUFLEN];
-        MXS_ERROR("Failed to start listening on '%s': %d, %s",
-                  config,
-                  errno,
-                  strerror_r(errno, errbuf, sizeof(errbuf)));
+        MXS_ERROR("Failed to start listening on '%s' with protocol '%s': %d, %s",
+            config,
+            protocol_name,
+            errno,
+            strerror_r(errno, errbuf, sizeof(errbuf)));
         close(listener_socket);
         return -1;
     }
 
-    MXS_NOTICE("Listening MySQL connections at %s", config);
+    MXS_NOTICE("Listening MySQL connections at %s with protocol %s", config, protocol_name);
 
     // assign listener_socket to dcb
     listener->fd = listener_socket;
@@ -3236,15 +3243,16 @@ dcb_listen(DCB *listener, char *config)
 }
 
 /**
- * @brief Create a listener, add new information to the given DCB
+ * @brief Create a listening socket, TCP
  *
- * Does stuff
+ * Parse the configuration provided and if valid create a socket.
+ * Set options, set non-blocking and bind to the socket.
  *
- * @param dcb Listener DCB that is being created
+ * @param config_bind The configuration information
  * @return socket if successful, -1 otherwise
  */
 static int
-dcb_listen_create_socket_inet(char *config_bind)
+dcb_listen_create_socket_inet(const char *config_bind)
 {
     int listener_socket;
     struct sockaddr_in server_address;
@@ -3296,15 +3304,16 @@ dcb_listen_create_socket_inet(char *config_bind)
 }
 
 /**
- * @brief Create a listener, add new information to the given DCB
+ * @brief Create a listening socket, Unix
  *
- * Does stuff
+ * Parse the configuration provided and if valid create a socket.
+ * Set options, set non-blocking and bind to the socket.
  *
- * @param dcb Listener DCB that is being created
+ * @param config_bind The configuration information
  * @return socket if successful, -1 otherwise
  */
 static int
-dcb_listen_create_socket_unix(char *config_bind)
+dcb_listen_create_socket_unix(const char *config_bind)
 {
     int listener_socket;
     struct sockaddr_un local_addr;
@@ -3381,7 +3390,11 @@ dcb_listen_create_socket_unix(char *config_bind)
  * Simply calls the setsockopt function with the same parameters, but also
  * checks for success and logs an error if necessary.
  *
- * @param dcb Listener DCB that is being created
+ * @param sockfd  Socket file descriptor
+ * @param level   Will always be SOL_SOCKET for socket level operations
+ * @param optname Option name
+ * @param optval  Option value
+ * @param optlen  Length of option value
  * @return 0 if successful, otherwise -1
  */
 static int

@@ -181,7 +181,7 @@ bool gw_daemonize(void)
  * @return              0 on failure
  */
 int
-parse_bindconfig(char *config, struct sockaddr_in *addr)
+parse_bindconfig(const char *config, struct sockaddr_in *addr)
 {
     char *port, buf[1024 + 1];
     short pnum;

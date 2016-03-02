@@ -958,7 +958,7 @@ return_1:
  */
 int gw_MySQLListener(DCB *listen_dcb, char *config_bind)
 {
-    if (dcb_listen(listen_dcb, config_bind) < 0)
+    if (dcb_listen(listen_dcb, config_bind, "MySQL") < 0)
     {
         return 0;
     }

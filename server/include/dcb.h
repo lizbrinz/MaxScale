@@ -327,7 +327,7 @@ bool dcb_get_ses_log_info(DCB* dcb, size_t* sesid, int* enabled_logs);
 char *dcb_role_name(DCB *);                  /* Return the name of a role */
 int dcb_accept_SSL(DCB* dcb);
 int dcb_connect_SSL(DCB* dcb);
-int dcb_listen(DCB *listener, char *config);
+int dcb_listen(DCB *listener, const char *config, const char *protocol_name);
 
 /**
  * DCB flags values

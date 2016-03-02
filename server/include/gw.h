@@ -84,7 +84,7 @@ int  do_read_10(DCB *dcb, uint8_t *buffer);
 int  MySQLWrite(DCB *dcb, GWBUF *queue);
 int  setnonblocking(int fd);
 int  gw_getsockerrno(int fd);
-int  parse_bindconfig(char *, struct sockaddr_in *);
+int  parse_bindconfig(const char *, struct sockaddr_in *);
 int setipaddress(struct in_addr *, char *);
 char* get_libdir();
 long get_processor_count();
