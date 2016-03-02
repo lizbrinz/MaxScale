@@ -35,6 +35,7 @@
  * 06-02-2014   Mark Riddoch            Added parse_bindconfig
  * 10-02-2014   Massimiliano Pinto      Added return code to setipaddress
  * 02-09-2014   Martin Brampton         Replace C++ comment with C comment
+ * 02-03-2016   Martin Brampton         Remove default from parse_bindconfig
  *
  *@endverbatim
  */
@@ -171,18 +172,16 @@ bool gw_daemonize(void)
 /**
  * Parse the bind config data. This is passed in a string as address:port.
  *
- * The address may be either a . seperated IP address or a hostname to
+ * The address may be either a . separated IP address or a hostname to
  * lookup. The address 0.0.0.0 is the wildcard address for SOCKADR_ANY.
- * The ':' and port may be omitted, in which case the default port is
- * used.
+ * The ':' and port are required.
  *
- * @param config        The bind address and port seperated by a ':'
- * @param def_port      The default port to use
+ * @param config        The bind address and port separated by a ':'
  * @param addr          The sockaddr_in in which the data is written
  * @return              0 on failure
  */
 int
-parse_bindconfig(char *config, unsigned short def_port, struct sockaddr_in *addr)
+parse_bindconfig(char *config, struct sockaddr_in *addr)
 {
     char *port, buf[1024 + 1];
     short pnum;
@@ -198,7 +197,7 @@ parse_bindconfig(char *config, unsigned short def_port, struct sockaddr_in *addr
     }
     else
     {
-        pnum = def_port;
+        return 0;
     }
 
     if (!strcmp(buf, "0.0.0.0"))

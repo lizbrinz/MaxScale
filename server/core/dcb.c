@@ -3251,10 +3251,7 @@ dcb_listen_create_socket_inet(char *config_bind)
     int one = 1;
 
     memset(&server_address, 0, sizeof(server_address));
-    /* This is partially dead code, MaxScale will never start without explicit
-     * ports defined for all listeners. Thus the default port is never used.
-     */
-    if (!parse_bindconfig(config_bind, 4406, &server_address))
+    if (!parse_bindconfig(config_bind, &server_address))
     {
         MXS_ERROR("Error in parse_bindconfig for [%s]", config_bind);
         return -1;

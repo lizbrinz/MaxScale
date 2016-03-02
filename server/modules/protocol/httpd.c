@@ -411,7 +411,7 @@ static int httpd_listen(DCB *listener, char *config)
     int syseno = 0;
 
     memcpy(&listener->func, &MyObject, sizeof(GWPROTOCOL));
-    if (!parse_bindconfig(config, 6442, &addr))
+    if (!parse_bindconfig(config, &addr))
     {
         return 0;
     }

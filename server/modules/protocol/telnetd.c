@@ -364,7 +364,7 @@ static int telnetd_listen(DCB *listener, char *config)
 
     memcpy(&listener->func, &MyObject, sizeof(GWPROTOCOL));
 
-    if (!parse_bindconfig(config, 4442, &addr))
+    if (!parse_bindconfig(config, &addr))
     {
         return 0;
     }
