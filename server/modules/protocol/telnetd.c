@@ -279,10 +279,10 @@ static int telnetd_accept(DCB *listener)
         TELNETD* telnetd_protocol = NULL;
 
         memcpy(&client_dcb->func, &MyObject, sizeof(GWPROTOCOL));
-        if ((telnetd_protocol = (TELNETD *)malloc(sizeof(TELNETD))) == NULL)
+        if ((telnetd_protocol = (TELNETD *)calloc(1, sizeof(TELNETD))) == NULL)
         {
             dcb_close(client_dcb);
-            break;
+            continue;
         }
         telnetd_protocol->state = TELNETD_STATE_LOGIN;
         telnetd_protocol->username = NULL;
@@ -292,7 +292,7 @@ static int telnetd_accept(DCB *listener)
         if (NULL == client_dcb->session || poll_add_dcb(client_dcb))
         {
             dcb_close(client_dcb);
-            break;
+            continue;
         }
 
         n_connect++;

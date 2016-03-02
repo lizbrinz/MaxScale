@@ -251,10 +251,10 @@ static int maxscaled_accept(DCB *listener)
         MAXSCALED *maxscaled_protocol = NULL;
 
         memcpy(&client_dcb->func, &MyObject, sizeof(GWPROTOCOL));
-        if ((maxscaled_protocol = (MAXSCALED *)malloc(sizeof(MAXSCALED))) == NULL)
+        if ((maxscaled_protocol = (MAXSCALED *)calloc(1, sizeof(MAXSCALED))) == NULL)
         {
             dcb_close(client_dcb);
-            break;
+            continue;
         }
         maxscaled_protocol->username = NULL;
         spinlock_init(&maxscaled_protocol->lock);
@@ -265,7 +265,7 @@ static int maxscaled_accept(DCB *listener)
         if (NULL == client_dcb->session || poll_add_dcb(client_dcb))
         {
             dcb_close(client_dcb);
-            break;
+            continue;
         }
         n_connect++;
         maxscaled_protocol->state = MAXSCALED_STATE_LOGIN;

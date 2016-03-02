@@ -1001,7 +1001,7 @@ int gw_MySQLAccept(DCB *listener)
             MXS_ERROR("%lu [gw_MySQLAccept] Failed to create "
                       "protocol object for client connection.",
                       pthread_self());
-            break;
+            continue;
         }
         CHK_PROTOCOL(protocol);
         client_dcb->protocol = protocol;
@@ -1036,7 +1036,7 @@ int gw_MySQLAccept(DCB *listener)
                       pthread_self(),
                       client_dcb,
                       client_dcb->fd);
-            break;
+            continue;
         }
         else
         {

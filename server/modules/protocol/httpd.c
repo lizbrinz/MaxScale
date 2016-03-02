@@ -350,7 +350,7 @@ static int httpd_accept(DCB *listener)
         if ((client_data = (HTTPD_session *)calloc(1, sizeof(HTTPD_session))) == NULL)
         {
             dcb_close(client_dcb);
-            break;
+            continue;
         }
         client_dcb->data = client_data;
 
@@ -358,7 +358,7 @@ static int httpd_accept(DCB *listener)
         if (NULL == client_dcb->session || poll_add_dcb(client_dcb) == -1)
         {
             dcb_close(client_dcb);
-            break;
+            continue;
         }
         n_connect++;
     }
