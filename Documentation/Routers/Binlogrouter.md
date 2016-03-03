@@ -92,24 +92,19 @@ This defines whether (on | off) MaxScale sends to the slave the heartbeat packet
 ### `semisync`
 
 This option, default is off, allows requesting Semi Syncronous replication to the Master.
-
 In order to use this feature the Master server must have the 'rpl_semi_sync_master' plugin installed:
 
 ```
 MariaDB > INSTALL PLUGIN rpl_semi_sync_master SONAME 'semisync_master.so'; 
 ```
 
-If the variable 'rpl_semi_sync_master_enabled' is set to 1 in the Master server, some events (i.e. COMMIT) are sent with the SEMI_SYNC_ACK_REQ set in the binlog network stream semi-sync byte.
+If the variable 'rpl_semi_sync_master_enabled' is set to 1 in the Master server, some events (i.e. COMMIT) are sent with the SEMI_SYNC_ACK_REQ flag set in the network stream semi-sync byte.
 
 ```
 MariaDB> SET GLOBAL rpl_semi_sync_master_enabled = 1;
 ```
 
 The binlog router detects the flag and sends the ACK packet, when requested, to the master which will finally commit the transaction to disk.
-
-```
-MariaDB> SET GLOBAL rpl_semi_sync_master_enabled = 1;
-```
 
 
 A complete example of a service entry for a binlog router service would be as follows.
