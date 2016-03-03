@@ -89,7 +89,31 @@ The default value is off, set transaction_safety=on to enable the incomplete tra
 
 This defines whether (on | off) MaxScale sends to the slave the heartbeat packet when there are no real binlog events to send. The default value if 'off', no heartbeat event is sent to slave server. If value is 'on' the interval value (requested by the slave during registration) is reported in the diagnostic output and the packet is send after the time interval without any event to send.
 
+### `semisync`
+
+This option, default is off, allows requesting Semi Syncronous replication to the Master.
+
+In order to use this feature the Master server must have the 'rpl_semi_sync_master' plugin installed:
+
+```
+MariaDB > INSTALL PLUGIN rpl_semi_sync_master SONAME 'semisync_master.so'; 
+```
+
+If the variable 'rpl_semi_sync_master_enabled' is set to 1 in the Master server, some events (i.e. COMMIT) are sent with the SEMI_SYNC_ACK_REQ set in the binlog network stream semi-sync byte.
+
+```
+MariaDB> SET GLOBAL rpl_semi_sync_master_enabled = 1;
+```
+
+The binlog router detects the flag and sends the ACK packet, when requested, to the master which will finally commit the transaction to disk.
+
+```
+MariaDB> SET GLOBAL rpl_semi_sync_master_enabled = 1;
+```
+
+
 A complete example of a service entry for a binlog router service would be as follows.
+
 ```
     [Replication]
     type=service
