@@ -378,9 +378,9 @@ dcb_final_free(DCB *dcb)
         {
             session_free(local_session);
 
-            if (local_session->client_dcb == dcb)
+            if (DCB_ROLE_CLIENT_HANDLER == dcb->dcb_role)
             {
-                /** The client DCB is freed once all other DCBs that the session
+                /** The client DCB is only freed once all other DCBs that the session
                  * uses have been freed. This will guarantee that the authentication
                  * data will be usable for all DCBs even if the client DCB has already
                  * been closed. */
@@ -3239,6 +3239,9 @@ dcb_listen(DCB *listener, const char *config, const char *protocol_name)
                   "attempting to register on an epoll instance.");
         return -1;
     }
+#if defined(FAKE_CODE)
+    conn_open[listener_socket] = true;
+#endif /* FAKE_CODE */
     return 0;
 }
 

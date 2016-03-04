@@ -962,9 +962,6 @@ int gw_MySQLListener(DCB *listen_dcb, char *config_bind)
     {
         return 0;
     }
-#if defined(FAKE_CODE)
-    conn_open[l_so] = true;
-#endif /* FAKE_CODE */
     listen_dcb->func.accept = gw_MySQLAccept;
 
     return 1;
