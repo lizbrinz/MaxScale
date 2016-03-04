@@ -3,6 +3,13 @@
  *
  */
 
+#include <stdbool.h>
+#include <stdint.h>
+#include <blr_defines.h>
+#include <dcb.h>
+#include <service.h>
+#include <spinlock.h>
+
 /**
  * How often to call the router status function (seconds)
  */
@@ -54,9 +61,6 @@ typedef struct avro_client {
         char            avrofile[BINLOG_FNAMELEN+1];
                                         /*< Current avro file for this client */
         char            *uuid;          /*< Client UUID */
-#ifdef BLFILE_IN_SLAVE
-        BLFILE          *file;          /*< Currently open avro file */
-#endif
         char            *user;          /*< Username if given */
         char            *passwd;        /*< Password if given */
         uint32_t        lastEventTimestamp;/*< Last event timestamp sent */
@@ -109,3 +113,5 @@ typedef struct avro_instance {
 
 extern int avro_client_request(AVRO_INSTANCE *, AVRO_CLIENT *, GWBUF *);
 extern void avro_client_rotate(AVRO_INSTANCE *router, AVRO_CLIENT *client, uint8_t *ptr);
+extern bool avro_open_binlog(const char *binlogdir, const char *file, int *fd);
+extern void avro_close_binlog(int fd);

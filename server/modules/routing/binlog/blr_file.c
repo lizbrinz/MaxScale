@@ -77,7 +77,7 @@ static int blr_file_create(ROUTER_INSTANCE *router, char *file);
 static void blr_file_append(ROUTER_INSTANCE *router, char *file);
 static void blr_log_header(int priority, char *msg, uint8_t *ptr);
 void blr_cache_read_master_data(ROUTER_INSTANCE *router);
-int blr_file_get_next_binlogname(ROUTER_INSTANCE *router);
+int blr_file_get_next_binlogname(const char *binlog_name);
 int blr_file_new_binlog(ROUTER_INSTANCE *router, char *file);
 void blr_file_use_binlog(ROUTER_INSTANCE *router, char *file);
 int blr_file_write_master_config(ROUTER_INSTANCE *router, char *error);
@@ -1815,12 +1815,12 @@ blr_cache_read_master_data(ROUTER_INSTANCE *router)
  * @return 		0 on error, >0 as sequence number
  */
 int
-blr_file_get_next_binlogname(ROUTER_INSTANCE *router)
+blr_file_get_next_binlogname(const char *binlog_name)
 {
     char *sptr;
     int filenum;
 
-    if ((sptr = strrchr(router->binlog_name, '.')) == NULL)
+    if ((sptr = strrchr(binlog_name, '.')) == NULL)
         return 0;
     filenum = atoi(sptr + 1);
     if (filenum)

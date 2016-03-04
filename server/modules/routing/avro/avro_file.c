@@ -37,6 +37,8 @@
 
 #include <mxs_avro.h>
 #include <limits.h>
+#include <log_manager.h>
+#include <fcntl.h>
 
 /**
  * Prepare an existing binlog file to be appened to.
@@ -44,58 +46,34 @@
  * @param router	The router instance
  * @param file		The binlog file name
  */
-bool avr_file_open(int *int, char *file)
+bool avro_open_binlog(const char *binlogdir, const char *file, int *dest)
 {
     char path[PATH_MAX + 1] = "";
     int fd;
 
-    strcpy(path, router->binlogdir);
-    strcat(path, "/");
-    strcat(path, file);
+    snprintf(path, sizeof(path), "%s/%s", binlogdir, file);
 
     if ((fd = open(path, O_RDWR | O_APPEND, 0666)) == -1)
     {
-        MXS_ERROR("Failed to open binlog file %s for append.",
-                  path);
-        return;
+        MXS_ERROR("Failed to open binlog file %s for append.", path);
+        return false;
     }
-    fsync(fd);
-    if (router->binlog_fd != -1)
+
+    if ( lseek(fd, BINLOG_MAGIC_SIZE, SEEK_SET) < 4)
     {
-        close(router->binlog_fd);
-    }
-    spinlock_acquire(&router->binlog_lock);
-    memmove(router->binlog_name, file, BINLOG_FNAMELEN);
-    router->current_pos = lseek(fd, 0L, SEEK_END);
-    if (router->current_pos < 4)
-    {
-        if (router->current_pos == 0)
-        {
-            if (blr_file_add_magic(fd))
-            {
-                router->current_pos = BINLOG_MAGIC_SIZE;
-                router->binlog_position = BINLOG_MAGIC_SIZE;
-                router->current_safe_event = BINLOG_MAGIC_SIZE;
-                router->last_written = BINLOG_MAGIC_SIZE;
-                router->last_event_pos = 0;
-            }
-            else
-            {
-                MXS_ERROR("%s: Could not write magic to binlog file.", router->service->name);
-            }
-        }
-        else
-        {
             /* If for any reason the file's length is between 1 and 3 bytes
              * then report an error. */
-            MXS_ERROR("%s: binlog file %s has an invalid length %lu.",
-                      router->service->name, path, router->current_pos);
+            MXS_ERROR("Binlog file %s has an invalid length.", path);
             close(fd);
-            spinlock_release(&router->binlog_lock);
-            return;
-        }
+            return false;
     }
-    router->binlog_fd = fd;
-    spinlock_release(&router->binlog_lock);
+
+    *dest = fd;
+    return true;
 }
 
+void avro_close_binlog(int fd)
+{
+    fsync(fd);
+    close(fd);
+}

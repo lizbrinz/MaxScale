@@ -90,9 +90,9 @@ extern char *decryptPassword(char *crypt);
 extern char *create_hex_sha1_sha1_passwd(char *passwd);
 extern int MaxScaleUptime();
 void converter_func(void* data);
-void blr_file_use_binlog(ROUTER_INSTANCE *router, char *file);
 bool blr_next_binlog_exists(const char* binlogdir, const char* binlog);
-int blr_file_get_next_binlogname(ROUTER_INSTANCE *router);
+int blr_file_get_next_binlogname(const char *router);
+int blr_read_events_all_events(ROUTER_INSTANCE *router, int fix, int debug);
 
 /** The module object definition */
 static ROUTER_OBJECT MyObject = {
@@ -481,7 +481,7 @@ int			prev_val;
 
         prev_val = atomic_add(&router->stats.n_clients, -1);
         ss_dassert(prev_val > 0);
-
+        (void)prev_val;
 	/*
 	 * Remove the slave session form the list of slaves that are using the
 	 * router currently.
@@ -889,7 +889,6 @@ errorReply(ROUTER *instance, void *router_session, GWBUF *message, DCB *backend_
 {
 AVRO_INSTANCE	*router = (AVRO_INSTANCE *)instance;
 int		error;
-socklen_t	len;
 char		msg[STRERROR_BUFLEN + 1 + 5] = "";
 char 		*errmsg;
 unsigned long	mysql_errno;
@@ -906,7 +905,6 @@ unsigned long	mysql_errno;
 		backend_dcb->dcb_errhandle_called = true;
 	}
 
-	len = sizeof(error);
 }
 
 /** to be inline'd */
@@ -1185,10 +1183,13 @@ void converter_func(void* data)
 
     while (blr_next_binlog_exists(router->binlogdir, router->binlog_name))
     {
-        blr_file_use_binlog(router, router->binlog_name);
-        lseek(router->binlog_fd, 0L, SEEK_SET);
-        blr_read_events_all_events(router, 0, 0);
-        sprintf(router->binlog_name, BINLOG_NAMEFMT, router->fileroot,
-                blr_file_get_next_binlogname(router->binlog_name));
+        if(avro_open_binlog(router->binlogdir, router->binlog_name, &router->binlog_fd))
+        {
+            lseek(router->binlog_fd, 0L, SEEK_SET);
+            //blr_read_events_all_events(router, 0, 0);
+            avro_close_binlog(router->binlog_fd);
+            sprintf(router->binlog_name, BINLOG_NAMEFMT, router->fileroot,
+                    blr_file_get_next_binlogname(router->binlog_name));
+        }
     }
 }
