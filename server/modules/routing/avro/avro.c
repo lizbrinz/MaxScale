@@ -13,44 +13,18 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright MariaDB Corporation Ab 2014-2015
+ * Copyright MariaDB Corporation Ab 2016
  */
 
 /**
- * @file blr.c - binlog router, allows MaxScale to act as an intermediatory for replication
- *
- * The binlog router is designed to be used in replication environments to
- * increase the replication fanout of a master server. It provides a transparant
- * mechanism to read the binlog entries for multiple slaves while requiring
- * only a single connection to the actual master to support the slaves.
- *
- * The current prototype implement is designed to support MySQL 5.6 and has
- * a number of limitations. This prototype is merely a proof of concept and
- * should not be considered production ready.
+ * @file avro.c - Avro router, allows MaxScale to act as an intermediatory for
+ * MySQL replication binlog files and AVRO binary files
  *
  * @verbatim
  * Revision History
  *
  * Date		Who			Description
- * 02/04/2014	Mark Riddoch		Initial implementation
- * 17/02/2015	Massimiliano Pinto	Addition of slave port and username in diagnostics
- * 18/02/2015	Massimiliano Pinto	Addition of dcb_close in closeSession
- * 07/05/2015   Massimiliano Pinto      Addition of MariaDB 10 compatibility support
- * 12/06/2015   Massimiliano Pinto      Addition of MariaDB 10 events in diagnostics()
- * 29/06/2015	Massimiliano Pinto	Addition of master.ini for easy startup configuration
- *					If not found router goes into BLRM_UNCONFIGURED state.
- *					Cache dir is 'cache' under router->binlogdir.
- * 07/08/2015	Massimiliano Pinto	Addition of binlog check at startup if trx_safe is on
- * 21/08/2015	Massimiliano Pinto	Added support for new config options:
- *					master_uuid, master_hostname, master_version
- *					If set those values are sent to slaves instead of
- *					saved master responses
- * 23/08/2015	Massimiliano Pinto	Added strerror_r
- * 09/09/2015   Martin Brampton         Modify error handler
- * 30/09/2015	Massimiliano Pinto	Addition of send_slave_heartbeat option
- * 23/10/2015	Markus Makela		Added current_safe_event
- * 27/10/2015   Martin Brampton         Amend getCapabilities to return RCAP_TYPE_NO_RSESSION
- * 26/11/2015	Massimiliano Pinto	Added check for missing service listener
+ * 25/02/2016	Massimiliano Pinto	Initial implementation
  *
  * @endverbatim
  */
@@ -80,7 +54,7 @@
 
 #include <mxs_avro.h>
 
-static char *version_str = "V2.0.0";
+static char *version_str = "V1.0.0";
 
 /* The router entry points */
 static	ROUTER	*createInstance(SERVICE *service, char **options);
@@ -103,20 +77,12 @@ static  void    errorReply(
 	bool	*succp);
 
 static  int getCapabilities ();
-static int blr_handler_config(void *userdata, const char *section, const char *name, const char *value);
-static int blr_handle_config_item(const char *name, const char *value, ROUTER_INSTANCE *inst);
-static int blr_set_service_mysql_user(SERVICE *service);
-int blr_load_dbusers(ROUTER_INSTANCE *router);
-int blr_save_dbusers(ROUTER_INSTANCE *router);
-static int blr_check_binlog(ROUTER_INSTANCE *router);
-extern void blr_cache_read_master_data(ROUTER_INSTANCE *router);
+static int avro_set_service_CDC_user(SERVICE *service);
+int blr_load_dbusers(AVRO_INSTANCE *router);
+int blr_save_dbusers(AVRO_INSTANCE *router);
 extern char *decryptPassword(char *crypt);
 extern char *create_hex_sha1_sha1_passwd(char *passwd);
-extern int blr_read_events_all_events(ROUTER_INSTANCE *router, int fix, int debug);
-void blr_master_close(ROUTER_INSTANCE *);
-char * blr_last_event_description(ROUTER_INSTANCE *router);
 extern int MaxScaleUptime();
-char	*blr_get_event_description(ROUTER_INSTANCE *router, uint8_t event);
 void converter_func(void* data);
 
 /** The module object definition */
@@ -134,19 +100,15 @@ static ROUTER_OBJECT MyObject = {
 
 static void	stats_func(void *);
 
-static bool rses_begin_locked_router_action(ROUTER_SLAVE *);
-static void rses_end_locked_router_action(ROUTER_SLAVE *);
-void my_uuid_init(ulong seed1, ulong seed2);
-void my_uuid(unsigned char *guid);
-GWBUF *blr_cache_read_response(ROUTER_INSTANCE *router, char *response);
-void blr_slave_rotate(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, uint8_t *ptr);
+static bool rses_begin_locked_router_action(AVRO_CLIENT *);
+static void rses_end_locked_router_action(AVRO_CLIENT *);
 int table_id_hash(void *data);
 int table_id_cmp(void *a, void *b);
-void* i64dup(void *data);
-void* i64free(void *data);
+extern void* i64dup(void *data);
+extern void* i64free(void *data);
 
 static SPINLOCK	instlock;
-static ROUTER_INSTANCE *instances;
+static AVRO_INSTANCE *instances;
 
 /**
  * Implementation of the mandatory version entry point
@@ -201,7 +163,7 @@ GetModuleObject()
 static	ROUTER	*
 createInstance(SERVICE *service, char **options)
 {
-ROUTER_INSTANCE	*inst;
+AVRO_INSTANCE	*inst;
 char		*value;
 int		i;
 unsigned char	*defuuid;
@@ -251,75 +213,23 @@ char		task_name[BLRM_TASK_NAME_LEN+1] = "";
 		service->dbref = NULL;
 	}
 
-	if ((inst = calloc(1, sizeof(ROUTER_INSTANCE))) == NULL) {
+	if ((inst = calloc(1, sizeof(AVRO_INSTANCE))) == NULL) {
 		MXS_ERROR("%s: Error: failed to allocate memory for router instance.",
                           service->name);
 
 		return NULL;
 	}
 
-	memset(&inst->stats, 0, sizeof(ROUTER_STATS));
-	memset(&inst->saved_master, 0, sizeof(MASTER_RESPONSES));
+	memset(&inst->stats, 0, sizeof(AVRO_ROUTER_STATS));
 
 	inst->service = service;
 	spinlock_init(&inst->lock);
-	inst->files = NULL;
 	spinlock_init(&inst->fileslock);
-	spinlock_init(&inst->binlog_lock);
 
 	inst->binlog_fd = -1;
-	inst->master_chksum = true;
-	inst->master_uuid = NULL;
 
-	inst->master_state = BLRM_UNCONFIGURED;
-	inst->master = NULL;
-	inst->client = NULL;
-
-	inst->low_water = DEF_LOW_WATER;
-	inst->high_water = DEF_HIGH_WATER;
-	inst->initbinlog = 0;
-	inst->short_burst = DEF_SHORT_BURST;
-	inst->long_burst = DEF_LONG_BURST;
-	inst->burst_size = DEF_BURST_SIZE;
-	inst->retry_backoff = 1;
 	inst->binlogdir = NULL;
-	inst->heartbeat = BLR_HEARTBEAT_DEFAULT_INTERVAL;
-	inst->mariadb10_compat = false;
-
-	inst->user = strdup(service->credentials.name);
-	inst->password = strdup(service->credentials.authdata);
-
-	inst->m_errno = 0;
-	inst->m_errmsg = NULL;
-
-	inst->trx_safe = 0;
-	inst->pending_transaction = 0;
-	inst->last_safe_pos = 0;
-
-	inst->set_master_version = NULL;
-	inst->set_master_hostname = NULL;
-	inst->set_master_uuid = NULL;
-	inst->set_master_server_id = NULL;
-	inst->send_slave_heartbeat = 0;
-
-	inst->serverid = 0;
-
-	my_uuid_init((ulong)rand()*12345,12345);
-	if ((defuuid = (unsigned char *)malloc(20)) != NULL)
-	{
-		my_uuid(defuuid);
-		if ((inst->uuid = (char *)malloc(38)) != NULL)
-			sprintf(inst->uuid,
-			        "%02hhx%02hhx%02hhx%02hhx-"
-			        "%02hhx%02hhx-"
-			        "%02hhx%02hhx-"
-			        "%02hhx%02hhx-"
-			        "%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx",
-			        defuuid[0], defuuid[1], defuuid[2], defuuid[3],
-			        defuuid[4], defuuid[5], defuuid[6], defuuid[7],
-			        defuuid[8], defuuid[9], defuuid[10], defuuid[11],
-			        defuuid[12], defuuid[13], defuuid[14], defuuid[15]);
-	}
+	inst->avrodir = NULL;
 
 	/*
 	 * Process the options.
@@ -348,148 +258,23 @@ char		task_name[BLRM_TASK_NAME_LEN+1] = "";
 			{
 				*value = 0;
 				value++;
-				if (strcmp(options[i], "uuid") == 0)
-				{
-					inst->uuid = strdup(value);
-				}
-				else if ( (strcmp(options[i], "server_id") == 0) || (strcmp(options[i], "server-id") == 0) )
-				{
-					inst->serverid = atoi(value);
-					if (strcmp(options[i], "server-id") == 0) {
-						MXS_WARNING("Configuration setting '%s' in router_options is deprecated"
-                                                            " and will be removed in a later version of MaxScale. "
-                                                            "Please use the new setting '%s' instead.",
-                                                            "server-id", "server_id");
-					}
 
-					if (inst->serverid <= 0) {
-						MXS_ERROR("Service %s, invalid server-id '%s'. "
-                                                          "Please configure it with a unique positive integer value (1..2^32-1)",
-                                                          service->name, value);
-
-						free(inst);
-						return NULL;
-					}
-				}
-				else if (strcmp(options[i], "user") == 0)
-				{
-					inst->user = strdup(value);
-				}
-				else if (strcmp(options[i], "password") == 0)
-				{
-					inst->password = strdup(value);
-				}
-				else if (strcmp(options[i], "passwd") == 0)
-				{
-					inst->password = strdup(value);
-				}
-				else if ( (strcmp(options[i], "master_id") == 0) || (strcmp(options[i], "master-id") == 0) )
-				{
-					int master_id = atoi(value);
-					if (master_id > 0) {
-						inst->masterid = master_id;
-						inst->set_master_server_id = strdup(value);
-					}
-					if (strcmp(options[i], "master-id") == 0) {
-						MXS_WARNING("Configuration setting '%s' in router_options is deprecated"
-                                                            " and will be removed in a later version of MaxScale. "
-                                                            "Please use the new setting '%s' instead.",
-                                                            "master-id", "master_id");
-					}
-				}
-				else if (strcmp(options[i], "master_uuid") == 0)
-				{
-					inst->set_master_uuid = strdup(value);
-					inst->master_uuid = inst->set_master_uuid;
-				}
-				else if (strcmp(options[i], "master_version") == 0)
-				{
-					inst->set_master_version = strdup(value);
-				}
-				else if (strcmp(options[i], "master_hostname") == 0)
-				{
-					inst->set_master_hostname = strdup(value);
-				}
-				else if (strcmp(options[i], "mariadb10-compatibility") == 0)
-				{
-					inst->mariadb10_compat = config_truth_value(value);
-				}
-				else if (strcmp(options[i], "filestem") == 0)
-				{
-					inst->fileroot = strdup(value);
-				}
-				else if (strcmp(options[i], "file") == 0)
-				{
-					inst->initbinlog = atoi(value);
-				}
-				else if (strcmp(options[i], "transaction_safety") == 0)
-				{
-					inst->trx_safe = config_truth_value(value);
-				}
-				else if (strcmp(options[i], "lowwater") == 0)
-				{
-					inst->low_water = atoi(value);
-				}
-				else if (strcmp(options[i], "highwater") == 0)
-				{
-					inst->high_water = atoi(value);
-				}
-				else if (strcmp(options[i], "shortburst") == 0)
-				{
-					inst->short_burst = atoi(value);
-				}
-				else if (strcmp(options[i], "longburst") == 0)
-				{
-					inst->long_burst = atoi(value);
-				}
-				else if (strcmp(options[i], "burstsize") == 0)
-				{
-					unsigned long size = atoi(value);
-					char	*ptr = value;
-					while (*ptr && isdigit(*ptr))
-						ptr++;
-					switch (*ptr)
-					{
-					case 'G':
-					case 'g':
-						size = size * 1024 * 1000 * 1000;
-						break;
-					case 'M':
-					case 'm':
-						size = size * 1024 * 1000;
-						break;
-					case 'K':
-					case 'k':
-						size = size * 1024;
-						break;
-					}
-					inst->burst_size = size;
-
-				}
-				else if (strcmp(options[i], "heartbeat") == 0)
-				{
-					int h_val = (int)strtol(value, NULL, 10);
-
-					if (h_val <= 0 || (errno == ERANGE)) {
-						MXS_WARNING("Invalid heartbeat period %s."
-                                                            " Setting it to default value %ld.",
-                                                            value, inst->heartbeat);
-					} else {
-						inst->heartbeat = h_val;
-					}
-				}
-				else if (strcmp(options[i], "send_slave_heartbeat") == 0)
-				{
-					inst->send_slave_heartbeat = config_truth_value(value);
-				}
-				else if (strcmp(options[i], "binlogdir") == 0)
-				{
-					inst->binlogdir = strdup(value);
-				}
+                                if (strcmp(options[i], "binlogdir") == 0)
+                                {
+                                    inst->binlogdir = strdup(value);
+                                    MXS_INFO("reading MySQL binlog files from %s",
+                                             inst->binlogdir);
+                                }
+                                else if (strcmp(options[i], "avrodir") == 0)
+                                {
+                                    inst->avrodir = strdup(value);
+                                    MXS_INFO("AVRO files are in %s",
+                                             inst->avrodir);
+                                }
 				else
 				{
 					MXS_WARNING("Unsupported router "
-                                                    "option %s for binlog router.",
+                                                    "option %s for AVRO router.",
                                                     options[i]);
 				}
 			}
@@ -497,28 +282,25 @@ char		task_name[BLRM_TASK_NAME_LEN+1] = "";
 	}
 	else
 	{
-		MXS_ERROR("%s: Error: No router options supplied for binlogrouter",
+		MXS_ERROR("%s: Error: No router options supplied for AVRO router",
                           service->name);
 	}
 
 	if (inst->fileroot == NULL)
 		inst->fileroot = strdup(BINLOG_NAME_ROOT);
-	inst->active_logs = 0;
-	inst->reconnect_pending = 0;
-	inst->handling_threads = 0;
-	inst->rotating = 0;
-	inst->residual = NULL;
-	inst->slaves = NULL;
+
+	inst->clients = NULL;
 	inst->next = NULL;
 	inst->lastEventTimestamp = 0;
 
 	inst->binlog_position = 0;
-	inst->current_pos = 0;
-	inst->current_safe_event = 0;
 
 	strcpy(inst->binlog_name, "");
 	strcpy(inst->prevbinlog, "");
 
+    /* Hashtable alloc */
+    /* Run time errors with i64dup, i64free */
+    /*
     if ((inst->table_maps = hashtable_alloc(1000, table_id_hash, table_id_cmp)) &&
         (inst->schemas = hashtable_alloc(1000, table_id_hash, table_id_cmp)))
     {
@@ -534,202 +316,75 @@ char		task_name[BLRM_TASK_NAME_LEN+1] = "";
         free(inst);
         return NULL;
     }
+    */
 
-	if ((inst->binlogdir == NULL) || (inst->binlogdir != NULL && !strlen(inst->binlogdir))) {
-		MXS_ERROR("Service %s, binlog directory is not specified",
-                          service->name);
-		free(inst);
-		return NULL;
-	}
+    /* Check binlogdir and avrodir */
+    // avro_check_dirs(inst);
 
-	if (inst->serverid <= 0) {
-		MXS_ERROR("Service %s, server-id is not configured. "
-                          "Please configure it with a unique positive integer value (1..2^32-1)",
-                          service->name);
-		free(inst);
-		return NULL;
-	}
+    /* Allocate dbusers for this router here instead of serviceStartPort() */
+    if (service->users == NULL) {
+        //service->users = (void *)avro_users_alloc();
+        /*
+        if (service->users == NULL) {
+            MXS_ERROR("%s: Error allocating AVRO users in createInstance",
+                      inst->service->name);
 
-	/**
-	 * If binlogdir is not found create it
-	 * On failure don't start the instance
-	 */
-	if (access(inst->binlogdir, R_OK) == -1) {
-		int mkdir_rval;
-		mkdir_rval = mkdir(inst->binlogdir, 0700);
-		if (mkdir_rval == -1) {
-			char err_msg[STRERROR_BUFLEN];
-			MXS_ERROR("Service %s, Failed to create binlog directory '%s': [%d] %s",
-                                  service->name,
-                                  inst->binlogdir,
-                                  errno,
-                                  strerror_r(errno, err_msg, sizeof(err_msg)));
+            free(inst);
+            return NULL;
+        }
+        */
+    }
 
-			free(inst);
-			return NULL;
-		}
-	}
+    /* Set service user or load db users */
+    //avro_set_service_CDC_user(inst->service);
 
-	/* Allocate dbusers for this router here instead of serviceStartPort() */
-	if (service->users == NULL) {
-		service->users = (void *)mysql_users_alloc();
-		if (service->users == NULL) {
-			MXS_ERROR("%s: Error allocating dbusers in createInstance",
-                                  inst->service->name);
+    /**
+     * Initialise the AVRO router
+     */
 
-			free(inst);
-			return NULL;
-		}
-	}
+    /* Find latest binlog file or create a new one (000001) */
+    /*
+    if (blr_file_init(inst) == 0)
+    {
+        MXS_ERROR("%s: Service not started due to lack of binlog directory %s",
+                  service->name,
+                  inst->binlogdir);
 
-#ifdef WITH_BLR_IN_AVRO
-	/* Dynamically allocate master_host server struct, not written in anyfile */
-	if (service->dbref == NULL) {
-		SERVICE *service = inst->service;
-		SERVER *server;
-		server = server_alloc("_none_", "MySQLBackend", (int)3306);
-		if (server == NULL) {
-			MXS_ERROR("%s: Error for server_alloc in createInstance",
-                                  inst->service->name);
-			if (service->users) {
-				users_free(service->users);
-                service->users = NULL;
-			}
+        if (service->users) {
+            users_free(service->users);
+            service->users = NULL;
+        }
 
-			free(inst);
-			return NULL;
-		}
-		server_set_unique_name(server, "binlog_router_master_host");
-		serviceAddBackend(service, server);
-	}
+        free(inst);
 
-	/*
-	 * Check for master.ini file with master connection details
-	 * If not found a CHANGE MASTER TO is required via mysqsl client.
-	 * Use START SLAVE for replication startup.
-	 *
-	 * If existent master.ini will be used for
-	 * automatic master replication start phase
-	 */
+        return NULL;
+    }
+    */
 
-	strncpy(path, inst->binlogdir, PATH_MAX);
-	snprintf(filename,PATH_MAX, "%s/master.ini", path);
+    /**
+     * We have completed the creation of the instance data, so now
+     * insert this router instance into the linked list of routers
+     * that have been created with this module.
+     */
+    spinlock_acquire(&instlock);
+    inst->next = instances;
+    instances = inst;
+    spinlock_release(&instlock);
 
-	rc = ini_parse(filename, blr_handler_config, inst);
+    /*
+     * Add tasks for statistic computation
+     */
+    snprintf(task_name, BLRM_TASK_NAME_LEN, "%s stats", service->name);
+    hktask_add(task_name, stats_func, inst, AVRO_STATS_FREQ);
 
-	MXS_INFO("%s: %s parse result is %d",
-                 inst->service->name,
-                 filename,
-                 rc);
 
-	/*
-	 * retcode:
-	 * -1 file not found, 0 parsing ok, > 0 error parsing the content
-	 */
+    /* Start the scan, read, convert task */
+    //hktask_add("binlog_to_avro", converter_func, inst, 5);
 
-	if (rc != 0) {
-		if (rc == -1) {
-			MXS_ERROR("%s: master.ini file not found in %s."
-                                  " Master registration cannot be started."
-                                  " Configure with CHANGE MASTER TO ...",
-                                  inst->service->name, inst->binlogdir);
-		} else {
-			MXS_ERROR("%s: master.ini file with errors in %s."
-                                  " Master registration cannot be started."
-                                  " Fix errors in it or configure with CHANGE MASTER TO ...",
-                                  inst->service->name, inst->binlogdir);
-		}
+    MXS_INFO("AVRO: current MySQL binlog file is %s, pos is %lu\n",
+              inst->binlog_name, inst->current_pos);
 
-		/* Set service user or load db users */
-		blr_set_service_mysql_user(inst->service);
-
-	} else {
-		inst->master_state = BLRM_UNCONNECTED;
-
-		/* Try loading dbusers */
-		blr_load_dbusers(inst);
-	}
-
-	/**
-	 * Initialise the binlog router
-	 */
-	if (inst->master_state == BLRM_UNCONNECTED) {
-
-	 	/* Read any cached response messages */
-		blr_cache_read_master_data(inst);
-
-		/* Find latest binlog file or create a new one (000001) */
-		if (blr_file_init(inst) == 0)
-		{
-			MXS_ERROR("%s: Service not started due to lack of binlog directory %s",
-                                  service->name,
-                                  inst->binlogdir);
-
-			if (service->users) {
-				users_free(service->users);
-                service->users = NULL;
-			}
-
-			if (service->dbref && service->dbref->server) {
-				server_free(service->dbref->server);
-				free(service->dbref);
-			}
-
-			free(inst);
-			return NULL;
-		}
-	}
-#endif
-	/**
-	 * We have completed the creation of the instance data, so now
-	 * insert this router instance into the linked list of routers
-	 * that have been created with this module.
-	 */
-	spinlock_acquire(&instlock);
-	inst->next = instances;
-	instances = inst;
-	spinlock_release(&instlock);
-
-	/*
-	 * Add tasks for statistic computation
-	 */
-	snprintf(task_name, BLRM_TASK_NAME_LEN, "%s stats", service->name);
-	hktask_add(task_name, stats_func, inst, BLR_STATS_FREQ);
-
-	/* Log whether the transaction safety option value is on*/
-	if (inst->trx_safe) {
-		MXS_INFO("%s: Service has transaction safety option set to ON",
-                         service->name);
-	}
-
-    hktask_add("binlog_to_avro", converter_func, inst, 5);
-
-	/**
-	 * Check whether replication can be started
-	 */
-	if (inst->master_state == BLRM_UNCONNECTED) {
-		/* Check current binlog */
-		MXS_NOTICE("Validating binlog file '%s' ...",
-                           inst->binlog_name);
-
-		if (inst->trx_safe && !blr_check_binlog(inst)) {
-			/* Don't start replication, just return */
-			return (ROUTER *)inst;
-		}
-
-		if (!inst->trx_safe) {
-			MXS_INFO("Current binlog file is %s, current pos is %lu\n",
-                                 inst->binlog_name, inst->binlog_position);
-		} else {
-			MXS_INFO("Current binlog file is %s, safe pos %lu, current pos is %lu\n",
-                                 inst->binlog_name, inst->binlog_position, inst->current_pos);
-		}
-
-		/* Start replication from master server */
-		//blr_start_master(inst);
-	}
-
-	return (ROUTER *)inst;
+    return (ROUTER *)inst;
 }
 
 /**
@@ -746,8 +401,8 @@ char		task_name[BLRM_TASK_NAME_LEN+1] = "";
 static	void	*
 newSession(ROUTER *instance, SESSION *session)
 {
-ROUTER_INSTANCE		*inst = (ROUTER_INSTANCE *)instance;
-ROUTER_SLAVE		*slave;
+AVRO_INSTANCE		*inst = (AVRO_INSTANCE *)instance;
+AVRO_CLIENT		*client;
 
         MXS_DEBUG("binlog router: %lu [newSession] new router session with "
                   "session %p, and inst %p.",
@@ -756,49 +411,43 @@ ROUTER_SLAVE		*slave;
                   inst);
 
 
-	if ((slave = (ROUTER_SLAVE *)calloc(1, sizeof(ROUTER_SLAVE))) == NULL)
+	if ((client = (AVRO_CLIENT *)calloc(1, sizeof(AVRO_CLIENT))) == NULL)
 	{
-		MXS_ERROR("Insufficient memory to create new slave session for binlog router");
+		MXS_ERROR("Insufficient memory to create new client session for AVRO router");
                 return NULL;
 	}
 
 #if defined(SS_DEBUG)
-        slave->rses_chk_top = CHK_NUM_ROUTER_SES;
-        slave->rses_chk_tail = CHK_NUM_ROUTER_SES;
+        client->rses_chk_top = CHK_NUM_ROUTER_SES;
+        client->rses_chk_tail = CHK_NUM_ROUTER_SES;
 #endif
 
-	memset(&slave->stats, 0, sizeof(SLAVE_STATS));
-	atomic_add(&inst->stats.n_slaves, 1);
-	slave->state = BLRS_CREATED;		/* Set initial state of the slave */
-	slave->cstate = 0;
-	slave->pthread = 0;
-	slave->overrun = 0;
-	slave->uuid = NULL;
-	slave->hostname = NULL;
-        spinlock_init(&slave->catch_lock);
-	slave->dcb = session->client;
-	slave->router = inst;
+	memset(&client->stats, 0, sizeof(AVRO_CLIENT_STATS));
+	atomic_add(&inst->stats.n_clients, 1);
+	client->state = BLRS_CREATED;		/* Set initial state of the slave */
+	client->uuid = NULL;
+        spinlock_init(&client->catch_lock);
+	client->dcb = session->client;
+	client->router = inst;
 #ifdef BLFILE_IN_SLAVE
-	slave->file = NULL;
+	client->file = NULL;
 #endif
-	strcpy(slave->binlogfile, "unassigned");
-	slave->connect_time = time(0);
-	slave->lastEventTimestamp = 0;
-	slave->mariadb10_compat = false;
-	slave->heartbeat = 0;
-	slave->lastEventReceived = 0;
+	strcpy(client->avrofile, "unassigned");
+	client->connect_time = time(0);
+	client->lastEventTimestamp = 0;
+	client->lastEventReceived = 0;
 
 	/**
          * Add this session to the list of active sessions.
          */
 	spinlock_acquire(&inst->lock);
-	slave->next = inst->slaves;
-	inst->slaves = slave;
+	client->next = inst->clients;
+	inst->clients = client;
 	spinlock_release(&inst->lock);
 
-        CHK_CLIENT_RSES(slave);
+        CHK_CLIENT_RSES(client);
 
-	return (void *)slave;
+	return (void *)client;
 }
 
 /**
@@ -817,11 +466,11 @@ static void freeSession(
         ROUTER* router_instance,
         void*   router_client_ses)
 {
-ROUTER_INSTANCE 	*router = (ROUTER_INSTANCE *)router_instance;
-ROUTER_SLAVE		*slave = (ROUTER_SLAVE *)router_client_ses;
+AVRO_INSTANCE 	*router = (AVRO_INSTANCE *)router_instance;
+AVRO_CLIENT	*client = (AVRO_CLIENT *)router_client_ses;
 int			prev_val;
 
-        prev_val = atomic_add(&router->stats.n_slaves, -1);
+        prev_val = atomic_add(&router->stats.n_clients, -1);
         ss_dassert(prev_val > 0);
 
 	/*
@@ -829,37 +478,23 @@ int			prev_val;
 	 * router currently.
 	 */
 	spinlock_acquire(&router->lock);
-	if (router->slaves == slave) {
-		router->slaves = slave->next;
+	if (router->clients == client) {
+		router->clients = client->next;
         } else {
-		ROUTER_SLAVE *ptr = router->slaves;
+		AVRO_CLIENT *ptr = router->clients;
 
-		while (ptr != NULL && ptr->next != slave) {
+		while (ptr != NULL && ptr->next != client) {
 			ptr = ptr->next;
                 }
 
 		if (ptr != NULL) {
-			ptr->next = slave->next;
+			ptr->next = client->next;
                 }
 	}
 	spinlock_release(&router->lock);
 
-        MXS_DEBUG("%lu [freeSession] Unlinked router_client_session %p from "
-                  "router %p. Connections : %d. ",
-                  pthread_self(),
-                  slave,
-                  router,
-                  prev_val-1);
-
-	if (slave->hostname)
-		free(slave->hostname);
-	if (slave->user)
-		free(slave->user);
-	if (slave->passwd)
-		free(slave->passwd);
-        free(slave);
+        free(client);
 }
-
 
 /**
  * Close a session with the router, this is the mechanism
@@ -871,69 +506,34 @@ int			prev_val;
 static	void
 closeSession(ROUTER *instance, void *router_session)
 {
-ROUTER_INSTANCE	 *router = (ROUTER_INSTANCE *)instance;
-ROUTER_SLAVE	 *slave = (ROUTER_SLAVE *)router_session;
+AVRO_INSTANCE	 *router = (AVRO_INSTANCE *)instance;
+AVRO_CLIENT	 *client = (AVRO_CLIENT *)router_session;
 
-	if (slave == NULL)
-	{
-		/*
-		 * We must be closing the master session.
-		 */
-		MXS_NOTICE("%s: Master %s disconnected after %ld seconds. "
-                           "%lu events read,",
-                           router->service->name, router->service->dbref->server->name,
-                           time(0) - router->connect_time, router->stats.n_binlogs_ses);
-        	MXS_ERROR("Binlog router close session with master server %s",
-                          router->service->dbref->server->unique_name);
-		blr_master_reconnect(router);
-		return;
-	}
-        CHK_CLIENT_RSES(slave);
+        CHK_CLIENT_RSES(client);
 
         /**
          * Lock router client session for secure read and update.
          */
-        if (rses_begin_locked_router_action(slave))
+        if (rses_begin_locked_router_action(client))
         {
 		/* decrease server registered slaves counter */
-		atomic_add(&router->stats.n_registered, -1);
-
-		if (slave->state > 0) {
-			MXS_NOTICE("%s: Slave %s:%d, server id %d, disconnected after %ld seconds. "
-                                 "%d SQL commands, %d events sent (%lu bytes), binlog '%s', "
-                                   "last position %lu",
-                                   router->service->name, slave->dcb->remote, ntohs((slave->dcb->ipv4).sin_port),
-                                   slave->serverid,
-                                   time(0) - slave->connect_time,
-                                   slave->stats.n_queries,
-                                   slave->stats.n_events,
-                                   slave->stats.n_bytes,
-                                   slave->binlogfile,
-                                   (unsigned long)slave->binlog_pos);
-		} else {
-			MXS_NOTICE("%s: Slave %s, server id %d, disconnected after %ld seconds. "
-                                   "%d SQL commands",
-                                   router->service->name, slave->dcb->remote,
-                                   slave->serverid,
-                                   time(0) - slave->connect_time,
-                                   slave->stats.n_queries);
-		}
+		atomic_add(&router->stats.n_clients, -1);
 
 		/*
 		 * Mark the slave as unregistered to prevent the forwarding
 		 * of any more binlog records to this slave.
 		 */
-		slave->state = BLRS_UNREGISTERED;
+		client->state = BLRS_UNREGISTERED;
 
 #if BLFILE_IN_SLAVE
                 // TODO: Is it really certain the file can be closed here? If other
                 // TODO: threads are using the slave instance, bag things will happen. [JWi].
-		if (slave->file)
-			blr_close_binlog(router, slave->file);
+		if (client->file)
+			//blr_close_binlog(router, slave->file);
 #endif
 
                 /* Unlock */
-                rses_end_locked_router_action(slave);
+                rses_end_locked_router_action(client);
         }
 }
 
@@ -952,10 +552,10 @@ ROUTER_SLAVE	 *slave = (ROUTER_SLAVE *)router_session;
 static	int
 routeQuery(ROUTER *instance, void *router_session, GWBUF *queue)
 {
-ROUTER_INSTANCE	*router = (ROUTER_INSTANCE *)instance;
-ROUTER_SLAVE	 *slave = (ROUTER_SLAVE *)router_session;
+AVRO_INSTANCE	*router = (AVRO_INSTANCE *)instance;
+AVRO_CLIENT	 *client = (AVRO_CLIENT *)router_session;
 
-	return avro_client_request(router, slave, queue);
+	return avro_client_request(router, client, queue);
 }
 
 static char *event_names[] = {
@@ -1003,8 +603,8 @@ spin_reporter(void *dcb, char *desc, int value)
 static	void
 diagnostics(ROUTER *router, DCB *dcb)
 {
-ROUTER_INSTANCE	*router_inst = (ROUTER_INSTANCE *)router;
-ROUTER_SLAVE	*session;
+AVRO_INSTANCE	*router_inst = (AVRO_INSTANCE *)router;
+AVRO_CLIENT	*session;
 int		i = 0, j;
 int		minno = 0;
 double		min5, min10, min15, min30;
@@ -1012,7 +612,7 @@ char		buf[40];
 struct tm	tm;
 
 	spinlock_acquire(&router_inst->lock);
-	session = router_inst->slaves;
+	session = router_inst->clients;
 	while (session)
 	{
 		i++;
@@ -1043,44 +643,24 @@ struct tm	tm;
 	min10 /= 10.0;
 	min5 /= 5.0;
 
-	if (router_inst->master)
-		dcb_printf(dcb, "\tMaster connection DCB:  			%p\n",
-			router_inst->master);
-	else
-		dcb_printf(dcb, "\tMaster connection DCB: 			0x0\n");
-
 	dcb_printf(dcb, "\tMaster connection state:			%s\n",
-			blrm_states[router_inst->master_state]);
+			blrm_states[router_inst->state]);
 
 	localtime_r(&router_inst->stats.lastReply, &tm);
 	asctime_r(&tm, buf);
 
 	dcb_printf(dcb, "\tBinlog directory:				%s\n",
 		   router_inst->binlogdir);
-	dcb_printf(dcb, "\tHeartbeat period (seconds):			%lu\n",
-		   router_inst->heartbeat);
-	dcb_printf(dcb, "\tNumber of master connects:	  		%d\n",
-                   router_inst->stats.n_masterstarts);
-	dcb_printf(dcb, "\tNumber of delayed reconnects:      		%d\n",
-                   router_inst->stats.n_delayedreconnects);
+	dcb_printf(dcb, "\tAVRO files directory:				%s\n",
+		   router_inst->avrodir);
 	dcb_printf(dcb, "\tCurrent binlog file:		  		%s\n",
                    router_inst->binlog_name);
 	dcb_printf(dcb, "\tCurrent binlog position:	  		%lu\n",
                    router_inst->current_pos);
-	if (router_inst->trx_safe) {
-		if (router_inst->pending_transaction) {
-			dcb_printf(dcb, "\tCurrent open transaction pos:	  		%lu\n",
-	                   router_inst->binlog_position);
-		}
-	}
 	dcb_printf(dcb, "\tNumber of slave servers:	   		%u\n",
-                   router_inst->stats.n_slaves);
-	dcb_printf(dcb, "\tNo. of binlog events received this session:	%u\n",
-                   router_inst->stats.n_binlogs_ses);
+                   router_inst->stats.n_clients);
 	dcb_printf(dcb, "\tTotal no. of binlog events received:        	%u\n",
                    router_inst->stats.n_binlogs);
-	dcb_printf(dcb, "\tNo. of bad CRC received from master:        	%u\n",
-                   router_inst->stats.n_badcrc);
 	minno = router_inst->stats.minno - 1;
 	if (minno == -1)
 		minno = 30;
@@ -1088,20 +668,10 @@ struct tm	tm;
 	dcb_printf(dcb, "\tCurrent        5        10       15       30 Min Avg\n");
 	dcb_printf(dcb, "\t %6d  %8.1f %8.1f %8.1f %8.1f\n",
 		   router_inst->stats.minavgs[minno], min5, min10, min15, min30);
-	dcb_printf(dcb, "\tNumber of fake binlog events:      		%u\n",
-                   router_inst->stats.n_fakeevents);
-	dcb_printf(dcb, "\tNumber of artificial binlog events: 		%u\n",
-                   router_inst->stats.n_artificial);
-	dcb_printf(dcb, "\tNumber of binlog events in error:  		%u\n",
-                   router_inst->stats.n_binlog_errors);
 	dcb_printf(dcb, "\tNumber of binlog rotate events:  		%u\n",
                    router_inst->stats.n_rotates);
-	dcb_printf(dcb, "\tNumber of heartbeat events:     		%u\n",
-                   router_inst->stats.n_heartbeats);
 	dcb_printf(dcb, "\tNumber of packets received:			%u\n",
 		   router_inst->stats.n_reads);
-	dcb_printf(dcb, "\tNumber of residual data packets:		%u\n",
-		   router_inst->stats.n_residuals);
 	dcb_printf(dcb, "\tAverage events per packet:			%.1f\n",
 		   router_inst->stats.n_reads != 0 ? ((double)router_inst->stats.n_binlogs / router_inst->stats.n_reads) : 0);
 
@@ -1112,26 +682,6 @@ struct tm	tm;
 		}
 		dcb_printf(dcb, "\tLast event from master at:  			%s (%d seconds ago)\n",
 			buf, time(0) - router_inst->stats.lastReply);
-
-		if (!router_inst->mariadb10_compat) {
-			dcb_printf(dcb, "\tLast event from master:  			0x%x, %s\n",
-				router_inst->lastEventReceived,
-				(router_inst->lastEventReceived <= MAX_EVENT_TYPE) ?
-				event_names[router_inst->lastEventReceived] : "unknown");
-		} else {
-			char *ptr = NULL;
-			if (router_inst->lastEventReceived <= MAX_EVENT_TYPE) {
-				ptr = event_names[router_inst->lastEventReceived];
-			} else {
-				/* Check MariaDB 10 new events */
-				if (router_inst->lastEventReceived >= MARIADB_NEW_EVENTS_BEGIN && router_inst->lastEventReceived <= MAX_EVENT_TYPE_MARIADB10) {
-					ptr = event_names_mariadb10[(router_inst->lastEventReceived - MARIADB_NEW_EVENTS_BEGIN)];
-				}
-			}
-
-			dcb_printf(dcb, "\tLast event from master:  			0x%x, %s\n",
-				router_inst->lastEventReceived, (ptr != NULL) ? ptr : "unknown");
-		}
 
 		if (router_inst->lastEventTimestamp) {
 			time_t	last_event = (time_t)router_inst->lastEventTimestamp;
@@ -1148,20 +698,10 @@ struct tm	tm;
 	}
 	spinlock_release(&router_inst->lock);
 
-	if (router_inst->active_logs)
-		dcb_printf(dcb, "\tRouter processing binlog records\n");
-	if (router_inst->reconnect_pending)
-		dcb_printf(dcb, "\tRouter pending reconnect to master\n");
 	dcb_printf(dcb, "\tEvents received:\n");
 	for (i = 0; i <= MAX_EVENT_TYPE; i++)
 	{
 		dcb_printf(dcb, "\t\t%-38s   %u\n", event_names[i], router_inst->stats.events[i]);
-	}
-
-	if (router_inst->mariadb10_compat) {
-		/* Display MariaDB 10 new events */
-		for (i = MARIADB_NEW_EVENTS_BEGIN; i <= MAX_EVENT_TYPE_MARIADB10; i++)
-			dcb_printf(dcb, "\t\tMariaDB 10 %-38s   %u\n", event_names_mariadb10[(i - MARIADB_NEW_EVENTS_BEGIN)], router_inst->stats.events[i]);
 	}
 
 #if SPINLOCK_PROFILE
@@ -1173,11 +713,11 @@ struct tm	tm;
 	spinlock_stats(&router_inst->binlog_lock, spin_reporter, dcb);
 #endif
 
-	if (router_inst->slaves)
+	if (router_inst->clients)
 	{
 		dcb_printf(dcb, "\tSlaves:\n");
 		spinlock_acquire(&router_inst->lock);
-		session = router_inst->slaves;
+		session = router_inst->clients;
 		while (session)
 		{
 
@@ -1203,12 +743,7 @@ struct tm	tm;
 			min15 /= 15.0;
 			min10 /= 10.0;
 			min5 /= 5.0;
-			dcb_printf(dcb,
-				"\t\tServer-id:					%d\n",
-						 session->serverid);
-			if (session->hostname)
-				dcb_printf(dcb, "\t\tHostname:					%s\n", session->hostname);
-			if (session->uuid)
+
 				dcb_printf(dcb, "\t\tSlave UUID:					%s\n", session->uuid);
 			dcb_printf(dcb,
 				"\t\tSlave_host_port:				%s:%d\n",
@@ -1220,20 +755,11 @@ struct tm	tm;
 				"\t\tSlave DCB:					%p\n",
 						 session->dcb);
 			dcb_printf(dcb,
-				"\t\tNext Sequence No:				%d\n",
-						 session->seqno);
-			dcb_printf(dcb,
 				"\t\tState:    					%s\n",
 						 blrs_states[session->state]);
 			dcb_printf(dcb,
 				"\t\tBinlog file:					%s\n",
-						session->binlogfile);
-			dcb_printf(dcb,
-				"\t\tBinlog position:				%u\n",
-						session->binlog_pos);
-			if (session->nocrc)
-				dcb_printf(dcb,
-					"\t\tMaster Binlog CRC:				None\n");
+						session->avrofile);
 			dcb_printf(dcb,
 				"\t\tNo. requests:   				%u\n",
 						session->stats.n_requests);
@@ -1243,15 +769,6 @@ struct tm	tm;
 			dcb_printf(dcb,
 					"\t\tNo. bytes sent:					%u\n",
 						session->stats.n_bytes);
-			dcb_printf(dcb,
-					"\t\tNo. bursts sent:				%u\n",
-						session->stats.n_bursts);
-			dcb_printf(dcb,
-					"\t\tNo. transitions to follow mode:			%u\n",
-						session->stats.n_bursts);
-			if (router_inst->send_slave_heartbeat)
-				dcb_printf(dcb, "\t\tHeartbeat period (seconds):			%lu\n",
-					session->heartbeat);
 
 			minno = session->stats.minno - 1;
 			if (minno == -1)
@@ -1261,9 +778,7 @@ struct tm	tm;
 			dcb_printf(dcb, "\t\t %6d  %8.1f %8.1f %8.1f %8.1f\n",
 		   		session->stats.minavgs[minno], min5, min10,
 						min15, min30);
-			dcb_printf(dcb, "\t\tNo. flow control:				%u\n", session->stats.n_flows);
-			dcb_printf(dcb, "\t\tNo. up to date:					%u\n", session->stats.n_upd);
-			dcb_printf(dcb, "\t\tNo. of drained cbs 				%u\n", session->stats.n_dcb);
+
 			dcb_printf(dcb, "\t\tNo. of failed reads				%u\n", session->stats.n_failed_read);
 
 #if DETAILED_DIAG
@@ -1293,22 +808,9 @@ struct tm	tm;
 			{
 				dcb_printf(dcb, "\t\tSlave_mode:					connected\n");
 			}
-			else if ((session->cstate & CS_UPTODATE) == 0)
-			{
-				dcb_printf(dcb, "\t\tSlave_mode:					catchup. %s%s\n",
-					((session->cstate & CS_EXPECTCB) == 0 ? "" :
-					"Waiting for DCB queue to drain."),
-					((session->cstate & CS_BUSY) == 0 ? "" :
-					" Busy in slave catchup."));
-			}
 			else
 			{
 				dcb_printf(dcb, "\t\tSlave_mode:					follow\n");
-				if (session->binlog_pos != router_inst->binlog_position)
-				{
-					dcb_printf(dcb, "\t\tSlave reports up to date however "
-					"the slave binlog position does not match the master\n");
-				}
 			}
 #if SPINLOCK_PROFILE
 			dcb_printf(dcb, "\tSpinlock statistics (catch_lock):\n");
@@ -1338,11 +840,8 @@ struct tm	tm;
 static  void
 clientReply(ROUTER *instance, void *router_session, GWBUF *queue, DCB *backend_dcb)
 {
-ROUTER_INSTANCE	*router = (ROUTER_INSTANCE *)instance;
-
-	atomic_add(&router->stats.n_reads, 1);
-	blr_master_response(router, queue);
-	router->stats.lastReply = time(0);
+AVRO_INSTANCE	*router = (AVRO_INSTANCE *)instance;
+    ;
 }
 
 static char *
@@ -1362,8 +861,6 @@ int	len;
 	return rval;
 }
 
-
-
 /**
  * Error Reply routine
  *
@@ -1381,7 +878,7 @@ int	len;
 static  void
 errorReply(ROUTER *instance, void *router_session, GWBUF *message, DCB *backend_dcb, error_action_t action, bool *succp)
 {
-ROUTER_INSTANCE	*router = (ROUTER_INSTANCE *)instance;
+AVRO_INSTANCE	*router = (AVRO_INSTANCE *)instance;
 int		error;
 socklen_t	len;
 char		msg[STRERROR_BUFLEN + 1 + 5] = "";
@@ -1401,50 +898,6 @@ unsigned long	mysql_errno;
 	}
 
 	len = sizeof(error);
-	if (router->master && getsockopt(router->master->fd, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error != 0)
-	{
-		char errbuf[STRERROR_BUFLEN];
-                sprintf(msg, "%s ", strerror_r(error, errbuf, sizeof(errbuf)));
-	}
-	else
-		strcpy(msg, "");
-
-	mysql_errno = (unsigned long) extract_field((uint8_t *)(GWBUF_DATA(message) + 5), 16);
-	errmsg = extract_message(message);
-
-	if (router->master_state < BLRM_BINLOGDUMP || router->master_state != BLRM_SLAVE_STOPPED) {
-		/* set mysql_errno */
-		router->m_errno = mysql_errno;
-
-		/* set io error message */
-		if (router->m_errmsg)
-			free(router->m_errmsg);
-		router->m_errmsg = strdup(errmsg);
-
-	       	MXS_ERROR("%s: Master connection error %lu '%s' in state '%s', "
-                          "%sattempting reconnect to master %s:%d",
-                          router->service->name, mysql_errno, errmsg,
-                          blrm_states[router->master_state], msg,
-                          router->service->dbref->server->name,
-                          router->service->dbref->server->port);
-	} else {
-       		MXS_ERROR("%s: Master connection error %lu '%s' in state '%s', "
-                          "%sattempting reconnect to master %s:%d",
-                          router->service->name, router->m_errno, router->m_errmsg,
-                          blrm_states[router->master_state], msg,
-                          router->service->dbref->server->name,
-                          router->service->dbref->server->port);
-	}
-
-	if (errmsg)
-		free(errmsg);
-	*succp = true;
-        dcb_close(backend_dcb);
-	MXS_NOTICE("%s: Master %s disconnected after %ld seconds. "
-                   "%lu events read.",
-                   router->service->name, router->service->dbref->server->name,
-                   time(0) - router->connect_time, router->stats.n_binlogs_ses);
-	blr_master_reconnect(router);
 }
 
 /** to be inline'd */
@@ -1463,7 +916,7 @@ unsigned long	mysql_errno;
  * @details (write detailed description here)
  *
  */
-static bool rses_begin_locked_router_action(ROUTER_SLAVE *rses)
+static bool rses_begin_locked_router_action(AVRO_CLIENT *rses)
 {
         bool succp = false;
 
@@ -1489,7 +942,7 @@ static bool rses_begin_locked_router_action(ROUTER_SLAVE *rses)
  * @details (write detailed description here)
  *
  */
-static void rses_end_locked_router_action(ROUTER_SLAVE	* rses)
+static void rses_end_locked_router_action(AVRO_CLIENT *rses)
 {
         CHK_CLIENT_RSES(rses);
         spinlock_release(&rses->rses_lock);
@@ -1510,263 +963,38 @@ static int getCapabilities()
 static void
 stats_func(void *inst)
 {
-ROUTER_INSTANCE *router = (ROUTER_INSTANCE *)inst;
-ROUTER_SLAVE	*slave;
+AVRO_INSTANCE *router = (AVRO_INSTANCE *)inst;
+AVRO_CLIENT    *client;
 
 	router->stats.minavgs[router->stats.minno++]
 			 = router->stats.n_binlogs - router->stats.lastsample;
 	router->stats.lastsample = router->stats.n_binlogs;
-	if (router->stats.minno == BLR_NSTATS_MINUTES)
+	if (router->stats.minno == AVRO_NSTATS_MINUTES)
 		router->stats.minno = 0;
 
 	spinlock_acquire(&router->lock);
-	slave = router->slaves;
-	while (slave)
+	client = router->clients;
+	while (client)
 	{
-		slave->stats.minavgs[slave->stats.minno++]
-			 = slave->stats.n_events - slave->stats.lastsample;
-		slave->stats.lastsample = slave->stats.n_events;
-		if (slave->stats.minno == BLR_NSTATS_MINUTES)
-			slave->stats.minno = 0;
-		slave = slave->next;
+		client->stats.minavgs[client->stats.minno++]
+			 = client->stats.n_events - client->stats.lastsample;
+		client->stats.lastsample = client->stats.n_events;
+		if (client->stats.minno == AVRO_NSTATS_MINUTES)
+			client->stats.minno = 0;
+		client = client->next;
 	}
 	spinlock_release(&router->lock);
 }
 
 /**
- * Return some basic statistics from the router in response to a COM_STATISTICS
- * request.
- *
- * @param router	The router instance
- * @param slave		The "slave" connection that requested the statistics
- * @param queue		The statistics request
- *
- * @return non-zero on sucessful send
- */
-int
-blr_statistics(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, GWBUF *queue)
-{
-char	result[BLRM_COM_STATISTICS_SIZE + 1] = "";
-char	*ptr;
-GWBUF	*ret;
-unsigned long	len;
-
-	snprintf(result, BLRM_COM_STATISTICS_SIZE,
-		"Uptime: %u  Threads: %u  Events: %u  Slaves: %u  Master State: %s",
-			(unsigned int)(time(0) - router->connect_time),
-			(unsigned int)config_threadcount(),
-			(unsigned int)router->stats.n_binlogs_ses,
-			(unsigned int)router->stats.n_slaves,
-			blrm_states[router->master_state]);
-	if ((ret = gwbuf_alloc(4 + strlen(result))) == NULL)
-		return 0;
-	len = strlen(result);
-	ptr = GWBUF_DATA(ret);
-	*ptr++ = len & 0xff;
-	*ptr++ = (len & 0xff00) >> 8;
-	*ptr++ = (len & 0xff0000) >> 16;
-	*ptr++ = 1;
-	strncpy(ptr, result, len);
-
-	return slave->dcb->func.write(slave->dcb, ret);
-}
-
-/**
- * Respond to a COM_PING command
- *
- * @param router	The router instance
- * @param slave		The "slave" connection that requested the ping
- * @param queue		The ping request
- */
-int
-blr_ping(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, GWBUF *queue)
-{
-char	*ptr;
-GWBUF	*ret;
-
-	if ((ret = gwbuf_alloc(5)) == NULL)
-		return 0;
-	ptr = GWBUF_DATA(ret);
-	*ptr++ = 0x01;
-	*ptr++ = 0;
-	*ptr++ = 0;
-	*ptr++ = 1;
-	*ptr = 0;		// OK
-
-	return slave->dcb->func.write(slave->dcb, ret);
-}
-
-
-
-/**
- * mysql_send_custom_error
- *
- * Send a MySQL protocol Generic ERR message, to the dcb
- *
- * @param dcb Owner_Dcb Control Block for the connection to which the error message is sent
- * @param packet_number
- * @param in_affected_rows
- * @param msg		Message to send
- * @param statemsg	MySQL State message
- * @param errcode	MySQL Error code
- * @return 1 Non-zero if data was sent
- *
- */
-int
-blr_send_custom_error(DCB *dcb, int packet_number, int affected_rows, char *msg, char *statemsg, unsigned int errcode)
-{
-uint8_t		*outbuf = NULL;
-uint32_t	mysql_payload_size = 0;
-uint8_t		mysql_packet_header[4];
-uint8_t		*mysql_payload = NULL;
-uint8_t		field_count = 0;
-uint8_t		mysql_err[2];
-uint8_t		mysql_statemsg[6];
-unsigned int	mysql_errno = 0;
-const char	*mysql_error_msg = NULL;
-const char	*mysql_state = NULL;
-GWBUF		*errbuf = NULL;
-
-	if (errcode == 0)
-		mysql_errno = 1064;
-	else
-		mysql_errno = errcode;
-
-	mysql_error_msg = "An errorr occurred ...";
-	if (statemsg == NULL)
-        	mysql_state = "42000";
-	else
-		mysql_state = statemsg;
-
-        field_count = 0xff;
-        gw_mysql_set_byte2(mysql_err, mysql_errno);
-        mysql_statemsg[0]='#';
-        memcpy(mysql_statemsg+1, mysql_state, 5);
-
-        if (msg != NULL) {
-                mysql_error_msg = msg;
-        }
-
-        mysql_payload_size = sizeof(field_count) +
-                                sizeof(mysql_err) +
-                                sizeof(mysql_statemsg) +
-                                strlen(mysql_error_msg);
-
-        /** allocate memory for packet header + payload */
-        errbuf = gwbuf_alloc(sizeof(mysql_packet_header) + mysql_payload_size);
-        ss_dassert(errbuf != NULL);
-
-        if (errbuf == NULL)
-        {
-                return 0;
-        }
-        outbuf = GWBUF_DATA(errbuf);
-
-        /** write packet header and packet number */
-        gw_mysql_set_byte3(mysql_packet_header, mysql_payload_size);
-        mysql_packet_header[3] = packet_number;
-
-        /** write header */
-        memcpy(outbuf, mysql_packet_header, sizeof(mysql_packet_header));
-
-        mysql_payload = outbuf + sizeof(mysql_packet_header);
-
-        /** write field */
-        memcpy(mysql_payload, &field_count, sizeof(field_count));
-        mysql_payload = mysql_payload + sizeof(field_count);
-
-        /** write errno */
-        memcpy(mysql_payload, mysql_err, sizeof(mysql_err));
-        mysql_payload = mysql_payload + sizeof(mysql_err);
-
-        /** write sqlstate */
-        memcpy(mysql_payload, mysql_statemsg, sizeof(mysql_statemsg));
-        mysql_payload = mysql_payload + sizeof(mysql_statemsg);
-
-        /** write error message */
-        memcpy(mysql_payload, mysql_error_msg, strlen(mysql_error_msg));
-
-        return dcb->func.write(dcb, errbuf);
-}
-
-/**
- * Config item handler for the ini file reader
- *
- * @param userdata      The config context element
- * @param section       The config file section
- * @param name          The Parameter name
- * @param value         The Parameter value
- * @return zero on error
- */
-
-static int
-blr_handler_config(void *userdata, const char *section, const char *name, const char *value)
-{
-ROUTER_INSTANCE *inst = (ROUTER_INSTANCE *) userdata;
-SERVICE         *service;
-
-	service = inst->service;
-
-	if (strcasecmp(section, "binlog_configuration") == 0)
-	{
-		return blr_handle_config_item(name, value, inst);
-	} else  {
-		MXS_ERROR("master.ini has an invalid section [%s], it should be [binlog_configuration]. "
-                          "Service %s",
-                          section,
-                          service->name);
-
-		return 0;
-	}
-}
-
-/**
- * Configuration handler for items in the [binlog_configuration] section
- *
- * @param name	The item name
- * @param value	The item value
- * @param inst	The current router instance
- * @return 0 on error
- */
-static  int
-blr_handle_config_item(const char *name, const char *value, ROUTER_INSTANCE *inst)
-{
-SERVICE         *service;
-
-        service = inst->service;
-
-        if (strcmp(name, "master_host") == 0) {
-                 server_update_address(service->dbref->server, (char *)value);
-        } else if (strcmp(name, "master_port") == 0) {
-                server_update_port(service->dbref->server, (short)atoi(value));
-        } else if (strcmp(name, "filestem") == 0) {
-                        free(inst->fileroot);
-                inst->fileroot = strdup(value);
-        }  else if (strcmp(name, "master_user") == 0) {
-                if (inst->user)
-                        free(inst->user);
-                inst->user = strdup(value);
-        } else if (strcmp(name, "master_password") == 0) {
-                if (inst->password)
-                        free(inst->password);
-                inst->password = strdup(value);
-        } else {
-                return 0;
-        }
-
-        return 1;
-}
-
-/**
- * Add the service user to mysql dbusers (service->users)
- * via mysql_users_alloc and add_mysql_users_with_host_ipv4
- * User is added for '%' and 'localhost' hosts
+ * Add the service user to CDC dbusers (service->users)
+ * via cdc_users_alloc
  *
  * @param service	The current service
  * @return		0 on success, 1 on failure
  */
 static int
-blr_set_service_mysql_user(SERVICE *service) {
+avro_set_service_CDC_user(SERVICE *service) {
 char	*dpwd = NULL;
 char	*newpasswd = NULL;
 char	*service_user = NULL;
@@ -1800,8 +1028,10 @@ char	*service_passwd = NULL;
 	}
 
 	/* add service user for % and localhost */
+/*
 	(void)add_mysql_users_with_host_ipv4(service->users, service->credentials.name, "%", newpasswd, "Y", "");
 	(void)add_mysql_users_with_host_ipv4(service->users, service->credentials.name, "localhost", newpasswd, "Y", "");
+*/
 
 	free(newpasswd);
 	free(dpwd);
@@ -1816,7 +1046,7 @@ char	*service_passwd = NULL;
  * @return              -1 on failure, 0 for no users found, > 0 for found users
  */
 int
-blr_load_dbusers(ROUTER_INSTANCE *router)
+blr_load_dbusers(AVRO_INSTANCE *router)
 {
 int loaded = -1;
 char	path[PATH_MAX+1] = "";
@@ -1881,7 +1111,7 @@ SERVICE *service;
  * @return              -1 on failure, >= 0 on success
  */
 int
-blr_save_dbusers(ROUTER_INSTANCE *router)
+blr_save_dbusers(AVRO_INSTANCE *router)
 {
 SERVICE *service;
 char	path[PATH_MAX+1] = "";
@@ -1938,143 +1168,10 @@ uint32_t	rval = 0, shift = 0;
 }
 
 /**
- * Check whether current binlog is valid.
- * In case of errors BLR_SLAVE_STOPPED state is set
- * If a partial transaction is found
- * inst->binlog_position is set the pos where it started
- *
- * @param router	The router instance
- * @return		1 on success, 0 on failure
+ * Conversion task: MySQL binlogs to AVRO files
  */
-/** 1 is succes, 0 is faulure */
-static int blr_check_binlog(ROUTER_INSTANCE *router) {
-	int n;
-
-	/** blr_read_events_all() may set master_state
-	 * to BLR_SLAVE_STOPPED state in case of found errors.
-	 * In such conditions binlog file is NOT truncated and
-	 * router state is set to BLR_SLAVE_STOPPED
-	 * Last commited pos is set for both router->binlog_position
-	 * and router->current_pos.
-	 *
-	 * If an open transaction is detected at pos XYZ
-	 * inst->binlog_position will be set to XYZ while
-	 * router->current_pos is the last event found.
-	 */
-
-	n = blr_read_events_all_events(router, 0, 0);
-
-	MXS_DEBUG("blr_read_events_all_events() ret = %i\n", n);
-
-	if (n != 0) {
-		char msg_err[BINLOG_ERROR_MSG_LEN + 1] = "";
-		router->master_state = BLRM_SLAVE_STOPPED;
-
-		snprintf(msg_err, BINLOG_ERROR_MSG_LEN, "Error found in binlog %s. Safe pos is %lu", router->binlog_name, router->binlog_position);
-		/* set mysql_errno */
-		router->m_errno = 2032;
-
-		/* set io error message */
-		router->m_errmsg = strdup(msg_err);
-
-		/* set last_safe_pos */
-		router->last_safe_pos = router->binlog_position;
-
-		MXS_ERROR("Error found in binlog file %s. Safe starting pos is %lu",
-                          router->binlog_name,
-                          router->binlog_position);
-
-		return 0;
-	} else {
-		return 1;
-	}
-}
-
-
-/**
- * Return last event description
- *
- * @param router	The router instance
- * @return		The event description or NULL
- */
-char *
-blr_last_event_description(ROUTER_INSTANCE *router) {
-char *event_desc = NULL;
-
-	if (!router->mariadb10_compat) {
-		if (router->lastEventReceived <= MAX_EVENT_TYPE) {
-			event_desc = event_names[router->lastEventReceived];
-		}
-	} else {
-		if (router->lastEventReceived <= MAX_EVENT_TYPE) {
-			event_desc = event_names[router->lastEventReceived];
-		} else {
-			/* Check MariaDB 10 new events */
-			if (router->lastEventReceived >= MARIADB_NEW_EVENTS_BEGIN &&
-				router->lastEventReceived <= MAX_EVENT_TYPE_MARIADB10) {
-				event_desc = event_names_mariadb10[(router->lastEventReceived - MARIADB_NEW_EVENTS_BEGIN)];
-			}
-		}
-	}
-
-	return event_desc;
-}
-
-/**
- * Return the event description
- *
- * @param router	The router instance
- * @param event		The current event
- * @return		The event description or NULL
- */
-char *
-blr_get_event_description(ROUTER_INSTANCE *router, uint8_t event) {
-char *event_desc = NULL;
-
-	if (!router->mariadb10_compat) {
-		if (event <= MAX_EVENT_TYPE) {
-			event_desc = event_names[event];
-		}
-	} else {
-		if (event <= MAX_EVENT_TYPE) {
-			event_desc = event_names[event];
-		} else {
-			/* Check MariaDB 10 new events */
-			if (event >= MARIADB_NEW_EVENTS_BEGIN &&
-				event <= MAX_EVENT_TYPE_MARIADB10) {
-				event_desc = event_names_mariadb10[(event - MARIADB_NEW_EVENTS_BEGIN)];
-			}
-		}
-	}
-
-	return event_desc;
-}
-
-/**
- *  * Rotate the slave to the new binlog file
- *   *
- *    * @param slave         The slave instance
- *     * @param ptr           The rotate event (minus header and OK byte)
- *      */
-void
-blr_slave_rotate(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, uint8_t *ptr)
-{
-int     len = EXTRACT24(ptr + 9);       // Extract the event length
-
-        len = len - (BINLOG_EVENT_HDR_LEN + 8);         // Remove length of header and position
-        if (router->master_chksum)
-                len -= 4;
-        if (len > BINLOG_FNAMELEN)
-                len = BINLOG_FNAMELEN;
-        ptr += BINLOG_EVENT_HDR_LEN;    // Skip header
-        slave->binlog_pos = extract_field(ptr, 32);
-        slave->binlog_pos += (((uint64_t)extract_field(ptr+4, 32)) << 32);
-        memcpy(slave->binlogfile, ptr + 8, len);
-        slave->binlogfile[len] = 0;
-}
-
 void converter_func(void* data)
 {
-    ROUTER_INSTANCE* router = (ROUTER_INSTANCE*)data;
-    blr_read_events_all_events(router, 0, 0);
+    AVRO_INSTANCE* router = (AVRO_INSTANCE*)data;
+    // add routine
 }

@@ -83,6 +83,8 @@
 #include <log_manager.h>
 #include <version.h>
 #include <zlib.h>
+// AVRO
+#include <mxs_avro.h>
 
 extern int load_mysql_users(SERVICE *service);
 extern int blr_save_dbusers(ROUTER_INSTANCE *router);
@@ -117,7 +119,7 @@ void poll_fake_write_event(DCB *dcb);
  * @param queue		The incoming request packet
  */
 int
-avro_client_request(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, GWBUF *queue)
+avro_client_request(AVRO_INSTANCE *router, AVRO_CLIENT *slave, GWBUF *queue)
 {
 	GWBUF *reply = gwbuf_alloc(5);
 	uint8_t *ptr = GWBUF_DATA(reply);
@@ -333,18 +335,14 @@ unsigned int cstate;
  * @param ptr		The rotate event (minus header and OK byte)
  */
 void
-avro_client_rotate(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, uint8_t *ptr)
+avro_client_rotate(AVRO_INSTANCE *router, AVRO_CLIENT *client, uint8_t *ptr)
 {
 int	len = EXTRACT24(ptr + 9);	// Extract the event length
 
 	len = len - (BINLOG_EVENT_HDR_LEN + 8);		// Remove length of header and position
-	if (router->master_chksum)
-		len -= 4;
 	if (len > BINLOG_FNAMELEN)
 		len = BINLOG_FNAMELEN;
 	ptr += BINLOG_EVENT_HDR_LEN;	// Skip header
-	slave->binlog_pos = extract_field(ptr, 32);
-	slave->binlog_pos += (((uint64_t)extract_field(ptr+4, 32)) << 32);
-	memcpy(slave->binlogfile, ptr + 8, len);
-	slave->binlogfile[len] = 0;
+	memcpy(client->avrofile, ptr + 8, len);
+	client->avrofile[len] = 0;
 }
