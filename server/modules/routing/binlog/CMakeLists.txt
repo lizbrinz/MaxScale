@@ -1,9 +1,9 @@
-add_library(binlogrouter SHARED blr.c blr_master.c blr_cache.c blr_slave.c blr_file.c ../avro/avro_schema.c ../avro/rbr.c)
+add_library(binlogrouter SHARED blr.c binlog_common.c blr_master.c blr_cache.c blr_slave.c blr_file.c ../avro/avro_schema.c ../avro/rbr.c)
 set_target_properties(binlogrouter PROPERTIES INSTALL_RPATH ${CMAKE_INSTALL_RPATH}:${MAXSCALE_LIBDIR} VERSION "2.0.0")
 target_link_libraries(binlogrouter ssl pthread log_manager avro jansson)
 install(TARGETS binlogrouter DESTINATION ${MAXSCALE_LIBDIR})
 
-add_executable(maxbinlogcheck maxbinlogcheck.c blr_file.c blr_cache.c blr_master.c blr_slave.c blr.c
+add_executable(maxbinlogcheck maxbinlogcheck.c blr_file.c blr_cache.c blr_master.c blr_slave.c blr.c  binlog_common.c
   ${CMAKE_SOURCE_DIR}/server/core/service.c ${CMAKE_SOURCE_DIR}/server/core/spinlock.c
   ${CMAKE_SOURCE_DIR}/server/core/buffer.c ${CMAKE_SOURCE_DIR}/server/core/atomic.c
   ${CMAKE_SOURCE_DIR}/server/core/hint.c ${CMAKE_SOURCE_DIR}/server/core/gwdirs.c

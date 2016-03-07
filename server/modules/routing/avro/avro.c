@@ -55,6 +55,7 @@
 
 #include <mxs_avro.h>
 #include <random_jkiss.h>
+#include <binlog_common.h>
 
 #ifndef BINLOG_NAMEFMT
 #define BINLOG_NAMEFMT		"%s.%06d"

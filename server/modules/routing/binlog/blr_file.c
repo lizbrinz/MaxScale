@@ -1792,27 +1792,6 @@ blr_cache_read_master_data(ROUTER_INSTANCE *router)
 }
 
 /**
- * Get the next binlog file name.
- *
- * @param router	The router instance
- * @return 		0 on error, >0 as sequence number
- */
-int
-blr_file_get_next_binlogname(const char *binlog_name)
-{
-    char *sptr;
-    int filenum;
-
-    if ((sptr = strrchr(binlog_name, '.')) == NULL)
-        return 0;
-    filenum = atoi(sptr + 1);
-    if (filenum)
-        filenum++;
-
-    return filenum;
-}
-
-/**
  * Create a new binlog file
  *
  * @param router	The router instance
@@ -1954,43 +1933,4 @@ blr_print_binlog_details(ROUTER_INSTANCE *router, BINLOG_EVENT_DESC first_event,
     MXS_NOTICE("%lu @ %llu, %s, (%s), Last EventTime",
                last_event.event_time, last_event.event_pos,
                event_desc != NULL ? event_desc : "unknown", buf_t);
-}
-
-bool blr_next_binlog_exists(const char* binlogdir, const char* binlog)
-{
-    bool rval = false;
-    int filenum = blr_file_get_next_binlogname(binlog);
-
-    if (filenum)
-    {
-        char *sptr = strrchr(binlog, '.');
-
-        if (sptr)
-        {
-            char buf[BLRM_BINLOG_NAME_STR_LEN +1];
-            char filename[PATH_MAX +1];
-            char next_file[BLRM_BINLOG_NAME_STR_LEN + 1];
-            int offset = sptr - binlog;
-            strncpy(buf, binlog, offset);
-            buf[offset] ='\0';
-            sprintf(next_file, BINLOG_NAMEFMT, buf, filenum);
-            snprintf(filename, PATH_MAX, "%s/%s", binlogdir, next_file);
-            filename[PATH_MAX] = '\0';
-
-            /* Next file in sequence doesn't exist */
-            if (access(filename, R_OK) == -1)
-            {
-                MXS_DEBUG("This file is still being written.");
-            }
-            else
-            {
-                MXS_NOTICE("Warning: the next binlog file %s exists: "
-                    "the current binlog file is missing Rotate or Stop event. "
-                    "Client should read next one", next_file);
-                rval = true;
-            }
-        }
-    }
-
-    return rval;
 }
