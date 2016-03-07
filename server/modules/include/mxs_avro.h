@@ -17,6 +17,15 @@
 #define AVRO_STATS_FREQ          60
 #define AVRO_NSTATS_MINUTES      30
 
+/** How a binlog file is closed */
+typedef enum avro_binlog_end
+{
+    AVRO_OK = 0, /*< A newer binlog file exists with a rotate event to that file */
+    AVRO_NO_ROTATE_CLOSE, /*< No close or rotate event was found */
+    AVRO_OPEN_TRANSACTION, /*< The binlog ends with an open transaction */
+    AVRO_BINLOG_ERROR /*< An error occurred while processing the binlog file */
+}avro_binlog_end_t;
+
 /**
  * The statistics for this AVRO router instance
  */
@@ -116,3 +125,4 @@ extern int avro_client_request(AVRO_INSTANCE *, AVRO_CLIENT *, GWBUF *);
 extern void avro_client_rotate(AVRO_INSTANCE *router, AVRO_CLIENT *client, uint8_t *ptr);
 extern bool avro_open_binlog(const char *binlogdir, const char *file, int *fd);
 extern void avro_close_binlog(int fd);
+avro_binlog_end_t avro_read_events_all_events(AVRO_INSTANCE *router);

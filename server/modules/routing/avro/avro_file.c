@@ -80,7 +80,6 @@ bool avro_open_binlog(const char *binlogdir, const char *file, int *dest)
 
 void avro_close_binlog(int fd)
 {
-    fsync(fd);
     close(fd);
 }
 
@@ -92,10 +91,10 @@ void avro_close_binlog(int fd)
  * @param router        The router instance
  * @param fix           Whether to fix or not errors
  * @param debug         Whether to enable or not the debug for events
- * @return              0 on success, >0 on failure
+ * @return              How the binlog was closed
+ * @see enum avro_binlog_end
  */
-int
-avro_read_events_all_events(AVRO_INSTANCE *router)
+avro_binlog_end_t avro_read_events_all_events(AVRO_INSTANCE *router)
 {
     unsigned long filelen = 0;
     struct stat statb;
@@ -104,7 +103,7 @@ avro_read_events_all_events(AVRO_INSTANCE *router)
     GWBUF *result;
     unsigned long long pos = 4;
     unsigned long long last_known_commit = 4;
-
+    char next_binlog[BINLOG_FNAMELEN + 1];
     REP_HEADER hdr;
     int pending_transaction = 0;
     int n;
@@ -114,9 +113,7 @@ avro_read_events_all_events(AVRO_INSTANCE *router)
     int statement_len;
     int found_chksum = 0;
     unsigned long transaction_events = 0;
-    unsigned long total_events = 0;
     unsigned long total_bytes = 0;
-    unsigned long n_transactions = 0;
     unsigned long event_bytes = 0;
     unsigned long max_bytes = 0;
     BINLOG_EVENT_DESC first_event;
@@ -133,7 +130,7 @@ avro_read_events_all_events(AVRO_INSTANCE *router)
     if (router->binlog_fd == -1)
     {
         MXS_ERROR("Current binlog file %s is not open", router->binlog_name);
-        return 1;
+        return AVRO_BINLOG_ERROR;
     }
 
     if (fstat(router->binlog_fd, &statb) == 0)
@@ -146,7 +143,6 @@ avro_read_events_all_events(AVRO_INSTANCE *router)
 
     while (1)
     {
-
         /* Read the header information from the file */
         if ((n = pread(router->binlog_fd, hdbuf, BINLOG_EVENT_HDR_LEN, pos)) != BINLOG_EVENT_HDR_LEN)
         {
@@ -161,9 +157,13 @@ avro_read_events_all_events(AVRO_INSTANCE *router)
                         MXS_NOTICE("No STOP or ROTATE event seen.");
                         /* create a new routine for this */
                     }
+                    else if (rotate_seen)
+                    {
+                        /** Binlog file is processed, prepare for next one */
+                        strncpy(router->binlog_name, next_binlog, sizeof(router->binlog_name));   
+                    }
 
-
-                    if (pending_transaction)
+                    if (pending_transaction > 0)
                     {
                         MXS_WARNING("Binlog file %s contains a previously opened "
                                     "transaction @ %llu. This pos is safe for slaves",
@@ -200,14 +200,13 @@ avro_read_events_all_events(AVRO_INSTANCE *router)
              * and current pos
              */
 
-            if (pending_transaction)
+            if (pending_transaction > 0)
             {
                 router->binlog_position = last_known_commit;
                 router->current_pos = pos;
-                pending_transaction = 0;
                 MXS_ERROR("Binlog '%s' ends at position %lu and has an incomplete transaction at %lu. ",
                           router->binlog_name, router->current_pos, router->binlog_position);
-                return 0;
+                return AVRO_OPEN_TRANSACTION;
             }
             else
             {
@@ -216,13 +215,20 @@ avro_read_events_all_events(AVRO_INSTANCE *router)
                 {
                     router->binlog_position = last_known_commit;
                     router->current_pos = pos;
-                    return 1;
+                    return AVRO_BINLOG_ERROR;
                 }
                 else
                 {
                     router->binlog_position = pos;
                     router->current_pos = pos;
-                    return 0;
+                    if (rotate_seen || stop_seen)
+                    {
+                        return AVRO_OK;
+                    }
+                    else
+                    {
+                        return AVRO_NO_ROTATE_CLOSE;
+                    }
                 }
             }
         }
@@ -244,19 +250,7 @@ avro_read_events_all_events(AVRO_INSTANCE *router)
                       hdr.event_type, router->binlog_name, pos);
             router->binlog_position = last_known_commit;
             router->current_pos = pos;
-            return 1;
-        }
-
-        if (hdr.event_type == TABLE_MAP_EVENT)
-        {
-            // TODO: Replace blr instance with avro instance
-            //handle_table_map_event(router, &hdr, pos);
-        }
-        else if ((hdr.event_type >= WRITE_ROWS_EVENTv0 && hdr.event_type <= DELETE_ROWS_EVENTv1) ||
-                 (hdr.event_type >= WRITE_ROWS_EVENTv2 && hdr.event_type <= DELETE_ROWS_EVENTv2))
-        {
-            // TODO: Replace blr instance with avro instance
-            //handle_row_event(router, &hdr, router->table_maps, pos);
+            return AVRO_BINLOG_ERROR;
         }
 
         if (hdr.event_size <= 0)
@@ -267,7 +261,7 @@ avro_read_events_all_events(AVRO_INSTANCE *router)
 
             router->binlog_position = last_known_commit;
             router->current_pos = pos;
-            return 1;
+            return AVRO_BINLOG_ERROR;
         }
 
         /* Allocate a GWBUF for the event */
@@ -279,7 +273,7 @@ avro_read_events_all_events(AVRO_INSTANCE *router)
 
             router->binlog_position = last_known_commit;
             router->current_pos = pos;
-            return 1;
+            return AVRO_BINLOG_ERROR;
         }
 
         /* Copy the header in the buffer */
@@ -322,7 +316,7 @@ avro_read_events_all_events(AVRO_INSTANCE *router)
             MXS_WARNING("an error has been found. "
                         "Setting safe pos to %lu, current pos %lu",
                         router->binlog_position, router->current_pos);
-            return 1;
+            return AVRO_BINLOG_ERROR;
         }
 
         /* check for pending transaction */
@@ -424,13 +418,22 @@ avro_read_events_all_events(AVRO_INSTANCE *router)
             snprintf(next_file, sizeof(next_file), BINLOG_NAMEFMT, router->fileroot,
                      blr_file_get_next_binlogname(router->binlog_name));
         }
-
+        else if (hdr.event_type == TABLE_MAP_EVENT)
+        {
+            // TODO: Replace blr instance with avro instance
+            //handle_table_map_event(router, &hdr, pos);
+        }
+        else if ((hdr.event_type >= WRITE_ROWS_EVENTv0 && hdr.event_type <= DELETE_ROWS_EVENTv1) ||
+                 (hdr.event_type >= WRITE_ROWS_EVENTv2 && hdr.event_type <= DELETE_ROWS_EVENTv2))
+        {
+            // TODO: Replace blr instance with avro instance
+            //handle_row_event(router, &hdr, router->table_maps, pos);
+        }
         /* Decode ROTATE EVENT */
-        if (hdr.event_type == ROTATE_EVENT)
+        else if (hdr.event_type == ROTATE_EVENT)
         {
             int len, slen;
             uint64_t new_pos;
-            char file[BINLOG_FNAMELEN + 1];
 
             len = hdr.event_size - BINLOG_EVENT_HDR_LEN;
             new_pos = extract_field(ptr + 4, 32);
@@ -445,14 +448,13 @@ avro_read_events_all_events(AVRO_INSTANCE *router)
             {
                 slen = BINLOG_FNAMELEN;
             }
-            memcpy(file, ptr + 8, slen);
-            file[slen] = 0;
+            memcpy(next_binlog, ptr + 8, slen);
+            next_binlog[slen] = 0;
 
             rotate_seen = true;
 
         }
-
-        if (hdr.event_type == MARIADB10_GTID_EVENT)
+        else  if (hdr.event_type == MARIADB10_GTID_EVENT)
         {
             uint64_t n_sequence; /* 8 bytes */
             uint32_t domainid; /* 4 bytes */
@@ -466,17 +468,21 @@ avro_read_events_all_events(AVRO_INSTANCE *router)
                 snprintf(router->current_gtid, sizeof(router->current_gtid), "%u-%u-%lu", domainid,
                          hdr.serverid, n_sequence);
                 // TODO: Handle GTID transactions
+                if(pending_transaction > 0)
+                {
+                    MXS_ERROR("In binlog file '%s' at position %llu: Missing XID Event before GTID Event.",
+                              router->binlog_name, pos);
+                }
+                pending_transaction++;
             }
         }
-
         /**
          * Check QUERY_EVENT
          *
          * Check for BEGIN ( ONLY for mysql 5.6, mariadb 5.5 )
          * Check for COMMIT (not transactional engines)
          */
-
-        if (hdr.event_type == QUERY_EVENT)
+        else if (hdr.event_type == QUERY_EVENT)
         {
             char *statement_sql;
             db_name_len = ptr[4 + 4];
@@ -498,20 +504,27 @@ avro_read_events_all_events(AVRO_INSTANCE *router)
             if (strncmp(statement_sql, "BEGIN", 5) == 0)
             {
                 // TODO: Handle BEGIN
+                if(pending_transaction > 0)
+                {
+                    MXS_ERROR("In binlog file '%s' at position %llu: Missing COMMIT before BEGIN.",
+                              router->binlog_name, pos);
+                }
+                pending_transaction++;
             }
 
             /* Commit received for non transactional tables, i.e. MyISAM */
             if (strncmp(statement_sql, "COMMIT", 6) == 0)
             {
                 // TODO: Handle COMMIT
+                pending_transaction--;
             }
             free(statement_sql);
 
         }
-
-        if (hdr.event_type == XID_EVENT)
+        else if (hdr.event_type == XID_EVENT)
         {
             // TODO: Handle XID Event
+            pending_transaction--;
         }
 
         gwbuf_free(result);
@@ -568,5 +581,5 @@ avro_read_events_all_events(AVRO_INSTANCE *router)
         transaction_events++;
     }
 
-    return 0;
+    return AVRO_BINLOG_ERROR;
 }

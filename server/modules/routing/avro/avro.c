@@ -56,12 +56,14 @@
 #include <mxs_avro.h>
 #include <random_jkiss.h>
 #include <binlog_common.h>
+#include <avro/errors.h>
 
 #ifndef BINLOG_NAMEFMT
 #define BINLOG_NAMEFMT		"%s.%06d"
 #endif
 
 static char *version_str = "V1.0.0";
+static const char* avro_task_name = "binlog_to_avro";
 
 /* The router entry points */
 static	ROUTER	*createInstance(SERVICE *service, char **options);
@@ -93,7 +95,6 @@ extern int MaxScaleUptime();
 void converter_func(void* data);
 bool blr_next_binlog_exists(const char* binlogdir, const char* binlog);
 int blr_file_get_next_binlogname(const char *router);
-int avro_read_events_all_events(AVRO_INSTANCE *router);
 
 /** The module object definition */
 static ROUTER_OBJECT MyObject = {
@@ -196,10 +197,6 @@ createInstance(SERVICE *service, char **options)
 AVRO_INSTANCE	*inst;
 char		*value;
 int		i;
-unsigned char	*defuuid;
-char		path[PATH_MAX+1] = "";
-char		filename[PATH_MAX+1] = "";
-int		rc = 0;
 char		task_name[BLRM_TASK_NAME_LEN+1] = "";
 
 	if(service->credentials.name == NULL ||
@@ -237,10 +234,6 @@ char		task_name[BLRM_TASK_NAME_LEN+1] = "";
 			    "for use with the binlog router."
 			    " Server section is no longer required.",
 			    service->name);
-
-		server_free(service->dbref->server);
-		free(service->dbref);
-		service->dbref = NULL;
 	}
 
 	if ((inst = calloc(1, sizeof(AVRO_INSTANCE))) == NULL) {
@@ -301,6 +294,11 @@ char		task_name[BLRM_TASK_NAME_LEN+1] = "";
                                     MXS_INFO("AVRO files are in %s",
                                              inst->avrodir);
                                 }
+                                else if (strcmp(options[i], "filestem") == 0)
+                                {
+                                    inst->fileroot = strdup(value);
+                                }
+
 				else
 				{
 					MXS_WARNING("Unsupported router "
@@ -409,7 +407,7 @@ char		task_name[BLRM_TASK_NAME_LEN+1] = "";
 
 
     /* Start the scan, read, convert task */
-    //hktask_add("binlog_to_avro", converter_func, inst, 5);
+    hktask_add(avro_task_name, converter_func, inst, 5);
 
     MXS_INFO("AVRO: current MySQL binlog file is %s, pos is %lu\n",
               inst->binlog_name, inst->current_pos);
@@ -1180,17 +1178,54 @@ int	mkdir_rval = 0;
  */
 void converter_func(void* data)
 {
-    AVRO_INSTANCE* router = (AVRO_INSTANCE*)data;
+    AVRO_INSTANCE* router = (AVRO_INSTANCE*) data;
+    bool ok = true;
 
-    while (blr_next_binlog_exists(router->binlogdir, router->binlog_name))
+    while (ok && blr_next_binlog_exists(router->binlogdir, router->binlog_name))
     {
-        if(avro_open_binlog(router->binlogdir, router->binlog_name, &router->binlog_fd))
+        if (avro_open_binlog(router->binlogdir, router->binlog_name, &router->binlog_fd))
         {
-            lseek(router->binlog_fd, 0L, SEEK_SET);
-            avro_read_events_all_events(router);
+            switch (avro_read_events_all_events(router))
+            {
+                case AVRO_NO_ROTATE_CLOSE:
+                    if (blr_next_binlog_exists(router->binlogdir, router->binlog_name))
+                    {
+                        sprintf(router->binlog_name, BINLOG_NAMEFMT, router->fileroot,
+                                blr_file_get_next_binlogname(router->binlog_name));
+                        MXS_NOTICE("Binlog was not properly closed but the next "
+                                   "binlog file exists. Opening binlog file '%s' and "
+                                   "reading events", router->binlog_name);
+                    }
+                    break;
+
+                case AVRO_BINLOG_ERROR:
+                    MXS_ERROR("Encountered an error when processing binlog file '%s'",
+                              router->binlog_name);
+                    ok = false;
+                    break;
+
+                case AVRO_OPEN_TRANSACTION:
+                    MXS_ERROR("Binlog file '%s' ends with an open transaction. "
+                              "Stopping file conversion.", router->binlog_name);
+                    ok = false;
+                    break;
+
+                default:
+                    MXS_NOTICE("Opening binlog '%s' and reading events.", router->binlog_name);
+                    break;
+
+            }
             avro_close_binlog(router->binlog_fd);
-            sprintf(router->binlog_name, BINLOG_NAMEFMT, router->fileroot,
-                    blr_file_get_next_binlogname(router->binlog_name));
         }
+    }
+
+    if (ok)
+    {
+        MXS_NOTICE("Binlog file '%s' is still being processed. Waiting until"
+                   " the next binlog exists before processing.", router->binlog_name);
+    }
+    else
+    {
+        hktask_remove(avro_task_name);
     }
 }
