@@ -21,6 +21,7 @@
 #include <mysql_utils.h>
 #include <jansson.h>
 #include <avro_schema.h>
+#include <dbusers.h>
 
 /**
  *
@@ -50,6 +51,7 @@ void handle_table_map_event(ROUTER_INSTANCE *router, REP_HEADER *hdr, uint64_t p
         }
         else
         {
+            /** New definition for an old table */
             if (old)
             {
                 hashtable_delete(router->table_maps, &map->id);
@@ -65,7 +67,7 @@ void handle_table_map_event(ROUTER_INSTANCE *router, REP_HEADER *hdr, uint64_t p
             MXS_DEBUG("%s", newschema);
         }
 
-        map->gtid = router->current_gtid;
+        strncpy(map->gtid, router->current_gtid, GTID_MAX_LEN);
     }
     free(buf);
 }
@@ -270,4 +272,120 @@ void process_row_event(TABLE_MAP *map, avro_value_t *record, uint8_t **orig_ptr,
 
     MXS_NOTICE("%s", rstr);
     *orig_ptr = ptr;
+}
+
+/**
+ * Extract the table definition from a CREATE TABLE statement
+ * @param sql
+ * @param size
+ * @return 
+ */
+static const char* get_table_definition(const char *sql, int* size)
+{
+    const char *rval = NULL;
+    const char *ptr = sql;
+    const char *end = strchr(sql, '\0');
+    while (ptr < end && *ptr != '(')
+    {
+        ptr++;
+    }
+
+    /** We assume at least the parentheses are in the statement */
+    if (ptr < end - 2)
+    {
+        int depth = 0;
+        const char *start = ptr + 1;
+        while (ptr < end)
+        {
+            switch (*ptr)
+            {
+                case '(':
+                    depth++;
+                    break;
+
+                case ')':
+                    depth--;
+                    break;
+
+                default:
+                    break;
+            }
+
+            /** We found the last closing parenthesis */
+            if(depth < 0)
+            {
+               *size = ptr - start;
+               rval = start;
+            }
+        }
+    }
+
+    return rval;
+}
+
+/**
+ * 
+ * @param sql
+ * @return 
+ * TODO: NULL return value checks
+ */
+TABLE_CREATE* hande_create_table_event(const char* sql)
+{
+    return NULL;
+    int stmt_len = 0;
+    char table[MYSQL_TABLE_MAXLEN];
+    char db[MYSQL_DATABASE_MAXLEN];
+    /** Extract the table definition so we can get the column names from it */
+
+    const char* statement_sql = get_table_definition(sql, &stmt_len);
+    MXS_NOTICE("Create table statement: %.*s", stmt_len, statement_sql);
+    TABLE_CREATE *rval = NULL;
+    const char *nameptr = statement_sql;
+    int i = 0;
+
+    /** Process columns in groups of 8 */
+    size_t names_size = 8;
+    char **names = malloc(sizeof(char*) * names_size);
+
+    while(nameptr)
+    {
+        if (i >= names_size)
+        {
+            char **tmp = realloc(names, (names_size + 8) * sizeof(char*));
+            if (tmp)
+            {
+                names = tmp;
+                names_size += 8;
+            }
+        }
+
+        nameptr++;
+        while (isspace(*nameptr))
+        {
+            nameptr++;
+        }
+        char colname[64 + 1];
+        char *end = strchr(nameptr, ' ');
+        if(end)
+        {
+            sprintf(colname, "%.*s", (int)(end - nameptr), nameptr);
+            names[i++] = strdup(colname);
+            MXS_NOTICE("Column name: %s", colname);
+        }
+
+        nameptr = strchr(nameptr, ',');
+    }
+
+    /** We have appear to have a valid CREATE TABLE statement */
+    if (i > 0)
+    {
+        rval = malloc(sizeof(TABLE_CREATE));
+        rval->column_names = names;
+        rval->columns = i;
+        rval->database = db;
+        rval->table = table;
+        rval->gtid[0] = '\0'; // GTID not yet implemented
+    }
+    
+    return rval;
 }

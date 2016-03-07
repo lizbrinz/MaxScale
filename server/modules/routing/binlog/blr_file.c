@@ -1543,27 +1543,10 @@ blr_read_events_all_events(ROUTER_INSTANCE *router, int fix, int debug)
 
             /** Very simple detection of CREATE TABLE statements */
             int reg_err = 0;
-            if(mxs_pcre2_simple_match("(?i)create[[:space:]]+table", statement_sql,
+            if(mxs_pcre2_simple_match("(?i)create[[:space:]]+table([[:space:]]+if[[:space:]]+not[[:space:]]+exists)?[(]", statement_sql,
                                       0, &reg_err) == MXS_PCRE2_MATCH)
             {
-                MXS_NOTICE("Create table statement: %s", statement_sql);
-                char *nameptr = strchr(statement_sql, '(');
-                while(nameptr)
-                {
-                    nameptr++;
-                    while (isspace(*nameptr))
-                    {
-                        nameptr++;
-                    }
-                    char colname[64 + 1];
-                    char *end = strchr(nameptr, ' ');
-                    if(end)
-                    {
-                        sprintf(colname, "%.*s", (int)(end - nameptr), nameptr);
-                        MXS_NOTICE("Column name: %s", colname);
-                    }
-                    nameptr = strchr(nameptr, ',');
-                }
+                //hande_create_table_event(statement_sql);
             }
             /* A transaction starts with this event */
             if (strncmp(statement_sql, "BEGIN", 5) == 0)

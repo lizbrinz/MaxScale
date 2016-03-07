@@ -27,6 +27,9 @@
 #include <stdbool.h>
 #include <time.h>
 
+/** Maximum GTID string length */
+#define GTID_MAX_LEN 96
+
 /** Table map column types */
 #define TABLE_COL_TYPE_DECIMAL 0x00
 #define TABLE_COL_TYPE_TINY 0x01
@@ -79,6 +82,16 @@
 /** Maximum column name length */
 #define TABLE_MAP_MAX_NAME_LEN 64
 
+/** A CREATE TABLE abstraction */
+typedef struct table_create
+{
+    uint64_t columns;
+    char **column_names;
+    char *table;
+    char *database;
+    char gtid[GTID_MAX_LEN]; /*< the current GTID event or NULL if GTID is not enabled */
+} TABLE_CREATE;
+
 /** A representation of a table map event read from a binary log. A table map
  * maps a table to a unique ID which can be used to match row events to table map
  * events. The table map event tells us how the table is laid out and gives us
@@ -89,12 +102,11 @@ typedef struct table_map
     uint64_t columns;
     uint16_t flags;
     uint8_t *column_types;
-    char **column_names;
     int version;
     char version_string[TABLE_MAP_VERSION_DIGITS + 1];
     char *table;
     char *database;
-    const char *gtid; /*< the current GTID event or NULL if GTID is not enabled */
+    char gtid[GTID_MAX_LEN]; /*< the current GTID event or NULL if GTID is not enabled */
 } TABLE_MAP;
 
 TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len);

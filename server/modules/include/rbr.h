@@ -31,4 +31,5 @@ void handle_table_map_event(ROUTER_INSTANCE *router, REP_HEADER *hdr, uint64_t p
 void handle_row_event(ROUTER_INSTANCE *router, REP_HEADER *hdr, HASHTABLE *maphash, uint64_t pos);
 void process_row_event(TABLE_MAP *map, avro_value_t *record, uint8_t **orig_ptr, long ncolumns,
                        uint64_t columns_present, uint64_t columns_update);
+TABLE_CREATE* hande_create_table_event(const char* sql);
 #endif

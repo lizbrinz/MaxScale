@@ -45,7 +45,8 @@
 #include <memlog.h>
 #include <zlib.h>
 #include <mysql_client_server_protocol.h>
-#include <blr_defines.h>
+#include <blr_constants.h>
+#include <mysql_binlog.h>
 
 /** Possible states of an event sent by the master */
 enum blr_event_state

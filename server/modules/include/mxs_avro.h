@@ -5,10 +5,11 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include <blr_defines.h>
+#include <blr_constants.h>
 #include <dcb.h>
 #include <service.h>
 #include <spinlock.h>
+#include <mysql_binlog.h>
 
 /**
  * How often to call the router status function (seconds)
