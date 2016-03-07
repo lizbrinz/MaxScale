@@ -88,37 +88,6 @@ extern char *blr_get_event_description(ROUTER_INSTANCE *router, uint8_t event);
 void process_row_event(TABLE_MAP *map, avro_value_t *record, uint8_t **orig_ptr, long ncolumns,
                        uint64_t columns_present, uint64_t columns_update);
 
-int table_id_hash(void *data)
-{
-    return *(uint64_t*) data;
-}
-
-int table_id_cmp(void *a, void *b)
-{
-    return *(uint64_t*) a != *(uint64_t*) b;
-}
-
-void* i64dup(void *data)
-{
-    uint64_t *k = malloc(sizeof(uint64_t));
-    *k = *(uint64_t*) data;
-    return k;
-
-}
-
-void* i64free(void *data)
-{
-    free(data);
-    return NULL;
-}
-
-typedef struct binlog_event_desc
-{
-    unsigned long long event_pos;
-    uint8_t event_type;
-    time_t event_time;
-} BINLOG_EVENT_DESC;
-
 static void blr_print_binlog_details(ROUTER_INSTANCE *router, BINLOG_EVENT_DESC first_event_time, BINLOG_EVENT_DESC last_event_time);
 
 /**

@@ -67,10 +67,6 @@ extern int blr_read_events_all_events(ROUTER_INSTANCE *router, int fix, int debu
 extern uint32_t extract_field(uint8_t *src, int bits);
 static void printVersion(const char *progname);
 static void printUsage(const char *progname);
-int table_id_hash(void *data);
-int table_id_cmp(void *a, void *b);
-void* i64dup(void *data);
-void* i64free(void *data);
 
 static struct option long_options[] = {
   {"debug",	no_argument,		0,	'd'},
@@ -199,11 +195,6 @@ int main(int argc, char **argv) {
 		filelen = statb.st_size;
 
 	MXS_NOTICE("Checking %s (%s), size %lu bytes", path, inst->binlog_name, filelen);
-
-    inst->table_maps = hashtable_alloc(1000, table_id_hash, table_id_cmp);
-    hashtable_memory_fns(inst->table_maps, i64dup, NULL, i64free, NULL);
-    inst->schemas = hashtable_alloc(1000, table_id_hash, table_id_cmp);
-    hashtable_memory_fns(inst->schemas, i64dup, NULL, i64free, NULL);
 
 	/* read binary log */
 	ret = blr_read_events_all_events(inst, fix_file, debug_out);

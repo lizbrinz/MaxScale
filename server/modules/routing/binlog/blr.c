@@ -136,10 +136,6 @@ static void rses_end_locked_router_action(ROUTER_SLAVE *);
 void my_uuid_init(ulong seed1, ulong seed2);
 void my_uuid(unsigned char *guid);
 GWBUF *blr_cache_read_response(ROUTER_INSTANCE *router, char *response);
-int table_id_hash(void *data);
-int table_id_cmp(void *a, void *b);
-void* i64dup(void *data);
-void* i64free(void *data);
 
 static SPINLOCK	instlock;
 static ROUTER_INSTANCE *instances;
@@ -301,11 +297,6 @@ char		task_name[BLRM_TASK_NAME_LEN+1] = "";
 
 	inst->serverid = 0;
 
-    inst->table_maps = hashtable_alloc(1000, table_id_hash, table_id_cmp);
-    hashtable_memory_fns(inst->table_maps, i64dup, NULL, i64free, NULL);
-    inst->schemas = hashtable_alloc(1000, table_id_hash, table_id_cmp);
-    hashtable_memory_fns(inst->schemas, i64dup, NULL, i64free, NULL);
-    
 	my_uuid_init((ulong)rand()*12345,12345);
 	if ((defuuid = (unsigned char *)malloc(20)) != NULL)
 	{
@@ -1904,26 +1895,6 @@ int	mkdir_rval = 0;
 	strncat(path, "/dbusers", PATH_MAX);
 
 	return dbusers_save(service->users, path);
-}
-
-/**
- * Extract a numeric field from a packet of the specified number of bits
- *
- * @param src	The raw packet source
- * @param birs	The number of bits to extract (multiple of 8)
- */
-uint32_t
-extract_field(uint8_t *src, int bits)
-{
-uint32_t	rval = 0, shift = 0;
-
-	while (bits > 0)
-	{
-		rval |= (*src++) << shift;
-		shift += 8;
-		bits -= 8;
-	}
-	return rval;
 }
 
 /**

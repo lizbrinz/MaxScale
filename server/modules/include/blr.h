@@ -47,6 +47,7 @@
 #include <mysql_client_server_protocol.h>
 #include <blr_constants.h>
 #include <mysql_binlog.h>
+#include <binlog_common.h>
 
 /** Possible states of an event sent by the master */
 enum blr_event_state
@@ -80,21 +81,6 @@ typedef struct change_master_options {
 	char *user;
 	char *password;
 } CHANGE_MASTER_OPTIONS;
-
-/**
- * Packet header for replication messages
- */
-typedef struct rep_header {
-	int		payload_len;	/*< Payload length (24 bits) */
-	uint8_t		seqno;		/*< Response sequence number */
-	uint8_t		ok;		/*< OK Byte from packet */
-	uint32_t	timestamp;	/*< Timestamp - start of binlog record */
-	uint8_t		event_type;	/*< Binlog event type */
-	uint32_t	serverid;	/*< Server id of master */
-	uint32_t	event_size;	/*< Size of header, post-header and body */
-	uint32_t	next_pos;	/*< Position of next event */
-	uint16_t	flags;		/*< Event flags */
-} REP_HEADER;
 
 /**
  * The binlog record structure. This contains the actual packet read from the binlog

@@ -93,7 +93,7 @@ extern int MaxScaleUptime();
 void converter_func(void* data);
 bool blr_next_binlog_exists(const char* binlogdir, const char* binlog);
 int blr_file_get_next_binlogname(const char *router);
-int blr_read_events_all_events(ROUTER_INSTANCE *router, int fix, int debug);
+int avro_read_events_all_events(AVRO_INSTANCE *router);
 
 /** The module object definition */
 static ROUTER_OBJECT MyObject = {
@@ -112,10 +112,30 @@ static void	stats_func(void *);
 
 static bool rses_begin_locked_router_action(AVRO_CLIENT *);
 static void rses_end_locked_router_action(AVRO_CLIENT *);
-int table_id_hash(void *data);
-int table_id_cmp(void *a, void *b);
-extern void* i64dup(void *data);
-extern void* i64free(void *data);
+
+int table_id_hash(void *data)
+{
+    return *(uint64_t*) data;
+}
+
+int table_id_cmp(void *a, void *b)
+{
+    return *(uint64_t*) a != *(uint64_t*) b;
+}
+
+void* i64dup(void *data)
+{
+    uint64_t *k = malloc(sizeof(uint64_t));
+    *k = *(uint64_t*) data;
+    return k;
+
+}
+
+void* i64free(void *data)
+{
+    free(data);
+    return NULL;
+}
 
 static SPINLOCK	instlock;
 static AVRO_INSTANCE *instances;
@@ -1156,26 +1176,6 @@ int	mkdir_rval = 0;
 }
 
 /**
- * Extract a numeric field from a packet of the specified number of bits
- *
- * @param src	The raw packet source
- * @param birs	The number of bits to extract (multiple of 8)
- */
-uint32_t
-extract_field(uint8_t *src, int bits)
-{
-uint32_t	rval = 0, shift = 0;
-
-	while (bits > 0)
-	{
-		rval |= (*src++) << shift;
-		shift += 8;
-		bits -= 8;
-	}
-	return rval;
-}
-
-/**
  * Conversion task: MySQL binlogs to AVRO files
  */
 void converter_func(void* data)
@@ -1187,7 +1187,7 @@ void converter_func(void* data)
         if(avro_open_binlog(router->binlogdir, router->binlog_name, &router->binlog_fd))
         {
             lseek(router->binlog_fd, 0L, SEEK_SET);
-            //blr_read_events_all_events(router, 0, 0);
+            avro_read_events_all_events(router);
             avro_close_binlog(router->binlog_fd);
             sprintf(router->binlog_name, BINLOG_NAMEFMT, router->fileroot,
                     blr_file_get_next_binlogname(router->binlog_name));

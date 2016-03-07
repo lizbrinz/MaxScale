@@ -43,29 +43,32 @@
 /**
  * Get the next binlog file name.
  *
- * @param router	The router instance
- * @return 		0 on error, >0 as sequence number
+ * @param router    The router instance
+ * @return 0 on error, >0 as sequence number
  */
-int
-blr_file_get_next_binlogname(const char *binlog_name)
+int blr_file_get_next_binlogname(const char *binlog_name)
 {
     char *sptr;
     int filenum;
 
     if ((sptr = strrchr(binlog_name, '.')) == NULL)
+    {
         return 0;
+    }
     filenum = atoi(sptr + 1);
     if (filenum)
+    {
         filenum++;
+    }
 
     return filenum;
 }
 
 /**
- * 
- * @param binlogdir
- * @param binlog
- * @return 
+ * @brief Check if the next binlog file exists and is readable
+ * @param binlogdir Directory where the binlogs are
+ * @param binlog Current binlog name
+ * @return True if next binlog file exists and is readable
  */
 bool blr_next_binlog_exists(const char* binlogdir, const char* binlog)
 {
@@ -78,12 +81,12 @@ bool blr_next_binlog_exists(const char* binlogdir, const char* binlog)
 
         if (sptr)
         {
-            char buf[BLRM_BINLOG_NAME_STR_LEN +1];
-            char filename[PATH_MAX +1];
+            char buf[BLRM_BINLOG_NAME_STR_LEN + 1];
+            char filename[PATH_MAX + 1];
             char next_file[BLRM_BINLOG_NAME_STR_LEN + 1];
             int offset = sptr - binlog;
             strncpy(buf, binlog, offset);
-            buf[offset] ='\0';
+            buf[offset] = '\0';
             sprintf(next_file, BINLOG_NAMEFMT, buf, filenum);
             snprintf(filename, PATH_MAX, "%s/%s", binlogdir, next_file);
             filename[PATH_MAX] = '\0';
@@ -96,12 +99,31 @@ bool blr_next_binlog_exists(const char* binlogdir, const char* binlog)
             else
             {
                 MXS_NOTICE("Warning: the next binlog file %s exists: "
-                    "the current binlog file is missing Rotate or Stop event. "
-                    "Client should read next one", next_file);
+                           "the current binlog file is missing Rotate or Stop event. "
+                           "Client should read next one", next_file);
                 rval = true;
             }
         }
     }
 
+    return rval;
+}
+
+/**
+ * Extract a numeric field from a packet of the specified number of bits
+ *
+ * @param src   The raw packet source
+ * @param birs  The number of bits to extract (multiple of 8)
+ */
+uint32_t extract_field(uint8_t *src, int bits)
+{
+    uint32_t    rval = 0, shift = 0;
+
+    while (bits > 0)
+    {
+        rval |= (*src++) << shift;
+        shift += 8;
+        bits -= 8;
+    }
     return rval;
 }

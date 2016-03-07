@@ -20,6 +20,31 @@
  */
 
 #include <stdbool.h>
+#include <stdint.h>
+#include <time.h>
+/**
+ * Packet header for replication messages
+ */
+typedef struct rep_header
+{
+    int     payload_len;    /*< Payload length (24 bits) */
+    uint8_t     seqno;      /*< Response sequence number */
+    uint8_t     ok;     /*< OK Byte from packet */
+    uint32_t    timestamp;  /*< Timestamp - start of binlog record */
+    uint8_t     event_type; /*< Binlog event type */
+    uint32_t    serverid;   /*< Server id of master */
+    uint32_t    event_size; /*< Size of header, post-header and body */
+    uint32_t    next_pos;   /*< Position of next event */
+    uint16_t    flags;      /*< Event flags */
+} REP_HEADER;
+
+/** Format Description event info */
+typedef struct binlog_event_desc
+{
+    unsigned long long event_pos;
+    uint8_t event_type;
+    time_t event_time;
+} BINLOG_EVENT_DESC;
 
 int blr_file_get_next_binlogname(const char *binlog_name);
 bool blr_next_binlog_exists(const char* binlogdir, const char* binlog);
