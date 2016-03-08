@@ -1035,7 +1035,8 @@ int			n_bufs = -1, pn_bufs = -1;
 
                     if (router->master_chksum)
                     {
-                        uint32_t size = MIN(len - extra_bytes, router->checksum_size);
+                        uint32_t size = ((len - extra_bytes) < router->checksum_size) ?
+                            len - extra_bytes : router->checksum_size;
                         router->stored_checksum = crc32(router->stored_checksum,
                                                         ptr + offset,
                                                         size);
@@ -1082,7 +1083,7 @@ int			n_bufs = -1, pn_bufs = -1;
                     size = len - MYSQL_HEADER_LEN - MYSQL_CHECKSUM_LEN - 1;
                 }
 
-                size = MIN(size, router->checksum_size);
+                size = size < router->checksum_size ? size : router->checksum_size;
 
                 if (router->checksum_size > 0)
                 {
@@ -2479,7 +2480,7 @@ bool blr_send_event(ROUTER_SLAVE *slave, REP_HEADER *hdr, uint8_t *buf)
         while (rval && len > 0)
         {
             uint64_t payload_len = first ? MYSQL_PACKET_LENGTH_MAX - 1 :
-                MIN(MYSQL_PACKET_LENGTH_MAX, len);
+                (MYSQL_PACKET_LENGTH_MAX < len ? MYSQL_PACKET_LENGTH_MAX : len);
 
             if (blr_send_packet(slave, buf, payload_len, first))
             {

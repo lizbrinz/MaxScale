@@ -1613,7 +1613,7 @@ static char* form_full_file_name(strpart_t* parts, logfile_t* lf, int seqnoidx)
             link_sn = find_last_seqno(parts, lf->lf_name_seqno, seqnoidx);
             parts[0].sp_string = tmp;
         }
-        lf->lf_name_seqno = MAX(file_sn, link_sn);
+        lf->lf_name_seqno = file_sn > link_sn ? file_sn : link_sn;
 
         seqno = lf->lf_name_seqno;
         s = UINTLEN(seqno);

@@ -2103,7 +2103,7 @@ routeQuery(FILTER *instance, void *session, GWBUF *queue)
                 int len;
                 if (modutil_extract_SQL(queue, &sql, &len))
                 {
-                    len = MIN(len, FW_MAX_SQL_LEN);
+                    len = len < FW_MAX_SQL_LEN ? len : FW_MAX_SQL_LEN;
                     if (match && my_instance->log_match & FW_LOG_MATCH)
                     {
                         MXS_NOTICE("[%s] Rule '%s' for '%s' matched by %s@%s: %.*s",

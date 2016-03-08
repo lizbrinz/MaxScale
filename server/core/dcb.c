@@ -1009,10 +1009,10 @@ dcb_basic_read(DCB *dcb, int bytesavailable, int maxbytes, int nreadtotal, int *
 {
     GWBUF *buffer;
 
-    int bufsize = MIN(bytesavailable, MAX_BUFFER_SIZE);
+    int bufsize = bytesavailable < MAX_BUFFER_SIZE ? bytesavailable : MAX_BUFFER_SIZE;
     if (maxbytes)
     {
-        bufsize = MIN(bufsize, maxbytes-nreadtotal);
+        bufsize = bufsize < (maxbytes-nreadtotal) ? bufsize : maxbytes-nreadtotal;
     }
 
     if ((buffer = gwbuf_alloc(bufsize)) == NULL)
@@ -2715,7 +2715,7 @@ dcb_persistent_clean_count(DCB *dcb, bool cleanall)
             }
             persistentdcb = nextdcb;
         }
-        server->persistmax = MAX(server->persistmax, count);
+        server->persistmax = server->persistmax > count ? server->persistmax : count;
         spinlock_release(&server->persistlock);
         /** Call possible callback for this DCB in case of close */
         while (disposals)

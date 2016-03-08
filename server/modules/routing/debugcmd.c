@@ -1005,7 +1005,7 @@ execute_cmd(CLI_SESSION *cli)
         }
     }
     *lptr = 0;
-    args[MIN(MAXARGS - 1, i + 1)] = NULL;
+    args[((MAXARGS - 1) < (i + 1)) ? MAXARGS - 1 : i + 1] = NULL;
 
     if (args[0] == NULL || *args[0] == 0)
     {
@@ -1836,7 +1836,7 @@ static void fail_accept(
     char* arg1,
     char* arg2)
 {
-    int failcount = MIN(atoi(arg2), 100);
+    int failcount = atoi(arg2) < 100 ? atoi(arg2) : 100;
     fail_accept_errno = atoi(arg1);
     char errbuf[STRERROR_BUFLEN];
 

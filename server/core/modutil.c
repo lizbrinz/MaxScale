@@ -537,7 +537,7 @@ GWBUF* modutil_get_next_MySQL_packet(GWBUF** p_readbuf)
         size_t   bytestocopy;
 
         buflen = GWBUF_LENGTH((*p_readbuf));
-        bytestocopy = MIN(buflen,packetlen-nbytes_copied);
+        bytestocopy = (buflen < (packetlen-nbytes_copied)) ? buflen : packetlen-nbytes_copied;
 
         memcpy(target+nbytes_copied, src, bytestocopy);
         *p_readbuf = gwbuf_consume((*p_readbuf), bytestocopy);

@@ -1609,7 +1609,7 @@ GWBUF* gw_MySQL_get_next_packet(GWBUF** p_readbuf)
         size_t   bytestocopy;
 
         buflen = GWBUF_LENGTH((*p_readbuf));
-        bytestocopy = MIN(buflen, packetlen - nbytes_copied);
+        bytestocopy = (buflen < (packetlen - nbytes_copied)) ? buflen : packetlen - nbytes_copied;
 
         memcpy(target + nbytes_copied, src, bytestocopy);
         *p_readbuf = gwbuf_consume((*p_readbuf), bytestocopy);
@@ -1868,8 +1868,8 @@ void init_response_status(GWBUF*             buf,
             nparam = MYSQL_GET_STMTOK_NPARAM(packet);
             nattr  = MYSQL_GET_STMTOK_NATTR(packet);
 
-            *npackets = 1 + nparam + MIN(1, nparam) +
-                nattr + MIN(nattr, 1);
+            *npackets = 1 + nparam + (1 < nparam ? 1 : nparam) +
+                nattr + (nattr < 1 ? nattr : 1);
             break;
 
         case MYSQL_COM_QUIT:

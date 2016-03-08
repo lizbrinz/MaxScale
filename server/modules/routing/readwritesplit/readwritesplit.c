@@ -929,7 +929,8 @@ static void* newSession(
 	{
 	    int n_conn = 0;
 	    double pct = (double)client_rses->rses_config.rw_max_slave_conn_percent / 100.0;
-	    n_conn = MAX(floor((double)client_rses->rses_nbackends * pct),1);
+        int n_backends = floor((double)client_rses->rses_nbackends * pct);
+	    n_conn = n_backends > 1 : n_backends : 1;
 	    client_rses->rses_config.rw_max_slave_conn_count = n_conn;
 	}
 
@@ -2227,10 +2228,12 @@ static bool route_single_stmt(
             {
                 uint8_t* packet = GWBUF_DATA(querybuf);
                 unsigned char ptype = packet[4];
-                size_t len = MIN(GWBUF_LENGTH(querybuf),
-                                 MYSQL_GET_PACKET_LEN((unsigned char *)querybuf->start) - 1);
+                size_t buflen = GWBUF_LENGTH(querybuf);
+                size_t packetlen = MYSQL_GET_PACKET_LEN((unsigned char *)querybuf->start) - 1;
+                size_t len = buflen < packetlen ? buflen : packetlen;
                 char* data = (char*) &packet[5];
-                char* contentstr = strndup(data, MIN(len, RWSPLIT_TRACE_MSG_LEN));
+                char* contentstr = strndup(data,
+                    (len < RWSPLIT_TRACE_MSG_LEN ? len : RWSPLIT_TRACE_MSG_LEN));
                 char* qtypestr = qc_get_qtype_str(qtype);
 
                 MXS_INFO("> Autocommit: %s, trx is %s, cmd: %s, type: %s, "
@@ -4978,12 +4981,12 @@ static bool have_enough_servers(
         ROUTER_INSTANCE*    router)
 {
         bool succp;
+        long slave_count = (*p_rses)->rses_config.rw_max_slave_conn_count;
+        long connect_count = (router_nsrv*(*p_rses)->rses_config.rw_max_slave_conn_percent)/100;
 
         /** With too few servers session is not created */
         if (router_nsrv < min_nsrv ||
-                MAX((*p_rses)->rses_config.rw_max_slave_conn_count,
-                    (router_nsrv*(*p_rses)->rses_config.rw_max_slave_conn_percent)/100)
-                        < min_nsrv)
+            (slave_count > connect_count ? slave_count : connect_count) < min_nsrv)
         {
                 if (router_nsrv < min_nsrv)
                 {
@@ -5042,6 +5045,7 @@ static int rses_get_max_slavecount(
 {
         int conf_max_nslaves;
         int max_nslaves;
+        int conf_at_least_1;
 
         CHK_CLIENT_RSES(rses);
 
@@ -5054,7 +5058,9 @@ static int rses_get_max_slavecount(
                 conf_max_nslaves =
                 (router_nservers*rses->rses_config.rw_max_slave_conn_percent)/100;
         }
-        max_nslaves = MIN(router_nservers-1, MAX(1, conf_max_nslaves));
+        conf_at_least_1 = 1 > conf_max_nslaves ? 1 : conf_max_nslaves;
+        max_nslaves = router_nservers-1 < conf_at_least_1 ?
+            router_nservers-1 : conf_at_least_1;
 
         return max_nslaves;
 }

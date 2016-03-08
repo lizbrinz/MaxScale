@@ -443,7 +443,8 @@ int serviceStartAllPorts(SERVICE* service)
         /** Service failed to start any ports. Try again later. */
         service->stats.n_failed_starts++;
         char taskname[strlen(service->name) + strlen("_start_retry_") + (int)ceil(log10(INT_MAX)) + 1];
-        int retry_after = MIN(service->stats.n_failed_starts * 10, SERVICE_MAX_RETRY_INTERVAL);
+        int retry_after = (service->stats.n_failed_starts * 10) < SERVICE_MAX_RETRY_INTERVAL ?
+            service->stats.n_failed_starts * 10 : SERVICE_MAX_RETRY_INTERVAL;
         snprintf(taskname, sizeof (taskname), "%s_start_retry_%d",
                  service->name, service->stats.n_failed_starts);
         hktask_oneshot(taskname, service_internal_restart,

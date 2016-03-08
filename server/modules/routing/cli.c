@@ -122,7 +122,7 @@ GetModuleObject()
 /**
  * Create an instance of the router for a particular service
  * within the gateway.
- * 
+ *
  * @param service	The service this router is being create for
  * @param options	Any array of options for the query router
  *
@@ -202,7 +202,7 @@ CLI_SESSION	*client;
  * @param instance		The router instance data
  * @param router_session	The session being closed
  */
-static	void 	
+static	void
 closeSession(ROUTER *instance, void *router_session)
 {
 CLI_INSTANCE	*inst = (CLI_INSTANCE *)instance;
@@ -251,7 +251,7 @@ static void freeSession(
  * @param queue			The queue of data buffers to route
  * @return The number of bytes sent
  */
-static	int	
+static	int
 execute(ROUTER *instance, void *router_session, GWBUF *queue)
 {
 CLI_SESSION	*session = (CLI_SESSION *)router_session;
@@ -259,7 +259,8 @@ CLI_SESSION	*session = (CLI_SESSION *)router_session;
 	/* Extract the characters */
 	while (queue)
 	{
-		strncat(session->cmdbuf, GWBUF_DATA(queue), MIN(GWBUF_LENGTH(queue),cmdbuflen-1));
+		strncat(session->cmdbuf, GWBUF_DATA(queue),
+            (GWBUF_LENGTH(queue) < (cmdbuflen-1) ? GWBUF_LENGTH(queue) : cmdbuflen-1);
 		queue = gwbuf_consume(queue, GWBUF_LENGTH(queue));
 	}
 
