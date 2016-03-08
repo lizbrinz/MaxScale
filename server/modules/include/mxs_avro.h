@@ -2,7 +2,8 @@
  * MaxScale AVRO router
  *
  */
-
+#ifndef _MXS_AVRO_H
+#define _MXS_AVRO_H
 #include <stdbool.h>
 #include <stdint.h>
 #include <blr_constants.h>
@@ -125,4 +126,6 @@ extern int avro_client_request(AVRO_INSTANCE *, AVRO_CLIENT *, GWBUF *);
 extern void avro_client_rotate(AVRO_INSTANCE *router, AVRO_CLIENT *client, uint8_t *ptr);
 extern bool avro_open_binlog(const char *binlogdir, const char *file, int *fd);
 extern void avro_close_binlog(int fd);
-avro_binlog_end_t avro_read_events_all_events(AVRO_INSTANCE *router);
+avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router);
+
+#endif

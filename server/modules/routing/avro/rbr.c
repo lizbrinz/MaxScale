@@ -21,21 +21,21 @@
 #include <mysql_utils.h>
 #include <jansson.h>
 #include <avro_schema.h>
+#include <users.h>
 #include <dbusers.h>
+#include <mxs_avro.h>
 
 /**
+ * @brief Handle a table map event
  *
- * @param router
- * @param hdr
- * @param maphash
- * @param pos
+ * This converts a table map events into table meta data that will be used when
+ * converting binlogs to Avro format.
+ * @param router Avro router instance
+ * @param hdr Replication header
+ * @param ptr Pointer to event payload
  */
-void handle_table_map_event(ROUTER_INSTANCE *router, REP_HEADER *hdr, uint64_t pos)
+void handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
 {
-    uint8_t *buf = malloc(hdr->event_size);
-    pread(router->binlog_fd, buf, hdr->event_size, pos + BINLOG_EVENT_HDR_LEN);
-    uint8_t *ptr = buf;
-
     TABLE_MAP *map = table_map_alloc(ptr, router->event_type_hdr_lens[hdr->event_type]);
 
     if (map)
@@ -63,13 +63,12 @@ void handle_table_map_event(ROUTER_INSTANCE *router, REP_HEADER *hdr, uint64_t p
             char* newschema = json_schema_from_table_map(map);
             hashtable_add(router->table_maps, (void*) &map->id, map);
             hashtable_add(router->schemas, (void*) &map->id, newschema);
-            save_avro_schema("/tmp", newschema, map);
+            save_avro_schema(router->avrodir, newschema, map);
             MXS_DEBUG("%s", newschema);
         }
 
         strncpy(map->gtid, router->current_gtid, GTID_MAX_LEN);
     }
-    free(buf);
 }
 
 /**
@@ -79,7 +78,7 @@ void handle_table_map_event(ROUTER_INSTANCE *router, REP_HEADER *hdr, uint64_t p
  * @param maphash
  * @param pos
  */
-void handle_row_event(ROUTER_INSTANCE *router, REP_HEADER *hdr, HASHTABLE *maphash, uint64_t pos)
+void handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, HASHTABLE *maphash, uint64_t pos)
 {
     uint8_t *buf = malloc(hdr->event_size - BINLOG_EVENT_HDR_LEN);
     ssize_t nread = pread(router->binlog_fd, buf, hdr->event_size - BINLOG_EVENT_HDR_LEN,

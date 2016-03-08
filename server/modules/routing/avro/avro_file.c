@@ -94,7 +94,7 @@ void avro_close_binlog(int fd)
  * @return              How the binlog was closed
  * @see enum avro_binlog_end
  */
-avro_binlog_end_t avro_read_events_all_events(AVRO_INSTANCE *router)
+avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
 {
     unsigned long filelen = 0;
     struct stat statb;
@@ -337,6 +337,11 @@ avro_binlog_end_t avro_read_events_all_events(AVRO_INSTANCE *router)
         /* get event content */
         ptr = data + BINLOG_EVENT_HDR_LEN;
 
+        /* set last event time, pos and type */
+        last_event.event_time = (unsigned long) hdr.timestamp;
+        last_event.event_type = hdr.event_type;
+        last_event.event_pos = pos;
+
         /* check for FORMAT DESCRIPTION EVENT */
         if (hdr.event_type == FORMAT_DESCRIPTION_EVENT)
         {
@@ -403,17 +408,10 @@ avro_binlog_end_t avro_read_events_all_events(AVRO_INSTANCE *router)
                 }
             }
         }
-
-        /* set last event time, pos and type */
-        last_event.event_time = (unsigned long) hdr.timestamp;
-        last_event.event_type = hdr.event_type;
-        last_event.event_pos = pos;
-
         /* Decode CLOSE/STOP Event */
-        if (hdr.event_type == STOP_EVENT)
+        else if (hdr.event_type == STOP_EVENT)
         {
             char  next_file[BLRM_BINLOG_NAME_STR_LEN + 1];
-
             stop_seen = true;
             snprintf(next_file, sizeof(next_file), BINLOG_NAMEFMT, router->fileroot,
                      blr_file_get_next_binlogname(router->binlog_name));
@@ -421,7 +419,7 @@ avro_binlog_end_t avro_read_events_all_events(AVRO_INSTANCE *router)
         else if (hdr.event_type == TABLE_MAP_EVENT)
         {
             // TODO: Replace blr instance with avro instance
-            //handle_table_map_event(router, &hdr, pos);
+            handle_table_map_event(router, &hdr, ptr);
         }
         else if ((hdr.event_type >= WRITE_ROWS_EVENTv0 && hdr.event_type <= DELETE_ROWS_EVENTv1) ||
                  (hdr.event_type >= WRITE_ROWS_EVENTv2 && hdr.event_type <= DELETE_ROWS_EVENTv2))

@@ -70,7 +70,7 @@ int blr_file_get_next_binlogname(const char *binlog_name)
  * @param binlog Current binlog name
  * @return True if next binlog file exists and is readable
  */
-bool blr_next_binlog_exists(const char* binlogdir, const char* binlog)
+bool binlog_next_file_exists(const char* binlogdir, const char* binlog)
 {
     bool rval = false;
     int filenum = blr_file_get_next_binlogname(binlog);
@@ -98,9 +98,6 @@ bool blr_next_binlog_exists(const char* binlogdir, const char* binlog)
             }
             else
             {
-                MXS_NOTICE("Warning: the next binlog file %s exists: "
-                           "the current binlog file is missing Rotate or Stop event. "
-                           "Client should read next one", next_file);
                 rval = true;
             }
         }

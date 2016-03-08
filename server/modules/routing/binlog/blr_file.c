@@ -70,9 +70,6 @@
 
 #include <maxscale_pcre2.h>
 
-void handle_table_map_event(ROUTER_INSTANCE *router, REP_HEADER *hdr,  uint64_t pos);
-void handle_row_event(ROUTER_INSTANCE *router, REP_HEADER *hdr,
-                            HASHTABLE *maphash, uint64_t pos);
 static int blr_file_create(ROUTER_INSTANCE *router, char *file);
 static void blr_file_append(ROUTER_INSTANCE *router, char *file);
 static void blr_log_header(int priority, char *msg, uint8_t *ptr);
@@ -85,8 +82,6 @@ extern uint32_t extract_field(uint8_t *src, int bits);
 static void blr_format_event_size(double *event_size, char *label);
 extern int MaxScaleUptime();
 extern char *blr_get_event_description(ROUTER_INSTANCE *router, uint8_t event);
-void process_row_event(TABLE_MAP *map, avro_value_t *record, uint8_t **orig_ptr, long ncolumns,
-                       uint64_t columns_present, uint64_t columns_update);
 
 static void blr_print_binlog_details(ROUTER_INSTANCE *router, BINLOG_EVENT_DESC first_event_time, BINLOG_EVENT_DESC last_event_time);
 
@@ -1132,16 +1127,6 @@ blr_read_events_all_events(ROUTER_INSTANCE *router, int fix, int debug)
 
                 event_error = 1;
             }
-        }
-
-        if (hdr.event_type == TABLE_MAP_EVENT)
-        {
-            handle_table_map_event(router, &hdr, pos);
-        }
-        else if ((hdr.event_type >= WRITE_ROWS_EVENTv0 && hdr.event_type <= DELETE_ROWS_EVENTv1) ||
-                 (hdr.event_type >= WRITE_ROWS_EVENTv2 && hdr.event_type <= DELETE_ROWS_EVENTv2))
-        {
-            handle_row_event(router, &hdr, router->table_maps, pos);
         }
 
         if (event_error)

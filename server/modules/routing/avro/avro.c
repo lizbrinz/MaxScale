@@ -84,7 +84,7 @@ extern char *decryptPassword(char *crypt);
 extern char *create_hex_sha1_sha1_passwd(char *passwd);
 extern int MaxScaleUptime();
 void converter_func(void* data);
-bool blr_next_binlog_exists(const char* binlogdir, const char* binlog);
+bool binlog_next_file_exists(const char* binlogdir, const char* binlog);
 int blr_file_get_next_binlogname(const char *router);
 
 /** The module object definition */
@@ -243,20 +243,8 @@ createInstance(SERVICE *service, char **options)
 
     inst->binlogdir = NULL;
     inst->avrodir = NULL;
+    int first_file = 1;
 
-    /*
-     * Process the options.
-     * We have an array of attribute values passed to us that we must
-     * examine. Supported attributes are:
-     *  uuid=
-     *  server-id=
-     *  user=
-     *  password=
-     *  master-id=
-     *  filestem=
-     *  lowwater=
-     *  highwater=
-     */
     if (options)
     {
         for (i = 0; options[i]; i++)
@@ -288,7 +276,10 @@ createInstance(SERVICE *service, char **options)
                 {
                     inst->fileroot = strdup(value);
                 }
-
+                else if (strcmp(options[i], "start_index") == 0)
+                {
+                    first_file = MAX(1, atoi(value));
+                }
                 else
                 {
                     MXS_WARNING("Unsupported router "
@@ -315,12 +306,9 @@ createInstance(SERVICE *service, char **options)
 
     inst->binlog_position = 0;
 
-    sprintf(inst->binlog_name, BINLOG_NAMEFMT, inst->fileroot, 1);
+    sprintf(inst->binlog_name, BINLOG_NAMEFMT, inst->fileroot, first_file);
     strcpy(inst->prevbinlog, "");
 
-    /* Hashtable alloc */
-    /* Run time errors with i64dup, i64free */
-    /*
     if ((inst->table_maps = hashtable_alloc(1000, table_id_hash, table_id_cmp)) &&
         (inst->schemas = hashtable_alloc(1000, table_id_hash, table_id_cmp)))
     {
@@ -336,7 +324,6 @@ createInstance(SERVICE *service, char **options)
         free(inst);
         return NULL;
     }
-     */
 
     /* Check binlogdir and avrodir */
     // avro_check_dirs(inst);
@@ -1166,14 +1153,14 @@ void converter_func(void* data)
     AVRO_INSTANCE* router = (AVRO_INSTANCE*) data;
     bool ok = true;
 
-    while (ok && blr_next_binlog_exists(router->binlogdir, router->binlog_name))
+    while (ok && binlog_next_file_exists(router->binlogdir, router->binlog_name))
     {
         if (avro_open_binlog(router->binlogdir, router->binlog_name, &router->binlog_fd))
         {
-            switch (avro_read_events_all_events(router))
+            switch (avro_read_all_events(router))
             {
                 case AVRO_NO_ROTATE_CLOSE:
-                    if (blr_next_binlog_exists(router->binlogdir, router->binlog_name))
+                    if (binlog_next_file_exists(router->binlogdir, router->binlog_name))
                     {
                         sprintf(router->binlog_name, BINLOG_NAMEFMT, router->fileroot,
                                 blr_file_get_next_binlogname(router->binlog_name));
