@@ -184,7 +184,7 @@ void printSession(SESSION *);
 void dprintAllSessions(struct dcb *);
 void dprintSession(struct dcb *, SESSION *);
 void dListSessions(struct dcb *);
-char *session_state(int);
+char *session_state(session_state_t);
 bool session_link_dcb(SESSION *, struct dcb *);
 int session_unlink_dcb(SESSION*, DCB*);
 SESSION* get_session_by_router_ses(void* rses);

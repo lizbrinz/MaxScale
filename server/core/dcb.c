@@ -93,8 +93,6 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
-#define SSL_ERRBUF_LEN 140
-
 static  DCB             *allDCBs = NULL;        /* Diagnostics need a list of DCBs */
 static  int             nDCBs = 0;
 static  int             maxDCBs = 0;
@@ -106,9 +104,7 @@ static  SPINLOCK        zombiespin = SPINLOCK_INIT;
 
 static void dcb_final_free(DCB *dcb);
 static void dcb_call_callback(DCB *dcb, DCB_REASON reason);
-static DCB * dcb_get_next (DCB *dcb);
 static int  dcb_null_write(DCB *dcb, GWBUF *buf);
-static int  dcb_null_close(DCB *dcb);
 static int  dcb_null_auth(DCB *dcb, SERVER *server, SESSION *session, GWBUF *buf);
 static inline int  dcb_isvalid_nolock(DCB *dcb);
 static inline DCB * dcb_find_in_list(DCB *dcb);
@@ -615,11 +611,11 @@ dcb_process_victim_queue(DCB *listofdcb)
                 }
                 else
                 {
-                    DCB *nextdcb;
+                    DCB *next2dcb;
                     dcb_stop_polling_and_shutdown(dcb);
                     spinlock_acquire(&zombiespin);
                     bitmask_copy(&dcb->memdata.bitmask, poll_bitmask());
-                    nextdcb = dcb->memdata.next;
+                    next2dcb = dcb->memdata.next;
                     dcb->memdata.next = zombies;
                     zombies = dcb;
                     nzombies++;
@@ -628,7 +624,7 @@ dcb_process_victim_queue(DCB *listofdcb)
                         maxzombies = nzombies;
                     }
                     spinlock_release(&zombiespin);
-                    dcb = nextdcb;
+                    dcb = next2dcb;
                     continue;
                 }
             }
@@ -913,14 +909,14 @@ int dcb_read(DCB   *dcb,
             {
                 nreadtotal += nsingleread;
                 /* <editor-fold defaultstate="collapsed" desc=" Debug Logging "> */
-        MXS_DEBUG("%lu [dcb_read] Read %d bytes from dcb %p in state %s "
+                MXS_DEBUG("%lu [dcb_read] Read %d bytes from dcb %p in state %s "
                   "fd %d.",
                   pthread_self(),
                   nsingleread,
                   dcb,
                   STRDCBSTATE(dcb->state),
                   dcb->fd);
-        /* </editor-fold> */
+                /* </editor-fold> */
                 /*< Append read data to the gwbuf */
                 *head = gwbuf_append(*head, buffer);
             }
@@ -981,7 +977,7 @@ dcb_read_no_bytes_available(DCB *dcb, int nreadtotal)
     {
         char c;
         int l_errno = 0;
-        int r = -1;
+        long r = -1;
 
         /* try to read 1 byte, without consuming the socket buffer */
         r = recv(dcb->fd, &c, sizeof(char), MSG_PEEK);
@@ -1078,7 +1074,7 @@ dcb_basic_read(DCB *dcb, int bytesavailable, int maxbytes, int nreadtotal, int *
 static int
 dcb_read_SSL(DCB *dcb, GWBUF **head)
 {
-    GWBUF *buffer = NULL;
+    GWBUF *buffer;
     int nsingleread = 0, nreadtotal = 0;
 
     CHK_DCB(dcb);
@@ -1292,9 +1288,9 @@ int
 dcb_write(DCB *dcb, GWBUF *queue)
 {
     bool empty_queue;
-    int below_water;
+    bool below_water;
 
-    below_water = (dcb->high_water && dcb->writeqlen < dcb->high_water) ? 1 : 0;
+    below_water = (dcb->high_water && dcb->writeqlen < dcb->high_water);
     // The following guarantees that queue is not NULL
     if (!dcb_write_parameter_check(dcb, queue))
     {
@@ -2090,7 +2086,7 @@ dprintDCB(DCB *pdcb, DCB *dcb)
  *
  */
 const char *
-gw_dcb_state2string(int state)
+gw_dcb_state2string(dcb_state_t state)
 {
     switch(state) {
     case DCB_STATE_ALLOC:
@@ -2134,7 +2130,7 @@ dcb_printf(DCB *dcb, const char *fmt, ...)
     vsnprintf(GWBUF_DATA(buf), 10240, fmt, args);
     va_end(args);
 
-    buf->end = GWBUF_DATA(buf) + strlen(GWBUF_DATA(buf));
+    buf->end = (void *)((char *)GWBUF_DATA(buf) + strlen(GWBUF_DATA(buf)));
     dcb->func.write(dcb, buf);
 }
 
@@ -2182,7 +2178,6 @@ static int
 gw_write_SSL(DCB *dcb, bool *stop_writing)
 {
     int written;
-    char errbuf[STRERROR_BUFLEN];
 
     written = SSL_write(dcb->ssl, GWBUF_DATA(dcb->writeq), GWBUF_LENGTH(dcb->writeq));
 
@@ -2374,8 +2369,7 @@ dcb_add_callback(DCB *dcb,
                  int (*callback)(struct dcb *, DCB_REASON, void *),
                  void *userdata)
 {
-    DCB_CALLBACK *cb, *ptr;
-    int          rval = 1;
+    DCB_CALLBACK *cb, *ptr, *lastcb = NULL;
 
     if ((ptr = (DCB_CALLBACK *)malloc(sizeof(DCB_CALLBACK))) == NULL)
     {
@@ -2387,32 +2381,29 @@ dcb_add_callback(DCB *dcb,
     ptr->next = NULL;
     spinlock_acquire(&dcb->cb_lock);
     cb = dcb->callbacks;
-    if (cb == NULL)
+    while (cb)
+    {
+        if (cb->reason == reason && cb->cb == callback &&
+            cb->userdata == userdata)
+        {
+            /* Callback is a duplicate, abandon it */
+            free(ptr);
+            spinlock_release(&dcb->cb_lock);
+            return 0;
+        }
+        lastcb = cb;
+        cb = cb->next;
+    }
+    if (NULL == lastcb)
     {
         dcb->callbacks = ptr;
-        spinlock_release(&dcb->cb_lock);
     }
     else
     {
-        while (cb)
-        {
-            if (cb->reason == reason && cb->cb == callback &&
-                cb->userdata == userdata)
-            {
-                free(ptr);
-                spinlock_release(&dcb->cb_lock);
-                return 0;
-            }
-            if (cb->next == NULL)
-            {
-                cb->next = ptr;
-                break;
-            }
-            cb = cb->next;
-        }
-        spinlock_release(&dcb->cb_lock);
+        lastcb->next = ptr;
     }
-    return rval;
+    spinlock_release(&dcb->cb_lock);
+    return 1;
 }
 
 /**
@@ -2565,26 +2556,6 @@ dcb_isvalid_nolock(DCB *dcb)
     return (dcb == dcb_find_in_list(dcb));
 }
 
-
-/**
- * Get the next DCB in the list of all DCB's
- *
- * @param dcb           The current DCB
- * @return      The pointer to the next DCB or NULL if this is the last
- */
-static DCB *
-dcb_get_next(DCB *dcb)
-{
-    spinlock_acquire(&dcbspin);
-    if (dcb) {
-        dcb = dcb_isvalid_nolock(dcb) ? dcb->next : NULL;
-    }
-    else dcb = allDCBs;
-    spinlock_release(&dcbspin);
-
-    return dcb;
-}
-
 /**
  * Call all the callbacks on all DCB's that match the server and the reason given
  *
@@ -2676,17 +2647,6 @@ dcb_null_write(DCB *dcb, GWBUF *buf)
     dcb->flags |= DCBF_REPLIED;
 
     return 1;
-}
-
-/**
- * Null protocol close operation for use by cloned DCB's.
- *
- * @param dcb           The DCB being closed.
- */
-static int
-dcb_null_close(DCB *dcb)
-{
-    return 0;
 }
 
 /**
@@ -2898,25 +2858,21 @@ int dcb_accept_SSL(DCB* dcb)
             dcb->ssl_state = SSL_ESTABLISHED;
             dcb->ssl_read_want_write = false;
             return 1;
-            break;
 
         case SSL_ERROR_WANT_READ:
             MXS_DEBUG("SSL_accept ongoing want read for %s@%s", user, remote);
             return 0;
-            break;
 
         case SSL_ERROR_WANT_WRITE:
             MXS_DEBUG("SSL_accept ongoing want write for %s@%s", user, remote);
             dcb->ssl_read_want_write = true;
             return 0;
-            break;
 
         case SSL_ERROR_ZERO_RETURN:
             MXS_DEBUG("SSL error, shut down cleanly during SSL accept %s@%s", user, remote);
             dcb_log_errors_SSL(dcb, __func__, 0);
             poll_fake_hangup_event(dcb);
             return 0;
-            break;
 
         case SSL_ERROR_SYSCALL:
             MXS_DEBUG("SSL connection SSL_ERROR_SYSCALL error during accept %s@%s", user, remote);
@@ -2924,7 +2880,6 @@ int dcb_accept_SSL(DCB* dcb)
             dcb->ssl_state = SSL_HANDSHAKE_FAILED;
             poll_fake_hangup_event(dcb);
             return -1;
-            break;
 
         default:
             MXS_DEBUG("SSL connection shut down with error during SSL accept %s@%s", user, remote);
@@ -2932,7 +2887,6 @@ int dcb_accept_SSL(DCB* dcb)
             dcb->ssl_state = SSL_HANDSHAKE_FAILED;
             poll_fake_hangup_event(dcb);
             return -1;
-            break;
     }
 }
 
@@ -3003,7 +2957,6 @@ dcb_accept(DCB *listener)
     DCB *client_dcb = NULL;
     int c_sock;
     int sendbuf;
-    int syseno;
     struct sockaddr_storage client_conn;
     socklen_t optlen = sizeof(sendbuf);
     char errbuf[STRERROR_BUFLEN];
@@ -3022,7 +2975,7 @@ dcb_accept(DCB *listener)
         /* set nonblocking  */
         sendbuf = GW_CLIENT_SO_SNDBUF;
 
-        if ((syseno = setsockopt(c_sock, SOL_SOCKET, SO_SNDBUF, &sendbuf, optlen)) != 0)
+        if (setsockopt(c_sock, SOL_SOCKET, SO_SNDBUF, &sendbuf, optlen) != 0)
         {
             MXS_ERROR("Failed to set socket options. Error %d: %s",
                       errno, strerror_r(errno, errbuf, sizeof(errbuf)));
@@ -3030,7 +2983,7 @@ dcb_accept(DCB *listener)
 
         sendbuf = GW_CLIENT_SO_RCVBUF;
 
-        if ((syseno = setsockopt(c_sock, SOL_SOCKET, SO_RCVBUF, &sendbuf, optlen)) != 0)
+        if (setsockopt(c_sock, SOL_SOCKET, SO_RCVBUF, &sendbuf, optlen) != 0)
         {
             MXS_ERROR("Failed to set socket options. Error %d: %s",
                       errno, strerror_r(errno, errbuf, sizeof(errbuf)));
@@ -3125,6 +3078,7 @@ dcb_accept_one_connection(DCB *listener, struct sockaddr *client_conn)
 
         if (c_sock == -1)
         {
+            char errbuf[STRERROR_BUFLEN];
             /* Did not get a file descriptor */
             if (eno == EAGAIN || eno == EWOULDBLOCK)
             {
@@ -3137,13 +3091,12 @@ dcb_accept_one_connection(DCB *listener, struct sockaddr *client_conn)
             else if (eno == ENFILE || eno == EMFILE)
             {
                 struct timespec ts1;
-                ts1.tv_sec = 0;
+                long long nanosecs;
 
                 /**
                  * Exceeded system's (ENFILE) or processes
                  * (EMFILE) max. number of files limit.
                  */
-                char errbuf[STRERROR_BUFLEN];
                 MXS_DEBUG("%lu [dcb_accept_one_connection] Error %d, %s. ",
                     pthread_self(),
                     eno,
@@ -3152,12 +3105,13 @@ dcb_accept_one_connection(DCB *listener, struct sockaddr *client_conn)
                 /* Log an error the first time this happens */
                 if (i == 0)
                 {
-                    char errbuf[STRERROR_BUFLEN];
                     MXS_ERROR("Error %d, %s. Failed to accept new client connection.",
                         eno,
                         strerror_r(eno, errbuf, sizeof(errbuf)));
                 }
-                ts1.tv_nsec = 100 * i * i * 1000000;
+                nanosecs = (long long)1000000 * 100 * i * i;
+                ts1.tv_sec = nanosecs / 1000000000;
+                ts1.tv_nsec = nanosecs % 1000000000;
                 nanosleep(&ts1, NULL);
 
                 /* Remain in loop for up to the loop limit, retries. */
@@ -3167,7 +3121,6 @@ dcb_accept_one_connection(DCB *listener, struct sockaddr *client_conn)
                 /**
                  * Other error, log it then break out of loop for return of -1.
                  */
-                char errbuf[STRERROR_BUFLEN];
                 MXS_ERROR("Failed to accept new client connection due to %d, %s.",
                     eno,
                     strerror_r(eno, errbuf, sizeof(errbuf)));

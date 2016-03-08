@@ -379,7 +379,7 @@ session_simple_free(SESSION *session, DCB *dcb)
 bool
 session_free(SESSION *session)
 {
-    if (session && SESSION_STATE_DUMMY == session->state)
+    if (NULL == session || SESSION_STATE_DUMMY == session->state)
     {
         return true;
     }
@@ -753,7 +753,7 @@ dListSessions(DCB *dcb)
  * @return A string representation of the session state
  */
 char *
-session_state(int state)
+session_state(session_state_t state)
 {
     switch (state)
     {
@@ -1076,6 +1076,12 @@ sessionRowCallback(RESULTSET *set, void *data)
  *
  * @return A Result set
  */
+/* Lint is not convinced that the new memory for data is always tracked
+ * because it does not see what happens within the resultset_create function,
+ * so we suppress the warning. In fact, the function call results in return
+ * of the set structure which includes a pointer to data
+ */
+/*lint -e429 */
 RESULTSET *
 sessionGetList(SESSIONLISTFILTER filter)
 {
@@ -1100,6 +1106,7 @@ sessionGetList(SESSIONLISTFILTER filter)
 
     return set;
 }
+/*lint +e429 */
 
 /**
  * @brief Free the client data pointed to by the passed DCB.

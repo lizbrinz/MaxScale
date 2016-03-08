@@ -361,7 +361,7 @@ poll_add_dcb(DCB *dcb)
  * polling environment.
  *
  * @param dcb   The descriptor to remove
- * @return      -1 on error or 0 on success
+ * @return      -1 on error or 0 on success; actually always 0
  */
 int
 poll_remove_dcb(DCB *dcb)
@@ -1634,7 +1634,7 @@ poll_fake_read_event(DCB *dcb)
  * @param ev    Event to emulate
  */
 void
-poll_fake_event(DCB *dcb, uint32_t ev)
+poll_fake_event(DCB *dcb, enum EPOLL_EVENTS ev)
 {
 
     spinlock_acquire(&pollqlock);

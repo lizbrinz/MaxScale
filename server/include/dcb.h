@@ -245,9 +245,9 @@ typedef struct dcb
     SPINLOCK        polloutlock;
     int             polloutbusy;
     int             writecheck;
-    unsigned long   last_read;      /*< Last time the DCB received data */
-    unsigned int    high_water;     /**< High water mark */
-    unsigned int    low_water;      /**< Low water mark */
+    long            last_read;      /*< Last time the DCB received data */
+    int             high_water;     /**< High water mark */
+    int             low_water;      /**< Low water mark */
     struct server   *server;        /**< The associated backend server */
     SSL*            ssl;            /*< SSL struct for connection */
     bool            ssl_read_want_read;    /*< Flag */
@@ -311,7 +311,7 @@ void dprintOneDCB(DCB *, DCB *);             /* Debug to print one DCB */
 void dprintDCB(DCB *, DCB *);                /* Debug to print a DCB in the system */
 void dListDCBs(DCB *);                       /* List all DCBs in the system */
 void dListClients(DCB *);                    /* List al the client DCBs */
-const char *gw_dcb_state2string(int);              /* DCB state to string */
+const char *gw_dcb_state2string(dcb_state_t);              /* DCB state to string */
 void dcb_printf(DCB *, const char *, ...);   /* DCB version of printf */
 void dcb_hashtable_stats(DCB *, void *);     /**< Print statisitics */
 int dcb_add_callback(DCB *, DCB_REASON, int (*)(struct dcb *, DCB_REASON, void *), void *);
