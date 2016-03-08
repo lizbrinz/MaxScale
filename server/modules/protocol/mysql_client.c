@@ -54,6 +54,7 @@
 #include <mysql_client_server_protocol.h>
 #include <mysql_auth.h>
 #include <gw_ssl.h>
+#include <maxscale/poll.h>
 #include <gw.h>
 #include <modinfo.h>
 #include <sys/stat.h>

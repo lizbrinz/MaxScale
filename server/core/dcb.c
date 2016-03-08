@@ -81,7 +81,7 @@
 #include <router.h>
 #include <errno.h>
 #include <gw.h>
-#include <poll.h>
+#include <maxscale/poll.h>
 #include <atomic.h>
 #include <skygw_utils.h>
 #include <log_manager.h>

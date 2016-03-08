@@ -143,6 +143,22 @@ disable_sescmd_history=true
 master_accept_reads=true
 ```
 
+### `strict_multi_stmt`
+
+When a client executes a multistatement query, all queries after that will be routed to
+the master to guarantee a consistent session state. This behavior can be controlled with
+the **`strict_multi_stmt`** router option. This option is enabled by default.
+
+If set to false, queries are routed normally after a multistatement query. **Warning**, this
+can cause false data to be read from the slaves if the multistatement query modifies
+the session state. Only disable the strict mode if you know that no changes to the session
+state will be made inside the multistatement queries.
+
+```
+# Disable strict multistatement mode
+strict_multi_stmt=false
+```
+
 ## Routing hints
 
 The readwritesplit router supports routing hints. For a detailed guide on hint syntax and functionality, please read [this](../Reference/Hint-Syntax.md) document.
@@ -156,6 +172,19 @@ In Master-Slave replication cluster also read-only queries are routed to master 
 * in case of prepared statement execution
 
 * statement includes a stored procedure, or an UDF call
+
+* if there are multiple statements inside one query e.g. `INSERT INTO ... ; SELECT LAST_INSERT_ID();`
+
+### Limitations in multi-statement handling
+
+When a multi-statemet query is executed through the readwritesplit router, it will always
+be routed to the master. With the default configuration, all queries after a
+multi-statement query will be routed to the master to prevent possible reads of
+false data. You can override this behavior with the `strict_multi_stmt=false`
+router option. In this mode, the multi-statement queries will still be routed
+to the master but individual statements are routed normally. If you use
+multi-statements and you know they don't modify the session state in any
+relevant way, you can disable this option for better performance.
 
 ### Limitations in client session handling
 

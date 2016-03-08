@@ -68,4 +68,10 @@ GWBUF*          modutil_create_mysql_err_msg(int             packet_number,
 int modutil_count_signal_packets(GWBUF*,int,int,int*);
 mxs_pcre2_result_t modutil_mysql_wildcard_match(const char* pattern, const char* string);
 
+/** Character and token searching functions */
+char* strnchr_esc(char* ptr, char c, int len);
+char* strnchr_esc_mysql(char* ptr, char c, int len);
+bool is_mysql_statement_end(const char* start, int len);
+bool is_mysql_sp_end(const char* start, int len);
+
 #endif

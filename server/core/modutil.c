@@ -32,7 +32,9 @@
 #include <buffer.h>
 #include <string.h>
 #include <mysql_client_server_protocol.h>
+#include <maxscale/poll.h>
 #include <modutil.h>
+#include <strings.h>
 
 /** These are used when converting MySQL wildcards to regular expressions */
 static SPINLOCK re_lock = SPINLOCK_INIT;
@@ -764,7 +766,7 @@ static void modutil_reply_routing_error(DCB*     backend_dcb,
  * @return Pointer to the first non-escaped, non-quoted occurrence of the character.
  * If the character is not found, NULL is returned.
  */
-void* strnchr_esc(char* ptr, char c, int len)
+char* strnchr_esc(char* ptr, char c, int len)
 {
     char* p = (char*)ptr;
     char* start = p;
@@ -798,6 +800,163 @@ void* strnchr_esc(char* ptr, char c, int len)
     }
 
     return NULL;
+}
+
+/**
+ * Find the first occurrence of a character in a string. This function ignores
+ * escaped characters and all characters that are enclosed in single or double quotes.
+ * MySQL style comment blocks and identifiers in backticks are also ignored.
+ * @param ptr Pointer to area of memory to inspect
+ * @param c Character to search for
+ * @param len Size of the memory area
+ * @return Pointer to the first non-escaped, non-quoted occurrence of the character.
+ * If the character is not found, NULL is returned.
+ */
+char* strnchr_esc_mysql(char* ptr, char c, int len)
+{
+    char* p = (char*) ptr;
+    char* start = p, *end = start + len;
+    bool quoted = false, escaped = false, backtick = false, comment = false;
+    char qc;
+
+    while (p < end)
+    {
+        if (escaped)
+        {
+            escaped = false;
+        }
+        else if ((!comment && !quoted && !backtick) || (comment && *p == '*') ||
+                 (!comment && quoted && *p == qc) || (!comment && backtick && *p == '`'))
+        {
+            switch (*p)
+            {
+                case '\\':
+                    escaped = true;
+                    break;
+
+                case '\'':
+                case '"':
+                    if (!quoted)
+                    {
+                        quoted = true;
+                        qc = *p;
+                    }
+                    else if (*p == qc)
+                    {
+                        quoted = false;
+                    }
+                    break;
+
+                case '/':
+                    if (p + 1 < end && *(p + 1) == '*')
+                    {
+                        comment = true;
+                        p += 1;
+                    }
+                    break;
+
+                case '*':
+                    if (comment && p + 1 < end && *(p + 1) == '/')
+                    {
+                        comment = false;
+                        p += 1;
+                    }
+                    break;
+
+                case '`':
+                    backtick = !backtick;
+                    break;
+
+                case '#':
+                    return NULL;
+
+                case '-':
+                    if (p + 2 < end && *(p + 1) == '-' &&
+                        isspace(*(p + 2)))
+                    {
+                        return NULL;
+                    }
+                    break;
+
+                default:
+                    break;
+            }
+
+            if (*p == c && !escaped && !quoted && !comment && !backtick)
+            {
+                return p;
+            }
+        }
+        p++;
+    }
+    return NULL;
+}
+
+/**
+ * @brief Check if the string is the final part of a valid SQL statement
+ *
+ * This function checks whether the string pointed by @p start contains any
+ * tokens that are interpreted as executable commands.
+ * @param start String containing the statement
+ * @param len Length of the string
+ * @return True if statement contains no executable parts
+ */
+bool is_mysql_statement_end(const char* start, int len)
+{
+    const char *ptr = start;
+    bool rval = false;
+
+    while (ptr < start + len && (isspace(*ptr) || *ptr == ';'))
+    {
+        ptr++;
+    }
+
+    if (ptr < start + len)
+    {
+        switch (*ptr)
+        {
+            case '-':
+                if (ptr < start + len - 2 && *(ptr + 1) == '-' && isspace(*(ptr + 2)))
+                {
+                    rval = true;
+                }
+                break;
+
+            case '#':
+                rval = true;
+                break;
+
+            case '/':
+                if (ptr < start + len - 1 && *(ptr + 1) == '*')
+                {
+                    rval = true;
+                }
+                break;
+        }
+    }
+    else
+    {
+        rval = true;
+    }
+
+    return rval;
+}
+
+/**
+ * @brief Check if the token is the END part of a BEGIN ... END block.
+ * @param ptr String with at least three non-whitespace characters in it
+ * @return True if the token is the final part of a BEGIN .. END block
+ */
+bool is_mysql_sp_end(const char* start, int len)
+{
+    const char *ptr = start;
+
+    while (ptr < start + len && (isspace(*ptr) || *ptr == ';'))
+    {
+        ptr++;
+    }
+
+    return ptr < start + len - 3 && strncasecmp(ptr, "end", 3) == 0;
 }
 
 /**

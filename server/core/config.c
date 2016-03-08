@@ -399,45 +399,6 @@ config_load(char *file)
     {
         return 0;
     }
-    MYSQL *conn;
-    conn = mysql_init(NULL);
-    if (conn)
-    {
-        if (mysql_real_connect(conn, NULL, NULL, NULL, NULL, 0, NULL, 0))
-        {
-            char *ptr, *tmp;
-
-            tmp = (char *)mysql_get_server_info(conn);
-            unsigned int server_version = mysql_get_server_version(conn);
-
-            if (version_string)
-            {
-                free(version_string);
-            }
-
-            if ((version_string = malloc(strlen(tmp) + strlen("5.5.5-") + 1)) == NULL)
-            {
-                return 0;
-            }
-
-            if (server_version >= 100000)
-            {
-                strcpy(version_string, "5.5.5-");
-                strcat(version_string, tmp);
-            }
-            else
-            {
-                strcpy(version_string, tmp);
-            }
-
-            ptr = strstr(version_string, "-embedded");
-            if (ptr)
-            {
-                *ptr = '\0';
-            }
-        }
-        mysql_close(conn);
-    }
 
     global_defaults();
     feedback_defaults();
@@ -621,9 +582,14 @@ process_config_context(CONFIG_CONTEXT *context)
      * error_count += consistency_checks();
      */
 
+    if (!service_all_services_have_listeners())
+    {
+        error_count++;
+    }
+
     if (error_count)
     {
-        MXS_ERROR("%d errors where encountered processing the configuration "
+        MXS_ERROR("%d errors were encountered while processing the configuration "
                   "file '%s'.", error_count, config_file);
         return 0;
     }
@@ -936,7 +902,7 @@ handle_global_item(const char *name, const char *value)
     int i;
     if (strcmp(name, "threads") == 0)
     {
-        if (strcmp(name, "auto") == 0)
+        if (strcmp(value, "auto") == 0)
         {
             if ((gateway.n_threads = get_processor_count()) > 1)
             {
@@ -2436,15 +2402,12 @@ int create_new_service(CONFIG_CONTEXT *obj)
 
         if ((param = config_get_param(obj->parameters, "use_sql_variables_in")))
         {
-            if (service_set_param_value(obj->element, param, param->value,
+            if (!service_set_param_value(obj->element, param, param->value,
                                         COUNT_NONE, SQLVAR_TARGET_TYPE))
             {
-                if (param)
-                {
-                    MXS_WARNING("Invalid value type for parameter \'%s.%s = %s\'\n\tExpected "
-                                "type is [master|all] for use sql variables in.",
-                                service->name, param->name, param->value);
-                }
+                MXS_WARNING("Invalid value type for parameter \'%s.%s = %s\'\n\tExpected "
+                    "type is [master|all] for use sql variables in.",
+                            service->name, param->name, param->value);
             }
         }
     }

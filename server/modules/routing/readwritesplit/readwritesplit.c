@@ -102,13 +102,6 @@ static int  rses_get_max_replication_lag(ROUTER_CLIENT_SES* rses);
 static backend_ref_t* get_bref_from_dcb(ROUTER_CLIENT_SES* rses, DCB* dcb);
 static DCB* rses_get_client_dcb(ROUTER_CLIENT_SES* rses);
 
-static route_target_t get_route_target (
-	qc_query_type_t qtype,
-	bool            trx_active,
-	bool            load_active,
-	target_t        use_sql_variables_in,
-	HINT*           hint);
-
 static backend_ref_t* check_candidate_bref(
 	backend_ref_t* candidate_bref,
 	backend_ref_t* new_bref,
@@ -315,6 +308,8 @@ static ROUTER_INSTANCE* instances;
 
 static int hashkeyfun(void* key);
 static int hashcmpfun (void *, void *);
+static void check_for_multi_stmt(ROUTER_CLIENT_SES* rses, GWBUF *buf,
+                                 mysql_server_cmd_t packet_type);
 
 static int hashkeyfun(
 		void* key)
@@ -704,6 +699,9 @@ createInstance(SERVICE *service, char **options)
 	router->bitmask = 0;
 	router->bitvalue = 0;
 
+    /** Enable strict multistatement handling by default */
+    router->rwsplit_config.rw_strict_multi_stmt = true;
+
         /** Call this before refreshInstance */
 	if (options)
 	{
@@ -834,6 +832,7 @@ static void* newSession(
         client_rses->rses_autocommit_enabled = true;
         client_rses->rses_transaction_active = false;
         client_rses->have_tmp_tables = false;
+        client_rses->forced_node = NULL;
 
         router_nservers = router_get_servercount(router);
 
@@ -1382,18 +1381,22 @@ static backend_ref_t* check_candidate_bref(
  *  @return bitfield including the routing target, or the target server name
  *          if the query would otherwise be routed to slave.
  */
-static route_target_t get_route_target (
-        qc_query_type_t qtype,
-        bool            trx_active,
-        bool            load_active,
-	target_t        use_sql_variables_in,
-        HINT*           hint)
+static route_target_t get_route_target(ROUTER_CLIENT_SES *rses,
+                                       qc_query_type_t qtype, HINT *hint)
 {
-        route_target_t target = TARGET_UNDEFINED;
+    bool trx_active = rses->rses_transaction_active;
+    bool load_active = rses->rses_load_active;
+    target_t use_sql_variables_in = rses->rses_config.rw_use_sql_variables_in;
+    route_target_t target = TARGET_UNDEFINED;
+
+    if (rses->rses_config.rw_strict_multi_stmt && rses->forced_node == rses->rses_master_ref)
+    {
+        target = TARGET_MASTER;
+    }
 	/**
 	 * These queries are not affected by hints
 	 */
-	if (!load_active && (QUERY_IS_TYPE(qtype, QUERY_TYPE_SESSION_WRITE) ||
+	else if (!load_active && (QUERY_IS_TYPE(qtype, QUERY_TYPE_SESSION_WRITE) ||
 		/** Configured to allow writing variables to all nodes */
 		(use_sql_variables_in == TYPE_ALL &&
 			QUERY_IS_TYPE(qtype, QUERY_TYPE_GSYSVAR_WRITE)) ||
@@ -1435,7 +1438,7 @@ static route_target_t get_route_target (
 	/**
 	 * Hints may affect on routing of the following queries
 	 */
-	else if (!trx_active && !load_active &&
+	else if (!trx_active && !load_active && !QUERY_IS_TYPE(qtype, QUERY_TYPE_WRITE) &&
 		(QUERY_IS_TYPE(qtype, QUERY_TYPE_READ) ||	/*< any SELECT */
 		QUERY_IS_TYPE(qtype, QUERY_TYPE_SHOW_TABLES) || /*< 'SHOW TABLES' */
 		QUERY_IS_TYPE(qtype, QUERY_TYPE_USERVAR_READ)||	/*< read user var */
@@ -2150,7 +2153,13 @@ static bool route_single_stmt(
 	{
 	    succp = false;
 	    goto retblock;
-        }
+    }
+
+    /** Check for multi-statement queries. We assume here that the client
+     * protocol is MySQLClient.
+     * TODO: add warnings when incompatible protocols are used */
+    check_for_multi_stmt(rses, querybuf, packet_type);
+
     /**
      * Check if the query has anything to do with temporary tables.
      */
@@ -2269,11 +2278,7 @@ static bool route_single_stmt(
 	 * - route primarily according to the hints and if they failed,
 	 *   eventually to master
 	 */
-	route_target = get_route_target(qtype,
-					rses->rses_transaction_active,
-					rses->rses_load_active,
-					rses->rses_config.rw_use_sql_variables_in,
-					querybuf->hint);
+	route_target = get_route_target(rses, qtype, querybuf->hint);
 
 	if (TARGET_IS_ALL(route_target))
 	{
@@ -4624,6 +4629,10 @@ static void rwsplit_process_router_options(
 			{
 			    router->rwsplit_config.rw_master_reads = config_truth_value(value);
 			}
+			else if(strcmp(options[i],"strict_multi_stmt") == 0)
+			{
+			    router->rwsplit_config.rw_strict_multi_stmt = config_truth_value(value);
+			}
                 }
         } /*< for */
 }
@@ -5334,12 +5343,44 @@ static backend_ref_t* get_root_master_bref(
 	return candidate_bref;
 }
 
+/**
+ * @brief Detect multi-statement queries
+ *
+ * It is possible that the session state is modified inside a multi-statement
+ * query which would leave any slave sessions in an inconsistent state. Due to
+ * this, for the duration of this session, all queries will be sent to the master
+ * if the current query contains a multi-statement query.
+ * @param rses Router client session
+ * @param buf Buffer containing the full query
+ */
+static void check_for_multi_stmt(ROUTER_CLIENT_SES* rses, GWBUF *buf,
+                                 mysql_server_cmd_t packet_type)
+{
+    MySQLProtocol *proto = (MySQLProtocol*) rses->client_dcb->protocol;
 
+    if (proto->client_capabilities & GW_MYSQL_CAPABILITIES_MULTI_STATEMENTS &&
+        packet_type == MYSQL_COM_QUERY && rses->forced_node != rses->rses_master_ref)
+    {
+        char *ptr, *data = GWBUF_DATA(buf) + 5;
+        /** Payload size without command byte */
+        int buflen = gw_mysql_get_byte3((uint8_t*)GWBUF_DATA(buf)) - 1;
 
+        if ((ptr = strnchr_esc_mysql(data, ';', buflen)))
+        {
+            /** Skip stored procedures etc. */
+            while (ptr && is_mysql_sp_end(ptr, ptr - data))
+            {
+                ptr = strnchr_esc_mysql(ptr + 1, ';',  ptr - data);
+            }
 
-
-
-
-
-
-
+            if (ptr)
+            {
+                if (ptr < data + buflen && !is_mysql_statement_end(ptr, buflen - (ptr - data)))
+                {
+                    rses->forced_node = rses->rses_master_ref;
+                    MXS_INFO("Multi-statement query, routing all future queries to master.");
+                }
+            }
+        }
+    }
+}

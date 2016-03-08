@@ -58,7 +58,7 @@
 #include <users.h>
 #include <filter.h>
 #include <dbusers.h>
-#include <poll.h>
+#include <maxscale/poll.h>
 #include <skygw_utils.h>
 #include <log_manager.h>
 #include <sys/stat.h>
@@ -2073,4 +2073,29 @@ static void service_internal_restart(void *data)
 {
     SERVICE* service = (SERVICE*)data;
     serviceStartAllPorts(service);
+}
+
+/**
+ * Check that all services have listeners
+ * @return True if all services have listeners
+ */
+bool service_all_services_have_listeners()
+{
+    bool rval = true;
+    spinlock_acquire(&service_spin);
+
+    SERVICE* service = allServices;
+
+    while (service)
+    {
+        if (service->ports == NULL)
+        {
+            MXS_ERROR("Service '%s' has no listeners.", service->name);
+            rval = false;
+        }
+        service = service->next;
+    }
+
+    spinlock_release(&service_spin);
+    return rval;
 }
