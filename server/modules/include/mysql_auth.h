@@ -33,9 +33,6 @@
 #include <stdint.h>
 #include <mysql_client_server_protocol.h>
 
-int mysql_auth_set_protocol_data(DCB *dcb, GWBUF *buf);
-bool mysql_auth_is_client_ssl_capable (DCB *dcb);
-int mysql_auth_authenticate(DCB *dcb, GWBUF **buf);
 int gw_check_mysql_scramble_data(DCB *dcb,
                                  uint8_t *token,
                                  unsigned int token_len,

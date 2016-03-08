@@ -32,6 +32,31 @@
 
 #include <mysql_auth.h>
 #include <mysql_client_server_protocol.h>
+#include <gw_authenticator.h>
+
+MODULE_INFO info =
+{
+    MODULE_API_AUTHENTICATOR,
+    MODULE_GA,
+    GWAUTHENTICATOR_VERSION,
+    "The client to MaxScale authenticator implementation"
+};
+
+static char *version_str = "V1.0.0";
+
+/*
+ * The "module object" for mysql client authenticator module.
+ */
+static GWAUTHENTICATOR MyObject =
+{
+    mysql_auth_set_protocol_data,           /* Extract data into structure   */
+    mysql_auth_is_client_ssl_capable,       /* Check if client supports SSL  */
+    mysql_auth_authenticate,                /* Authenticate user credentials */
+};
+
+static int mysql_auth_set_protocol_data(DCB *dcb, GWBUF *buf);
+static bool mysql_auth_is_client_ssl_capable(DCB *dcb);
+static int mysql_auth_authenticate(DCB *dcb, GWBUF **buffer);
 
 static int combined_auth_check(
     DCB             *dcb,
@@ -49,6 +74,37 @@ static int mysql_auth_set_client_data(
     int client_auth_packet_size);
 
 /**
+ * Implementation of the mandatory version entry point
+ *
+ * @return version string of the module
+ */
+char* version()
+{
+    return version_str;
+}
+
+/**
+ * The module initialisation routine, called when the module
+ * is first loaded.
+ */
+void ModuleInit()
+{
+}
+
+/**
+ * The module entry point routine. It is this routine that
+ * must populate the structure that is referred to as the
+ * "module object", this is a structure with the set of
+ * external entry points for this module.
+ *
+ * @return The module object
+ */
+GWAUTHENTICATOR* GetModuleObject()
+{
+    return &MyObject;
+}
+
+/**
  * @brief Authenticates a MySQL user who is a client to MaxScale.
  *
  * First call the SSL authentication function, passing the DCB and a boolean
@@ -62,14 +118,14 @@ static int mysql_auth_set_client_data(
  * @return Authentication status
  * @note Authentication status codes are defined in mysql_client_server_protocol.h
  */
-int
+static int
 mysql_auth_authenticate(DCB *dcb, GWBUF **buffer)
 {
     MySQLProtocol *protocol = DCB_PROTOCOL(dcb, MySQLProtocol);
     MYSQL_session *client_data = (MYSQL_session *)dcb->data;
     int auth_ret, ssl_ret;
 
-    if (0 != (ssl_ret = ssl_authenticate_client(dcb, client_data->user, mysql_auth_is_client_ssl_capable(dcb))))
+    if (0 != (ssl_ret = ssl_authenticate_client(dcb, mysql_auth_is_client_ssl_capable(dcb))))
     {
         auth_ret = (SSL_ERROR_CLIENT_NOT_SSL == ssl_ret) ? MYSQL_FAILED_AUTH_SSL : MYSQL_FAILED_AUTH;
     }
@@ -146,7 +202,7 @@ mysql_auth_authenticate(DCB *dcb, GWBUF **buffer)
  * @note Authentication status codes are defined in mysql_client_server_protocol.h
  * @see https://dev.mysql.com/doc/internals/en/client-server-protocol.html
  */
-int
+static int
 mysql_auth_set_protocol_data(DCB *dcb, GWBUF *buf)
 {
     uint8_t *client_auth_packet = GWBUF_DATA(buf);
@@ -321,7 +377,7 @@ mysql_auth_set_client_data(
  * @param dcb Request handler DCB connected to the client
  * @return Boolean indicating whether client is SSL capable
  */
-bool
+static bool
 mysql_auth_is_client_ssl_capable(DCB *dcb)
 {
     MySQLProtocol *protocol;
@@ -549,4 +605,3 @@ static int combined_auth_check(
     auth_ret = check_db_name_after_auth(dcb, database, auth_ret);
     return auth_ret;
 }
-
