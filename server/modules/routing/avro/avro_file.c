@@ -160,7 +160,7 @@ avro_binlog_end_t avro_read_events_all_events(AVRO_INSTANCE *router)
                     else if (rotate_seen)
                     {
                         /** Binlog file is processed, prepare for next one */
-                        strncpy(router->binlog_name, next_binlog, sizeof(router->binlog_name));   
+                        strncpy(router->binlog_name, next_binlog, sizeof(router->binlog_name));
                     }
 
                     if (pending_transaction > 0)
@@ -468,7 +468,7 @@ avro_binlog_end_t avro_read_events_all_events(AVRO_INSTANCE *router)
                 snprintf(router->current_gtid, sizeof(router->current_gtid), "%u-%u-%lu", domainid,
                          hdr.serverid, n_sequence);
                 // TODO: Handle GTID transactions
-                if(pending_transaction > 0)
+                if (pending_transaction > 0)
                 {
                     MXS_ERROR("In binlog file '%s' at position %llu: Missing XID Event before GTID Event.",
                               router->binlog_name, pos);
@@ -504,7 +504,7 @@ avro_binlog_end_t avro_read_events_all_events(AVRO_INSTANCE *router)
             if (strncmp(statement_sql, "BEGIN", 5) == 0)
             {
                 // TODO: Handle BEGIN
-                if(pending_transaction > 0)
+                if (pending_transaction > 0)
                 {
                     MXS_ERROR("In binlog file '%s' at position %llu: Missing COMMIT before BEGIN.",
                               router->binlog_name, pos);

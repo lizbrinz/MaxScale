@@ -29,37 +29,37 @@
  * @verbatim
  * Revision History
  *
- * Date		Who			Description
- * 14/04/2014	Mark Riddoch		Initial implementation
- * 18/02/2015	Massimiliano Pinto	Addition of DISCONNECT ALL and DISCONNECT SERVER server_id
- * 18/03/2015	Markus Makela		Better detection of CRC32 | NONE  checksum
- * 19/03/2015	Massimiliano Pinto	Addition of basic MariaDB 10 compatibility support
- * 07/05/2015   Massimiliano Pinto	Added MariaDB 10 Compatibility
- * 11/05/2015   Massimiliano Pinto	Only MariaDB 10 Slaves can register to binlog router with a MariaDB 10 Master
- * 25/05/2015	Massimiliano Pinto	Addition of BLRM_SLAVE_STOPPED state and blr_start/stop_slave.
- *					New commands STOP SLAVE, START SLAVE added.
- * 29/05/2015	Massimiliano Pinto	Addition of CHANGE MASTER TO ...
- * 05/06/2015	Massimiliano Pinto	router->service->dbref->sever->name instead of master->remote
- *					in blr_slave_send_slave_status()
- * 08/06/2015	Massimiliano Pinto	blr_slave_send_slave_status() shows mysql_errno and error_msg
- * 15/06/2015	Massimiliano Pinto	Added constraints to CHANGE MASTER TO MASTER_LOG_FILE/POS
- * 23/06/2015	Massimiliano Pinto	Added utility routines for blr_handle_change_master
- *					Call create/use binlog in blr_start_slave() (START SLAVE)
- * 29/06/2015	Massimiliano Pinto	Successfully CHANGE MASTER results in updating master.ini
- *					in blr_handle_change_master()
- * 20/08/2015	Massimiliano Pinto	Added parsing and validation for CHANGE MASTER TO
- * 21/08/2015	Massimiliano Pinto	Added support for new config options:
- *					master_uuid, master_hostname, master_version
- *					If set those values are sent to slaves instead of
- *					saved master responses
- * 03/09/2015	Massimiliano Pinto	Added support for SHOW [GLOBAL] VARIABLES LIKE
- * 04/09/2015	Massimiliano Pinto	Added support for SHOW WARNINGS
- * 15/09/2015	Massimiliano Pinto	Added support for SHOW [GLOBAL] STATUS LIKE 'Uptime'
- * 25/09/2015	Massimiliano Pinto	Addition of slave heartbeat:
- *					the period set during registration is checked
- *					and heartbeat event might be sent to the affected slave.
+ * Date     Who         Description
+ * 14/04/2014   Mark Riddoch        Initial implementation
+ * 18/02/2015   Massimiliano Pinto  Addition of DISCONNECT ALL and DISCONNECT SERVER server_id
+ * 18/03/2015   Markus Makela       Better detection of CRC32 | NONE  checksum
+ * 19/03/2015   Massimiliano Pinto  Addition of basic MariaDB 10 compatibility support
+ * 07/05/2015   Massimiliano Pinto  Added MariaDB 10 Compatibility
+ * 11/05/2015   Massimiliano Pinto  Only MariaDB 10 Slaves can register to binlog router with a MariaDB 10 Master
+ * 25/05/2015   Massimiliano Pinto  Addition of BLRM_SLAVE_STOPPED state and blr_start/stop_slave.
+ *                  New commands STOP SLAVE, START SLAVE added.
+ * 29/05/2015   Massimiliano Pinto  Addition of CHANGE MASTER TO ...
+ * 05/06/2015   Massimiliano Pinto  router->service->dbref->sever->name instead of master->remote
+ *                  in blr_slave_send_slave_status()
+ * 08/06/2015   Massimiliano Pinto  blr_slave_send_slave_status() shows mysql_errno and error_msg
+ * 15/06/2015   Massimiliano Pinto  Added constraints to CHANGE MASTER TO MASTER_LOG_FILE/POS
+ * 23/06/2015   Massimiliano Pinto  Added utility routines for blr_handle_change_master
+ *                  Call create/use binlog in blr_start_slave() (START SLAVE)
+ * 29/06/2015   Massimiliano Pinto  Successfully CHANGE MASTER results in updating master.ini
+ *                  in blr_handle_change_master()
+ * 20/08/2015   Massimiliano Pinto  Added parsing and validation for CHANGE MASTER TO
+ * 21/08/2015   Massimiliano Pinto  Added support for new config options:
+ *                  master_uuid, master_hostname, master_version
+ *                  If set those values are sent to slaves instead of
+ *                  saved master responses
+ * 03/09/2015   Massimiliano Pinto  Added support for SHOW [GLOBAL] VARIABLES LIKE
+ * 04/09/2015   Massimiliano Pinto  Added support for SHOW WARNINGS
+ * 15/09/2015   Massimiliano Pinto  Added support for SHOW [GLOBAL] STATUS LIKE 'Uptime'
+ * 25/09/2015   Massimiliano Pinto  Addition of slave heartbeat:
+ *                  the period set during registration is checked
+ *                  and heartbeat event might be sent to the affected slave.
  * 25/09/2015   Martin Brampton         Block callback processing when no router session in the DCB
- * 23/10/15	Markus Makela		Added current_safe_event
+ * 23/10/15 Markus Makela       Added current_safe_event
  *
  * @endverbatim
  */
@@ -114,23 +114,23 @@ void poll_fake_write_event(DCB *dcb);
  * if this is possible, if it is not then the router itself will synthesize a
  * response.
  *
- * @param router	The router instance this defines the master for this replication chain
- * @param slave		The slave specific data
- * @param queue		The incoming request packet
+ * @param router    The router instance this defines the master for this replication chain
+ * @param slave     The slave specific data
+ * @param queue     The incoming request packet
  */
 int
 avro_client_request(AVRO_INSTANCE *router, AVRO_CLIENT *slave, GWBUF *queue)
 {
-	GWBUF *reply = gwbuf_alloc(5);
-	uint8_t *ptr = GWBUF_DATA(reply);
+    GWBUF *reply = gwbuf_alloc(5);
+    uint8_t *ptr = GWBUF_DATA(reply);
 
-	memcpy(ptr, "ECHO:",5);
+    memcpy(ptr, "ECHO:", 5);
 
-	reply = gwbuf_append(reply, queue);
+    reply = gwbuf_append(reply, queue);
 
-	slave->dcb->func.write(slave->dcb, reply);
+    slave->dcb->func.write(slave->dcb, reply);
 
-	return 0;
+    return 0;
 }
 
 /**
@@ -142,54 +142,54 @@ avro_client_request(AVRO_INSTANCE *router, AVRO_CLIENT *slave, GWBUF *queue)
  *
  * Once send MaxScale must continue to send binlog events to the slave.
  *
- * @param	router		The router instance
- * @param	slave		The slave server
- * @param	queue		The BINLOG_DUMP packet
- * @return			The number of bytes written to the slave
+ * @param   router      The router instance
+ * @param   slave       The slave server
+ * @param   queue       The BINLOG_DUMP packet
+ * @return          The number of bytes written to the slave
  */
 static int
 avro_client_binlog_dump(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, GWBUF *queue)
 {
-GWBUF		*resp;
-uint8_t		*ptr;
-int		len, rval, binlognamelen;
-REP_HEADER	hdr;
-uint32_t	chksum;
+    GWBUF       *resp;
+    uint8_t     *ptr;
+    int     len, rval, binlognamelen;
+    REP_HEADER  hdr;
+    uint32_t    chksum;
 
-	dcb_add_callback(slave->dcb, DCB_REASON_DRAINED, avro_client_callback, slave);
+    dcb_add_callback(slave->dcb, DCB_REASON_DRAINED, avro_client_callback, slave);
 
-	slave->state = BLRS_DUMPING;
+    slave->state = BLRS_DUMPING;
 
 
-	if (slave->binlog_pos != router->binlog_position ||
-			strcmp(slave->binlogfile, router->binlog_name) != 0)
-	{
-		spinlock_acquire(&slave->catch_lock);
-		slave->cstate &= ~CS_UPTODATE;
-		slave->cstate |= CS_EXPECTCB;
-		spinlock_release(&slave->catch_lock);
-		poll_fake_write_event(slave->dcb);
-	}
+    if (slave->binlog_pos != router->binlog_position ||
+        strcmp(slave->binlogfile, router->binlog_name) != 0)
+    {
+        spinlock_acquire(&slave->catch_lock);
+        slave->cstate &= ~CS_UPTODATE;
+        slave->cstate |= CS_EXPECTCB;
+        spinlock_release(&slave->catch_lock);
+        poll_fake_write_event(slave->dcb);
+    }
 
-	return 1;
+    return 1;
 }
 
 /**
  * Encode a value into a number of bits in a AVRO format
  *
- * @param	data	Pointer to location in target packet
- * @param	value	The value to encode into the buffer
- * @param	len	Number of bits to encode value into
+ * @param   data    Pointer to location in target packet
+ * @param   value   The value to encode into the buffer
+ * @param   len Number of bits to encode value into
  */
 static void
 avro_encode_value(unsigned char *data, unsigned int value, int len)
 {
-	while (len > 0)
-	{
-		*data++ = value & 0xff;
-		value >>= 8;
-		len -= 8;
-	}
+    while (len > 0)
+    {
+        *data++ = value & 0xff;
+        value >>= 8;
+        len -= 8;
+    }
 }
 
 /**
@@ -213,23 +213,23 @@ avro_encode_value(unsigned char *data, unsigned int value, int len)
  * queue. This ensures that the slave callback for processing DCB write drain
  * will be called and future catchup requests will be handled on another thread.
  *
- * @param	router		The binlog router
- * @param	slave		The slave that is behind
- * @param	large		Send a long or short burst of events
- * @return			The number of bytes written
+ * @param   router      The binlog router
+ * @param   slave       The slave that is behind
+ * @param   large       Send a long or short burst of events
+ * @return          The number of bytes written
  */
 int
 avro_client_catchup(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, bool large)
 {
-GWBUF		*head, *record;
-REP_HEADER	hdr;
-int		written, rval = 1, burst;
-int		rotating = 0;
-long	burst_size;
-uint8_t		*ptr;
-char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
+    GWBUF       *head, *record;
+    REP_HEADER  hdr;
+    int     written, rval = 1, burst;
+    int     rotating = 0;
+    long    burst_size;
+    uint8_t     *ptr;
+    char read_errmsg[BINLOG_ERROR_MSG_LEN + 1];
 
-	return rval;
+    return rval;
 }
 
 /**
@@ -238,16 +238,16 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
  * that is used to implement the flow control mechanism for the sending of
  * large quantities of binlog records during the catchup process.
  *
- * @param dcb		The DCB of the slave connection
- * @param reason	The reason the callback was called
- * @param data		The user data, in this case the server structure
+ * @param dcb       The DCB of the slave connection
+ * @param reason    The reason the callback was called
+ * @param data      The user data, in this case the server structure
  */
 int
 avro_client_callback(DCB *dcb, DCB_REASON reason, void *data)
 {
-ROUTER_SLAVE		*slave = (ROUTER_SLAVE *)data;
-ROUTER_INSTANCE		*router = slave->router;
-unsigned int cstate;
+    ROUTER_SLAVE        *slave = (ROUTER_SLAVE *)data;
+    ROUTER_INSTANCE     *router = slave->router;
+    unsigned int cstate;
 
     if (NULL == dcb->session->router_session)
     {
@@ -258,91 +258,95 @@ unsigned int cstate;
          */
         return 0;
     }
-	if (reason == DCB_REASON_DRAINED)
-	{
-		if (slave->state == BLRS_DUMPING)
-		{
-			int do_return;
+    if (reason == DCB_REASON_DRAINED)
+    {
+        if (slave->state == BLRS_DUMPING)
+        {
+            int do_return;
 
-			spinlock_acquire(&router->binlog_lock);
+            spinlock_acquire(&router->binlog_lock);
 
-			do_return = 0;
-			cstate = slave->cstate;
+            do_return = 0;
+            cstate = slave->cstate;
 
-			/* check for a pending transaction and not rotating */
-			if (router->pending_transaction && strcmp(router->binlog_name, slave->binlogfile) == 0 &&
-				(slave->binlog_pos > router->binlog_position) && !router->rotating) {
-				do_return = 1;
-			}
+            /* check for a pending transaction and not rotating */
+            if (router->pending_transaction && strcmp(router->binlog_name, slave->binlogfile) == 0 &&
+                (slave->binlog_pos > router->binlog_position) && !router->rotating)
+            {
+                do_return = 1;
+            }
 
-			spinlock_release(&router->binlog_lock);
+            spinlock_release(&router->binlog_lock);
 
-			if (do_return) {
-				spinlock_acquire(&slave->catch_lock);
-				slave->cstate |= CS_EXPECTCB;
-				spinlock_release(&slave->catch_lock);
-				poll_fake_write_event(slave->dcb);
+            if (do_return)
+            {
+                spinlock_acquire(&slave->catch_lock);
+                slave->cstate |= CS_EXPECTCB;
+                spinlock_release(&slave->catch_lock);
+                poll_fake_write_event(slave->dcb);
 
-				return 0;
-			}
+                return 0;
+            }
 
-			spinlock_acquire(&slave->catch_lock);
-			cstate = slave->cstate;
-			slave->cstate &= ~(CS_UPTODATE|CS_EXPECTCB);
-			spinlock_release(&slave->catch_lock);
+            spinlock_acquire(&slave->catch_lock);
+            cstate = slave->cstate;
+            slave->cstate &= ~(CS_UPTODATE | CS_EXPECTCB);
+            spinlock_release(&slave->catch_lock);
 
-			if ((cstate & CS_UPTODATE) == CS_UPTODATE)
-			{
+            if ((cstate & CS_UPTODATE) == CS_UPTODATE)
+            {
 #ifdef STATE_CHANGE_LOGGING_ENABLED
-				MXS_NOTICE("%s: Slave %s:%d, server-id %d transition from up-to-date to catch-up in blr_slave_callback, binlog file '%s', position %lu.",
-					router->service->name,
-					slave->dcb->remote,
-					ntohs((slave->dcb->ipv4).sin_port),
-					slave->serverid,
-					slave->binlogfile, (unsigned long)slave->binlog_pos);
+                MXS_NOTICE("%s: Slave %s:%d, server-id %d transition from up-to-date to catch-up in blr_slave_callback, binlog file '%s', position %lu.",
+                           router->service->name,
+                           slave->dcb->remote,
+                           ntohs((slave->dcb->ipv4).sin_port),
+                           slave->serverid,
+                           slave->binlogfile, (unsigned long)slave->binlog_pos);
 #endif
-			}
+            }
 
-			slave->stats.n_dcb++;
-			avro_client_catchup(router, slave, true);
-		}
-		else
-		{
-        		MXS_DEBUG("Ignored callback due to slave state %s",
-                                  blrs_states[slave->state]);
-		}
-	}
+            slave->stats.n_dcb++;
+            avro_client_catchup(router, slave, true);
+        }
+        else
+        {
+            MXS_DEBUG("Ignored callback due to slave state %s",
+                      blrs_states[slave->state]);
+        }
+    }
 
-	if (reason == DCB_REASON_LOW_WATER)
-	{
-		if (slave->state == BLRS_DUMPING)
-		{
-			slave->stats.n_cb++;
-			avro_client_catchup(router, slave, true);
-		}
-		else
-		{
-			slave->stats.n_cbna++;
-		}
-	}
-	return 0;
+    if (reason == DCB_REASON_LOW_WATER)
+    {
+        if (slave->state == BLRS_DUMPING)
+        {
+            slave->stats.n_cb++;
+            avro_client_catchup(router, slave, true);
+        }
+        else
+        {
+            slave->stats.n_cbna++;
+        }
+    }
+    return 0;
 }
 
 /**
  * Rotate the slave to the new binlog file
  *
- * @param slave 	The slave instance
- * @param ptr		The rotate event (minus header and OK byte)
+ * @param slave     The slave instance
+ * @param ptr       The rotate event (minus header and OK byte)
  */
 void
 avro_client_rotate(AVRO_INSTANCE *router, AVRO_CLIENT *client, uint8_t *ptr)
 {
-int	len = EXTRACT24(ptr + 9);	// Extract the event length
+    int len = EXTRACT24(ptr + 9);   // Extract the event length
 
-	len = len - (BINLOG_EVENT_HDR_LEN + 8);		// Remove length of header and position
-	if (len > BINLOG_FNAMELEN)
-		len = BINLOG_FNAMELEN;
-	ptr += BINLOG_EVENT_HDR_LEN;	// Skip header
-	memcpy(client->avrofile, ptr + 8, len);
-	client->avrofile[len] = 0;
+    len = len - (BINLOG_EVENT_HDR_LEN + 8);     // Remove length of header and position
+    if (len > BINLOG_FNAMELEN)
+    {
+        len = BINLOG_FNAMELEN;
+    }
+    ptr += BINLOG_EVENT_HDR_LEN;    // Skip header
+    memcpy(client->avrofile, ptr + 8, len);
+    client->avrofile[len] = 0;
 }

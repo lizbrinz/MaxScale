@@ -82,7 +82,8 @@ void handle_table_map_event(ROUTER_INSTANCE *router, REP_HEADER *hdr, uint64_t p
 void handle_row_event(ROUTER_INSTANCE *router, REP_HEADER *hdr, HASHTABLE *maphash, uint64_t pos)
 {
     uint8_t *buf = malloc(hdr->event_size - BINLOG_EVENT_HDR_LEN);
-    ssize_t nread = pread(router->binlog_fd, buf, hdr->event_size - BINLOG_EVENT_HDR_LEN, pos + BINLOG_EVENT_HDR_LEN);
+    ssize_t nread = pread(router->binlog_fd, buf, hdr->event_size - BINLOG_EVENT_HDR_LEN,
+                          pos + BINLOG_EVENT_HDR_LEN);
     uint8_t *ptr = buf;
     uint8_t table_id_size = router->event_type_hdr_lens[hdr->event_type] == 6 ? 4 : 6;
     uint64_t table_id = 0;
@@ -102,8 +103,8 @@ void handle_row_event(ROUTER_INSTANCE *router, REP_HEADER *hdr, HASHTABLE *mapha
 
     if (table_id == TABLE_DUMMY_ID && flags & ROW_EVENT_END_STATEMENT)
     {
-     /** This is an dummy event which should release all table maps. Right
-      * now we just return without processing the rows. */
+        /** This is an dummy event which should release all table maps. Right
+         * now we just return without processing the rows. */
         free(buf);
         return;
     }
@@ -141,7 +142,7 @@ void handle_row_event(ROUTER_INSTANCE *router, REP_HEADER *hdr, HASHTABLE *mapha
         char outfile[PATH_MAX];
         snprintf(outfile, sizeof(outfile), "/tmp/%s.%s.%s.avro", map->database, map->table, map->version_string);
 
-        if(access(outfile, F_OK) == 0)
+        if (access(outfile, F_OK) == 0)
         {
             avro_file_writer_open(outfile, &writer);
         }
@@ -278,7 +279,7 @@ void process_row_event(TABLE_MAP *map, avro_value_t *record, uint8_t **orig_ptr,
  * Extract the table definition from a CREATE TABLE statement
  * @param sql
  * @param size
- * @return 
+ * @return
  */
 static const char* get_table_definition(const char *sql, int* size)
 {
@@ -312,10 +313,10 @@ static const char* get_table_definition(const char *sql, int* size)
             }
 
             /** We found the last closing parenthesis */
-            if(depth < 0)
+            if (depth < 0)
             {
-               *size = ptr - start;
-               rval = start;
+                *size = ptr - start;
+                rval = start;
             }
         }
     }
@@ -324,9 +325,9 @@ static const char* get_table_definition(const char *sql, int* size)
 }
 
 /**
- * 
+ *
  * @param sql
- * @return 
+ * @return
  * TODO: NULL return value checks
  */
 TABLE_CREATE* hande_create_table_event(const char* sql)
@@ -347,7 +348,7 @@ TABLE_CREATE* hande_create_table_event(const char* sql)
     size_t names_size = 8;
     char **names = malloc(sizeof(char*) * names_size);
 
-    while(nameptr)
+    while (nameptr)
     {
         if (i >= names_size)
         {
@@ -366,7 +367,7 @@ TABLE_CREATE* hande_create_table_event(const char* sql)
         }
         char colname[64 + 1];
         char *end = strchr(nameptr, ' ');
-        if(end)
+        if (end)
         {
             sprintf(colname, "%.*s", (int)(end - nameptr), nameptr);
             names[i++] = strdup(colname);
@@ -386,6 +387,6 @@ TABLE_CREATE* hande_create_table_event(const char* sql)
         rval->table = table;
         rval->gtid[0] = '\0'; // GTID not yet implemented
     }
-    
+
     return rval;
 }

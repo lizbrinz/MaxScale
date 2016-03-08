@@ -58,7 +58,7 @@ void save_avro_schema(const char *path, const char* schema, TABLE_MAP *map)
     int i = 1;
     sprintf(filepath, "%s/%s.%s.%06d.avsc", path, map->database, map->table, i);
 
-    while(access(filepath, F_OK) == 0)
+    while (access(filepath, F_OK) == 0)
     {
         i++;
         sprintf(filepath, "%s/%s.%s.%06d.avsc", path, map->database, map->table, i);
