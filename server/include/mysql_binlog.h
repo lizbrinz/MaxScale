@@ -124,5 +124,7 @@ void format_temporal_value(char *str, size_t size, uint8_t type, struct tm *tm);
 /** Field value extraction */
 uint64_t extract_field_value(uint8_t *ptr, uint8_t type, uint64_t* val);
 
+TABLE_CREATE* table_create_alloc(const char* sql, const char* db);
+void table_create_free(TABLE_CREATE* value);
 
 #endif /* MYSQL_BINLOG_H */

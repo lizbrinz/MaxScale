@@ -26,6 +26,7 @@
 #include <log_manager.h>
 #include <string.h>
 #include <skygw_debug.h>
+#include <dbusers.h>
 
 /**
  * @brief Extract a table map from a table map event
@@ -311,7 +312,7 @@ static void unpack_date(uint64_t val, struct tm *dest)
 bool is_temporal_value(uint8_t type)
 {
     return type == TABLE_COL_TYPE_DATETIME || type == TABLE_COL_TYPE_DATE ||
-        type == TABLE_COL_TYPE_TIMESTAMP || type == TABLE_COL_TYPE_TIME;
+           type == TABLE_COL_TYPE_TIMESTAMP || type == TABLE_COL_TYPE_TIME;
 }
 
 /**
@@ -368,7 +369,7 @@ void format_temporal_value(char *str, size_t size, uint8_t type, struct tm *tm)
             // TODO: implement TIMESTAMP extraction
             //format = "%Y-%m-%d %H:%M:%S";
             break;
-            
+
         default:
             MXS_ERROR("Unexpected temporal type: %x", type);
             ss_dassert(false);
@@ -412,10 +413,10 @@ size_t extract_field_value(uint8_t *ptr, uint8_t type, uint64_t* val)
             memcpy(val, ptr, 1);
             return 1;
 
-            /** The following seem to differ from the MySQL documentation and
-             * they are stored as some sort of binary values when tested with
-             * MariaDB 10.0.23. The MariaDB source code also mentions that
-             * there are differences between various versions.*/
+        /** The following seem to differ from the MySQL documentation and
+         * they are stored as some sort of binary values when tested with
+         * MariaDB 10.0.23. The MariaDB source code also mentions that
+         * there are differences between various versions.*/
         case TABLE_COL_TYPE_DATETIME:
             memcpy(val, ptr, 8);
             return 8;
@@ -434,4 +435,175 @@ size_t extract_field_value(uint8_t *ptr, uint8_t type, uint64_t* val)
             break;
     }
     return 0;
+}
+
+/**
+ * Extract the table definition from a CREATE TABLE statement
+ * @param sql The SQL statement
+ * @param size Length of the statement
+ * @return Pointer to the start of the definition of NULL if the query is
+ * malformed.
+ */
+static const char* get_table_definition(const char *sql, int* size)
+{
+    const char *rval = NULL;
+    const char *ptr = sql;
+    const char *end = strchr(sql, '\0');
+    while (ptr < end && *ptr != '(')
+    {
+        ptr++;
+    }
+
+    /** We assume at least the parentheses are in the statement */
+    if (ptr < end - 2)
+    {
+        int depth = 0;
+        ptr++;
+        const char *start = ptr; // Skip first parenthesis
+        while (ptr < end)
+        {
+            switch (*ptr)
+            {
+                case '(':
+                    depth++;
+                    break;
+
+                case ')':
+                    depth--;
+                    break;
+
+                default:
+                    break;
+            }
+
+            /** We found the last closing parenthesis */
+            if (depth < 0)
+            {
+                *size = ptr - start;
+                rval = start;
+                break;
+            }
+            ptr++;
+        }
+    }
+
+    return rval;
+}
+
+/**
+ * Extract the table name from a CREATE TABLE statement
+ * @param sql SQL statement
+ * @param dest Destination where the table name is extracted. Must be at least
+ * MYSQL_TABLE_MAXLEN bytes long.
+ * @return True if extraction was successful
+ */
+static bool get_table_name(const char* sql, char* dest)
+{
+    bool rval = false;
+    const char* ptr = strchr(sql, '(');
+
+    if (ptr)
+    {
+        ptr--;
+        while (*ptr == '`' || isspace(*ptr))
+        {
+            ptr--;
+        }
+
+        const char* end = ptr + 1;
+        while (*ptr != '`' && *ptr != '.' && !isspace(*ptr))
+        {
+            ptr--;
+        }
+        ptr++;
+        memcpy(dest, ptr, end - ptr);
+        dest[end - ptr] = '\0';
+        rval = true;
+    }
+
+    return rval;
+}
+
+/**
+ * @brief Handle a query event which contains a CREATE TABLE statement
+ * @param sql Query SQL
+ * @param db Database where this query was executed
+ * @return
+ * TODO: NULL return value checks
+ */
+TABLE_CREATE* table_create_alloc(const char* sql, const char* db)
+{
+    /** Extract the table definition so we can get the column names from it */
+    int stmt_len = 0;
+    const char* statement_sql = get_table_definition(sql, &stmt_len);
+    MXS_NOTICE("Create table statement: %.*s", stmt_len, statement_sql);
+    TABLE_CREATE *rval = NULL;
+    const char *nameptr = statement_sql;
+    char table[MYSQL_TABLE_MAXLEN];
+    get_table_name(sql, table);
+
+    /** Process columns in groups of 8 */
+    size_t names_size = 8;
+    int i = 0;
+    char **names = malloc(sizeof(char*) * names_size);
+
+    while (nameptr)
+    {
+        if (i >= names_size)
+        {
+            char **tmp = realloc(names, (names_size + 8) * sizeof(char*));
+            if (tmp)
+            {
+                names = tmp;
+                names_size += 8;
+            }
+        }
+
+        while (isspace(*nameptr))
+        {
+            nameptr++;
+        }
+        char colname[64 + 1];
+        char *end = strchr(nameptr, ' ');
+        if (end)
+        {
+            sprintf(colname, "%.*s", (int) (end - nameptr), nameptr);
+            names[i++] = strdup(colname);
+            MXS_NOTICE("Column name: %s", colname);
+        }
+
+        if ((nameptr = strchr(nameptr, ',')))
+        {
+            nameptr++;
+        }
+    }
+
+    /** We have appear to have a valid CREATE TABLE statement */
+    if (i > 0)
+    {
+        rval = malloc(sizeof(TABLE_CREATE));
+        rval->column_names = names;
+        rval->columns = i;
+        rval->database = strdup(db);
+        rval->table = strdup(table);
+        rval->gtid[0] = '\0'; // GTID not yet implemented
+    }
+
+    return rval;
+}
+
+/**
+ * Free a TABLE_CREATE structure
+ * @param value Value to free
+ */
+void table_create_free(TABLE_CREATE* value)
+{
+    for (uint64_t i = 0; i < value->columns; i++)
+    {
+        free(value->column_names[i]);
+    }
+    free(value->column_names);
+    free(value->table);
+    free(value->database);
+    free(value);
 }

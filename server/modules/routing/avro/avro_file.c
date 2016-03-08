@@ -44,7 +44,7 @@
 #include <rbr.h>
 
 static const char* create_table_regex =
-    "(?i)create[[:space:]]+table([[:space:]]+if[[:space:]]+not[[:space:]]+exists)?[(]";
+    "(?i)^create[a-z0-9[:space:]_]+table";
 
 /**
  * Prepare an existing binlog file to be appened to.
@@ -485,8 +485,8 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             char *statement_sql;
             db_name_len = ptr[4 + 4];
             var_block_len = ptr[4 + 4 + 1 + 2];
-
-            statement_len = hdr.event_size - BINLOG_EVENT_HDR_LEN - (4 + 4 + 1 + 2 + 2 + var_block_len + 1 + db_name_len);
+            const int post_header_len = 4 + 4 + 1 + 2 + 2;
+            statement_len = hdr.event_size - BINLOG_EVENT_HDR_LEN - (post_header_len + var_block_len + 1 + db_name_len);
             statement_sql = malloc(statement_len + 1);
             strncpy(statement_sql, (char *) ptr + 4 + 4 + 1 + 2 + 2 + var_block_len + 1 + db_name_len, statement_len);
             statement_sql[statement_len] = '\0';
@@ -496,7 +496,24 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
 
             if (mxs_pcre2_simple_match(create_table_regex, statement_sql, 0, &reg_err) == MXS_PCRE2_MATCH)
             {
-                //hande_create_table_event(statement_sql);
+                char db[db_name_len + 1];
+                strncpy(db, (char*)ptr + post_header_len + var_block_len, sizeof(db));
+                TABLE_CREATE *created = table_create_alloc(statement_sql, db);
+
+                if (created)
+                {
+                    char table_ident[MYSQL_TABLE_MAXLEN + MYSQL_DATABASE_MAXLEN + 2];
+                    snprintf(table_ident, sizeof(table_ident), "%s.%s", created->database, created->table);
+
+                    spinlock_acquire(&router->lock);
+                    TABLE_CREATE *old = hashtable_fetch(router->created_tables, table_ident);
+                    if (old)
+                    {
+                        hashtable_delete(router->created_tables, table_ident);
+                    }
+                    hashtable_add(router->created_tables, table_ident, created);
+                    spinlock_release(&router->lock);
+                }
             }
             /* A transaction starts with this event */
             if (strncmp(statement_sql, "BEGIN", 5) == 0)

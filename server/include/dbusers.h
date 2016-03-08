@@ -20,7 +20,7 @@
 
 #include <service.h>
 #include <arpa/inet.h>
-
+#include <users.h>
 
 /**
  * @file dbusers.h Extarct user information form the backend database

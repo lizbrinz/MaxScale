@@ -20,5 +20,5 @@
  * @file avro_schema.h - Avro schema related functions
  */
 
-char* json_schema_from_table_map(TABLE_MAP *map);
+char* json_new_schema_from_table(TABLE_MAP *map, TABLE_CREATE *create);
 void save_avro_schema(const char *path, const char* schema, TABLE_MAP *map);

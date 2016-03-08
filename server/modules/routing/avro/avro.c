@@ -121,7 +121,7 @@ void* i64dup(void *data)
 
 }
 
-void* i64free(void *data)
+void* safe_key_free(void *data)
 {
     free(data);
     return NULL;
@@ -310,15 +310,19 @@ createInstance(SERVICE *service, char **options)
     strcpy(inst->prevbinlog, "");
 
     if ((inst->table_maps = hashtable_alloc(1000, table_id_hash, table_id_cmp)) &&
-        (inst->schemas = hashtable_alloc(1000, table_id_hash, table_id_cmp)))
+        (inst->schemas = hashtable_alloc(1000, table_id_hash, table_id_cmp)) &&
+        (inst->created_tables = hashtable_alloc(1000, simple_str_hash, strcmp)))
     {
-        hashtable_memory_fns(inst->table_maps, i64dup, NULL, i64free, NULL);
-        hashtable_memory_fns(inst->schemas, i64dup, NULL, i64free, NULL);
+        hashtable_memory_fns(inst->table_maps, i64dup, NULL, safe_key_free, NULL);
+        hashtable_memory_fns(inst->schemas, i64dup, NULL, safe_key_free, NULL);
+        hashtable_memory_fns(inst->created_tables, (HASHMEMORYFN)strdup, NULL,
+                             safe_key_free, NULL);
     }
     else
     {
         hashtable_free(inst->table_maps);
         hashtable_free(inst->schemas);
+        hashtable_free(inst->created_tables);
         MXS_ERROR("Hashtable allocation failed. This is most likely caused "
                   "by a lack of available memory.");
         free(inst);

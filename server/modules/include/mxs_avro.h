@@ -11,6 +11,7 @@
 #include <service.h>
 #include <spinlock.h>
 #include <mysql_binlog.h>
+#include <dbusers.h>
 
 /**
  * How often to call the router status function (seconds)
@@ -115,6 +116,7 @@ typedef struct avro_instance {
     char    current_gtid[GTID_MAX_LEN];
     HASHTABLE     *table_maps;
     HASHTABLE     *schemas;
+    HASHTABLE     *created_tables;
     char              prevbinlog[BINLOG_FNAMELEN+1];
     int               rotating;     /*< Rotation in progress flag */
     SPINLOCK          fileslock;    /*< Lock for the files queue above */

@@ -19,27 +19,46 @@
 /**
  * @file avro_schema.c - Avro schema related functions
  */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 
 #include <mysql_binlog.h>
 #include <jansson.h>
 #include <stdio.h>
 #include <limits.h>
 #include <unistd.h>
+#include <log_manager.h>
+#include <sys/stat.h>
+#include <errno.h>
+#include <skygw_utils.h>
+#include <string.h>
 
-char* json_schema_from_table_map(TABLE_MAP *map)
+/**
+ * Create a new JSON Avro schema from the table map and create table abstractions
+ * @param map TABLE_MAP for this table
+ * @param create The TABLE_CREATE for this table
+ * @return New schema or NULL if an error occurred
+ */
+char* json_new_schema_from_table(TABLE_MAP *map, TABLE_CREATE *create)
 {
+    if (map->columns != create->columns)
+    {
+        MXS_ERROR("Column count mismatch for table %s.%s.", map->database, map->table);
+        return NULL;
+    }
+
     json_error_t err;
     json_t *schema = json_object();
     json_object_set_new(schema, "namespace", json_string("MaxScaleChangeDataSchema.avro"));
     json_object_set_new(schema, "type", json_string("record"));
     json_object_set_new(schema, "name", json_string("ChangeRecord"));
 
-    char namebuf[256];
     json_t *array = json_array();
     for (uint64_t i = 0; i < map->columns; i++)
     {
-        sprintf(namebuf, "column_%lu", i + 1);
-        json_array_append(array, json_pack_ex(&err, 0, "{s:s, s:s}", "name", namebuf, "type", "string"));
+        json_array_append(array, json_pack_ex(&err, 0, "{s:s, s:s}", "name",
+                                              create->column_names[i], "type", "string"));
     }
     json_object_set_new(schema, "fields", array);
     return json_dumps(schema, JSON_PRESERVE_ORDER);
@@ -60,6 +79,35 @@ void save_avro_schema(const char *path, const char* schema, TABLE_MAP *map)
 
     while (access(filepath, F_OK) == 0)
     {
+        struct stat st;
+        bool equal = false;
+
+        if (stat(filepath, &st) == -1)
+        {
+            char errbuf[STRERROR_BUFLEN];
+            MXS_ERROR("Failed to stat file '%s': %d, %s", filepath, errno,
+                      strerror_r(errno, errbuf, sizeof(errbuf)));
+        }
+        else
+        {
+            char old_schema[st.st_size + 1];
+            FILE *oldfile = fopen(filepath, "rb");
+            if (oldfile)
+            {
+                fread(old_schema, 1, sizeof(old_schema), oldfile);
+                if (strncmp(old_schema, schema, MIN(sizeof(old_schema), strlen(schema))) == 0)
+                {
+                    equal = true;
+                }
+                fclose(oldfile);
+            }
+
+            /** Old schema matches the new schema, no need to create a new one */
+            if (equal)
+            {
+                return;
+            }
+        }
         i++;
         sprintf(filepath, "%s/%s.%s.%06d.avsc", path, map->database, map->table, i);
     }
