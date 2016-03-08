@@ -2999,6 +2999,8 @@ dcb_accept(DCB *listener)
         }
         else
         {
+            GWAUTHENTICATOR *authfuncs;
+
             client_dcb->service = listener->session->service;
             client_dcb->session = session_set_dummy(client_dcb);
             client_dcb->fd = c_sock;
@@ -3028,6 +3030,16 @@ dcb_accept(DCB *listener)
                           INET_ADDRSTRLEN);
                 }
             }
+            if ((authfuncs = (GWAUTHENTICATOR *)load_module(listener->listener->authenticator,
+                MODULE_AUTHENTICATOR)) == NULL)
+            {
+                MXS_ERROR("Failed to load authenticator module for %s, free dcb %p\n",
+                  listener->listener->authenticator,
+                  client_dcb);
+                dcb_close(client_dcb);
+            }
+            memcpy(&(client_dcb->authfunc), authfuncs, sizeof(GWAUTHENTICATOR));
+
         }
     }
     return client_dcb;

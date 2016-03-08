@@ -61,6 +61,8 @@
 #include <modutil.h>
 #include <netinet/tcp.h>
 
+#include "gw_authenticator.h"
+
 MODULE_INFO info =
 {
     MODULE_API_PROTOCOL,
@@ -490,14 +492,14 @@ int gw_read_client_event(DCB* dcb)
              * mysql_auth_authenticate to carry out the actual user checks.
              */
             if (MYSQL_AUTH_SUCCEEDED == (
-                auth_val = mysql_auth_set_protocol_data(dcb, read_buffer)))
+                auth_val = dcb->authfunc.extract(dcb, read_buffer)))
             {
                 /*
                   compress =
                   GW_MYSQL_CAPABILITIES_COMPRESS & gw_mysql_get_byte4(
                   &protocol->client_capabilities);
                 */
-                auth_val = mysql_auth_authenticate(dcb, &read_buffer);
+                auth_val = dcb->authfunc.authenticate(dcb, &read_buffer);
             }
 
             /**

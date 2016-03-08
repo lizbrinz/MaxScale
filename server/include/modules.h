@@ -60,6 +60,7 @@ typedef struct modules {
  * Module types
  */
 #define MODULE_PROTOCOL         "Protocol"        /**< A protocol module type */
+#define MODULE_AUTHENTICATOR    "Authenticator"   /**< An authenticator module type */
 #define MODULE_ROUTER           "Router"          /**< A router module type */
 #define MODULE_MONITOR          "Monitor"         /**< A database monitor module type */
 #define MODULE_FILTER           "Filter"          /**< A filter module type */

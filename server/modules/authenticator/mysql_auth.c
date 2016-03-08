@@ -39,10 +39,14 @@ MODULE_INFO info =
     MODULE_API_AUTHENTICATOR,
     MODULE_GA,
     GWAUTHENTICATOR_VERSION,
-    "The client to MaxScale authenticator implementation"
+    "The MySQL client to MaxScale authenticator implementation"
 };
 
 static char *version_str = "V1.0.0";
+
+static int mysql_auth_set_protocol_data(DCB *dcb, GWBUF *buf);
+static bool mysql_auth_is_client_ssl_capable(DCB *dcb);
+static int mysql_auth_authenticate(DCB *dcb, GWBUF **buffer);
 
 /*
  * The "module object" for mysql client authenticator module.
@@ -53,10 +57,6 @@ static GWAUTHENTICATOR MyObject =
     mysql_auth_is_client_ssl_capable,       /* Check if client supports SSL  */
     mysql_auth_authenticate,                /* Authenticate user credentials */
 };
-
-static int mysql_auth_set_protocol_data(DCB *dcb, GWBUF *buf);
-static bool mysql_auth_is_client_ssl_capable(DCB *dcb);
-static int mysql_auth_authenticate(DCB *dcb, GWBUF **buffer);
 
 static int combined_auth_check(
     DCB             *dcb,
@@ -125,7 +125,7 @@ mysql_auth_authenticate(DCB *dcb, GWBUF **buffer)
     MYSQL_session *client_data = (MYSQL_session *)dcb->data;
     int auth_ret, ssl_ret;
 
-    if (0 != (ssl_ret = ssl_authenticate_client(dcb, mysql_auth_is_client_ssl_capable(dcb))))
+    if (0 != (ssl_ret = ssl_authenticate_client(dcb, dcb->authfunc.connectssl(dcb))))
     {
         auth_ret = (SSL_ERROR_CLIENT_NOT_SSL == ssl_ret) ? MYSQL_FAILED_AUTH_SSL : MYSQL_FAILED_AUTH;
     }

@@ -55,7 +55,7 @@ struct session;
  *
  * @see load_module
  */
-typedef struct gw_protocol
+typedef struct gw_authenticator
 {
     int (*extract)(struct dcb *, GWBUF *);
     bool (*connectssl)(struct dcb *);

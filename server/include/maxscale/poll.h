@@ -20,6 +20,7 @@
 #include <dcb.h>
 #include <gwbitmask.h>
 #include <resultset.h>
+#include <sys/epoll.h>
 
 /**
  * @file poll.h     The poll related functionality

@@ -20,6 +20,7 @@
 #include <spinlock.h>
 #include <buffer.h>
 #include <gw_protocol.h>
+#include <gw_authenticator.h>
 #include <gw_ssl.h>
 #include <modinfo.h>
 #include <gwbitmask.h>
@@ -218,7 +219,8 @@ typedef struct dcb
     void            *protocol;      /**< The protocol specific state */
     struct session  *session;       /**< The owning session */
     struct servlistener *listener;  /**< For a client DCB, the listener data */
-    GWPROTOCOL      func;           /**< The functions for this descriptor */
+    GWPROTOCOL      func;           /**< The protocol functions for this descriptor */
+    GWAUTHENTICATOR authfunc;       /**< The authenticator functions for this descriptor */
 
     int             writeqlen;      /**< Current number of byes in the write queue */
     SPINLOCK        writeqlock;     /**< Write Queue spinlock */

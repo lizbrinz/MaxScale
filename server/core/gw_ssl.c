@@ -52,8 +52,9 @@
  * @param is_capable Indicates if the client can handle SSL
  * @return 0 if ok, >0 if a problem - see return codes defined in gw_ssl.h
  */
-int ssl_authenticate_client(DCB *dcb, const char *user, bool is_capable)
+int ssl_authenticate_client(DCB *dcb, bool is_capable)
 {
+    char *user = dcb->user ? dcb->user : "";
     char *remote = dcb->remote ? dcb->remote : "";
     char *service = (dcb->service && dcb->service->name) ? dcb->service->name : "";
 

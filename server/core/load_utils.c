@@ -180,6 +180,12 @@ load_module(const char *module, const char *type)
                 MXS_ERROR("Module '%s' does not implement the protocol API.", module);
                 fatal = 1;
             }
+            if (strcmp(type, MODULE_AUTHENTICATOR) == 0
+                && mod_info->modapi != MODULE_API_AUTHENTICATOR)
+            {
+                MXS_ERROR("Module '%s' does not implement the authenticator API.", module);
+                fatal = 1;
+            }
             if (strcmp(type, MODULE_ROUTER) == 0
                 && mod_info->modapi != MODULE_API_ROUTER)
             {
