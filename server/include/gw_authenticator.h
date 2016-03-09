@@ -60,6 +60,7 @@ typedef struct gw_authenticator
     int (*extract)(struct dcb *, GWBUF *);
     bool (*connectssl)(struct dcb *);
     int (*authenticate)(struct dcb *, GWBUF **);
+    void (*free)(struct dcb *);
 } GWAUTHENTICATOR;
 
 /**

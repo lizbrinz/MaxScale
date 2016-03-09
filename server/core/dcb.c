@@ -372,9 +372,11 @@ dcb_final_free(DCB *dcb)
         CHK_SESSION(local_session);
         if (SESSION_STATE_DUMMY != local_session->state)
         {
+            bool is_client_dcb = (DCB_ROLE_CLIENT_HANDLER == dcb->dcb_role);
+
             session_free(local_session);
 
-            if (DCB_ROLE_CLIENT_HANDLER == dcb->dcb_role)
+            if (is_client_dcb)
             {
                 /** The client DCB is only freed once all other DCBs that the session
                  * uses have been freed. This will guarantee that the authentication
@@ -1616,7 +1618,8 @@ dcb_close(DCB *dcb)
     spinlock_acquire(&zombiespin);
     if (!dcb->dcb_is_zombie)
     {
-        if (0 == dcb->persistentstart && dcb->server && DCB_STATE_POLLING == dcb->state)
+        if (DCB_ROLE_BACKEND_HANDLER == dcb->dcb_role && 0 == dcb->persistentstart
+            && dcb->server && DCB_STATE_POLLING == dcb->state)
         {
             /* May be a candidate for persistence, so save user name */
             char *user;
@@ -3037,6 +3040,7 @@ dcb_accept(DCB *listener)
                   listener->listener->authenticator,
                   client_dcb);
                 dcb_close(client_dcb);
+                return NULL;
             }
             memcpy(&(client_dcb->authfunc), authfuncs, sizeof(GWAUTHENTICATOR));
 

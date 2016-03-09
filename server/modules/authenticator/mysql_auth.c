@@ -47,6 +47,7 @@ static char *version_str = "V1.0.0";
 static int mysql_auth_set_protocol_data(DCB *dcb, GWBUF *buf);
 static bool mysql_auth_is_client_ssl_capable(DCB *dcb);
 static int mysql_auth_authenticate(DCB *dcb, GWBUF **buffer);
+static void mysql_auth_free_client_data(DCB *dcb);
 
 /*
  * The "module object" for mysql client authenticator module.
@@ -56,6 +57,7 @@ static GWAUTHENTICATOR MyObject =
     mysql_auth_set_protocol_data,           /* Extract data into structure   */
     mysql_auth_is_client_ssl_capable,       /* Check if client supports SSL  */
     mysql_auth_authenticate,                /* Authenticate user credentials */
+    mysql_auth_free_client_data,            /* Free the client data held in DCB */
 };
 
 static int combined_auth_check(
@@ -604,4 +606,22 @@ static int combined_auth_check(
     /* check for database name match in resource hashtable */
     auth_ret = check_db_name_after_auth(dcb, database, auth_ret);
     return auth_ret;
+}
+
+/**
+ * @brief Free the client data pointed to by the passed DCB.
+ *
+ * Currently all that is required is to free the storage pointed to by
+ * dcb->data.  But this is intended to be implemented as part of the
+ * authentication API at which time this code will be moved into the
+ * MySQL authenticator.  If the data structure were to become more complex
+ * the mechanism would still work and be the responsibility of the authenticator.
+ * The DCB should not know authenticator implementation details.
+ *
+ * @param dcb Request handler DCB connected to the client
+ */
+static void
+mysql_auth_free_client_data(DCB *dcb)
+{
+    free(dcb->data);
 }
