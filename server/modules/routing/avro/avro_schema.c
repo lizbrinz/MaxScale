@@ -35,6 +35,42 @@
 #include <string.h>
 
 /**
+ * @brief Convert the MySQL column type to a compatible Avro type
+ *
+ * Some fields are larger than they need to be but since the Avro integer
+ * compression is quite efficient, the real loss in performance is negligible.
+ * @param type MySQL column type
+ * @return String representation of the Avro type
+ */
+static const char* column_type_to_avro_type(uint8_t type)
+{
+    switch (type)
+    {
+        case TABLE_COL_TYPE_DECIMAL:
+        case TABLE_COL_TYPE_TINY:
+        case TABLE_COL_TYPE_SHORT:
+        case TABLE_COL_TYPE_LONG:
+        case TABLE_COL_TYPE_INT24:
+            return "int";
+
+        case TABLE_COL_TYPE_FLOAT:
+            return "float";
+
+        case TABLE_COL_TYPE_DOUBLE:
+            return "double";
+
+        case TABLE_COL_TYPE_NULL:
+            return "null";
+
+        case TABLE_COL_TYPE_LONGLONG:
+            return "long";
+
+        default:
+            return "string";
+    }
+}
+
+/**
  * Create a new JSON Avro schema from the table map and create table abstractions
  * @param map TABLE_MAP for this table
  * @param create The TABLE_CREATE for this table
@@ -58,7 +94,8 @@ char* json_new_schema_from_table(TABLE_MAP *map, TABLE_CREATE *create)
     for (uint64_t i = 0; i < map->columns; i++)
     {
         json_array_append(array, json_pack_ex(&err, 0, "{s:s, s:s}", "name",
-                                              create->column_names[i], "type", "string"));
+                                              create->column_names[i], "type",
+                                              column_type_to_avro_type(map->column_types[i])));
     }
     json_object_set_new(schema, "fields", array);
     return json_dumps(schema, JSON_PRESERVE_ORDER);

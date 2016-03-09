@@ -1495,13 +1495,6 @@ blr_read_events_all_events(ROUTER_INSTANCE *router, int fix, int debug)
             statement_sql = calloc(1, statement_len + 1);
             strncpy(statement_sql, (char *) ptr + 4 + 4 + 1 + 2 + 2 + var_block_len + 1 + db_name_len, statement_len);
 
-            /** Very simple detection of CREATE TABLE statements */
-            int reg_err = 0;
-            if(mxs_pcre2_simple_match("(?i)create[[:space:]]+table([[:space:]]+if[[:space:]]+not[[:space:]]+exists)?[(]", statement_sql,
-                                      0, &reg_err) == MXS_PCRE2_MATCH)
-            {
-                //hande_create_table_event(statement_sql);
-            }
             /* A transaction starts with this event */
             if (strncmp(statement_sql, "BEGIN", 5) == 0)
             {

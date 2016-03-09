@@ -84,6 +84,57 @@ void avro_close_binlog(int fd)
 }
 
 /**
+ *
+ * @param table
+ * @param filepath
+ */
+AVRO_TABLE* avro_table_alloc(const char* filepath, const char* json_schema)
+{
+    AVRO_TABLE *table = calloc(1, sizeof(AVRO_TABLE));
+    if (table)
+    {
+        if (avro_schema_from_json_length(json_schema, strlen(json_schema),
+                                         &table->avro_schema))
+        {
+            MXS_ERROR("Avro error: %s", avro_strerror());
+        }
+        int rc = 0;
+        if (access(filepath, F_OK) == 0)
+        {
+            rc = avro_file_writer_open(filepath, &table->avro_file);
+        }
+        else
+        {
+            rc = avro_file_writer_create(filepath, table->avro_schema, &table->avro_file);
+        }
+        if (rc)
+        {
+            MXS_ERROR("Avro error: %s", avro_strerror());
+        }
+
+        table->avro_writer_iface = avro_generic_class_from_schema(table->avro_schema);
+    }
+    return table;
+}
+
+/**
+ *
+ * @param table
+ * @return Always NULL
+ */
+void* avro_table_free(AVRO_TABLE *table)
+{
+    if (table)
+    {
+        avro_file_writer_flush(table->avro_file);
+        avro_file_writer_close(table->avro_file);
+        avro_value_iface_decref(table->avro_writer_iface);
+        avro_schema_decref(table->avro_schema);
+    }
+    return NULL;
+}
+
+/**
  * Read all replication events from a binlog file.
  *
  * Routine detects errors and pending transactions
@@ -325,7 +376,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             last_known_commit = pos;
         }
 
-        /* get firts event timestamp, after FDE */
+        /* get first event timestamp, after FDE */
         if (fde_seen)
         {
             first_event.event_time = (unsigned long) hdr.timestamp;
@@ -425,7 +476,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
                  (hdr.event_type >= WRITE_ROWS_EVENTv2 && hdr.event_type <= DELETE_ROWS_EVENTv2))
         {
             // TODO: Replace blr instance with avro instance
-            //handle_row_event(router, &hdr, router->table_maps, pos);
+            handle_row_event(router, &hdr, ptr);
         }
         /* Decode ROTATE EVENT */
         else if (hdr.event_type == ROTATE_EVENT)

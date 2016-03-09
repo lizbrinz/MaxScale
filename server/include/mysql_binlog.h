@@ -110,7 +110,7 @@ typedef struct table_map
 } TABLE_MAP;
 
 TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len);
-void table_map_free(TABLE_MAP *map);
+void* table_map_free(TABLE_MAP *map);
 void table_map_rotate(TABLE_MAP *map);
 
 const char* table_type_to_string(uint8_t type);
@@ -125,6 +125,6 @@ void format_temporal_value(char *str, size_t size, uint8_t type, struct tm *tm);
 uint64_t extract_field_value(uint8_t *ptr, uint8_t type, uint64_t* val);
 
 TABLE_CREATE* table_create_alloc(const char* sql, const char* db);
-void table_create_free(TABLE_CREATE* value);
+void* table_create_free(TABLE_CREATE* value);
 
 #endif /* MYSQL_BINLOG_H */

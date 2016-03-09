@@ -74,7 +74,7 @@ TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len)
     {
         map->id = table_id;
         map->version = 1;
-        snprintf(map->version_string, sizeof(map->version_string), "%d", map->version);
+        snprintf(map->version_string, sizeof(map->version_string), "%06d", map->version);
         map->flags = flags;
         map->columns = column_count;
         map->column_types = malloc(column_count);
@@ -106,7 +106,7 @@ TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len)
  * @brief Free a table map
  * @param map Table map to free
  */
-void table_map_free(TABLE_MAP *map)
+void* table_map_free(TABLE_MAP *map)
 {
     if (map)
     {
@@ -115,18 +115,18 @@ void table_map_free(TABLE_MAP *map)
         free(map->table);
         free(map);
     }
+    return NULL;
 }
 
 /**
  * @brief Rotate a table map
  *
- * This
  * @param map Map to rotate
  */
 void table_map_rotate(TABLE_MAP *map)
 {
     map->version++;
-    snprintf(map->version_string, sizeof(map->version_string), "%d", map->version);
+    snprintf(map->version_string, sizeof(map->version_string), "%06d", map->version);
 }
 
 /**
@@ -596,14 +596,18 @@ TABLE_CREATE* table_create_alloc(const char* sql, const char* db)
  * Free a TABLE_CREATE structure
  * @param value Value to free
  */
-void table_create_free(TABLE_CREATE* value)
+void* table_create_free(TABLE_CREATE* value)
 {
-    for (uint64_t i = 0; i < value->columns; i++)
+    if (value)
     {
-        free(value->column_names[i]);
+        for (uint64_t i = 0; i < value->columns; i++)
+        {
+            free(value->column_names[i]);
+        }
+        free(value->column_names);
+        free(value->table);
+        free(value->database);
+        free(value);
     }
-    free(value->column_names);
-    free(value->table);
-    free(value->database);
-    free(value);
+    return NULL;
 }

@@ -12,6 +12,7 @@
 #include <spinlock.h>
 #include <mysql_binlog.h>
 #include <dbusers.h>
+#include <avro.h>
 
 /**
  * How often to call the router status function (seconds)
@@ -57,6 +58,16 @@ typedef struct {
         int             minno;
         int             minavgs[AVRO_NSTATS_MINUTES];
 } AVRO_CLIENT_STATS;
+
+typedef struct avro_table_t
+{
+    TABLE_MAP *table_map;
+    TABLE_CREATE *table_create;
+    char* json_schema; /*< JSON representation of the schema */
+    avro_file_writer_t avro_file; /*< Current Avro data file */
+    avro_value_iface_t *avro_writer_iface; /*< Avro C API writer interface */
+    avro_schema_t avro_schema; /*< Native Avro schema of the table */
+}AVRO_TABLE;
 
 /**
  * The client structure used within this router.
@@ -115,12 +126,13 @@ typedef struct avro_instance {
     uint8_t event_type_hdr_lens[MAX_EVENT_TYPE_END];
     char    current_gtid[GTID_MAX_LEN];
     HASHTABLE     *table_maps;
-    HASHTABLE     *schemas;
+    HASHTABLE     *open_tables;
     HASHTABLE     *created_tables;
     char              prevbinlog[BINLOG_FNAMELEN+1];
     int               rotating;     /*< Rotation in progress flag */
     SPINLOCK          fileslock;    /*< Lock for the files queue above */
     AVRO_ROUTER_STATS      stats;        /*< Statistics for this router */
+    int task_delay; /*< Delay in seconds until the next conversion takes place */
     struct avro_instance  *next;
 } AVRO_INSTANCE;
 
@@ -129,5 +141,7 @@ extern void avro_client_rotate(AVRO_INSTANCE *router, AVRO_CLIENT *client, uint8
 extern bool avro_open_binlog(const char *binlogdir, const char *file, int *fd);
 extern void avro_close_binlog(int fd);
 avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router);
+AVRO_TABLE* avro_table_alloc(const char* filepath, const char* json_schema);
+void* avro_table_free(AVRO_TABLE *table);
 
 #endif

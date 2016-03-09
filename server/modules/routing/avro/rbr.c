@@ -56,20 +56,21 @@ void handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr
             if (old)
             {
                 hashtable_delete(router->table_maps, &map->id);
-                char *oldschema = hashtable_fetch(router->schemas, &map->id);
-                hashtable_delete(router->schemas, &map->id);
-                table_map_free(old);
-                free(oldschema);
             }
             char table_ident[MYSQL_TABLE_MAXLEN + MYSQL_DATABASE_MAXLEN + 2];
             snprintf(table_ident, sizeof(table_ident), "%s.%s", map->database, map->table);
             TABLE_CREATE* create = hashtable_fetch(router->created_tables, table_ident);
             ss_dassert(create);
-            char* newschema = json_new_schema_from_table(map, create);
+            char* json_schema = json_new_schema_from_table(map, create);
+
+            char filepath[PATH_MAX + 1];
+            snprintf(filepath, sizeof(filepath), "%s/%s.%s.avro", router->avrodir,
+                     table_ident, map->version_string);
+            AVRO_TABLE *avro_table = avro_table_alloc(filepath, json_schema);
             hashtable_add(router->table_maps, (void*) &map->id, map);
-            hashtable_add(router->schemas, (void*) &map->id, newschema);
-            save_avro_schema(router->avrodir, newschema, map);
-            MXS_DEBUG("%s", newschema);
+            hashtable_add(router->open_tables, table_ident, avro_table);
+            save_avro_schema(router->avrodir, json_schema, map);
+            MXS_DEBUG("%s", json_schema);
         }
 
         strncpy(map->gtid, router->current_gtid, GTID_MAX_LEN);
@@ -78,26 +79,19 @@ void handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr
 }
 
 /**
+ * @brief Handle a RBR row event
  *
- * @param router
- * @param hdr
- * @param maphash
+ * These events contain the changes in the data. This function assumes that full
+ * row image is sent in every row event.
+ * @param router Avro router instance
+ * @param hdr Replication header
  * @param pos
  */
-void handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, HASHTABLE *maphash, uint64_t pos)
+void handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
 {
-    uint8_t *buf = malloc(hdr->event_size - BINLOG_EVENT_HDR_LEN);
-    ssize_t nread = pread(router->binlog_fd, buf, hdr->event_size - BINLOG_EVENT_HDR_LEN,
-                          pos + BINLOG_EVENT_HDR_LEN);
-    uint8_t *ptr = buf;
+    uint8_t *start = ptr;
     uint8_t table_id_size = router->event_type_hdr_lens[hdr->event_type] == 6 ? 4 : 6;
     uint64_t table_id = 0;
-
-    if (nread != hdr->event_size - BINLOG_EVENT_HDR_LEN)
-    {
-        MXS_ERROR("Failed to read event, read %ld bytes when expected %u.",
-                  nread, hdr->event_size - BINLOG_EVENT_HDR_LEN);
-    }
 
     memcpy(&table_id, ptr, table_id_size);
     ptr += table_id_size;
@@ -110,7 +104,6 @@ void handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, HASHTABLE *maphash
     {
         /** This is an dummy event which should release all table maps. Right
          * now we just return without processing the rows. */
-        free(buf);
         return;
     }
 
@@ -135,46 +128,84 @@ void handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, HASHTABLE *maphash
         ptr += (ncolumns + 7) / 8;
     }
 
-    TABLE_MAP *map = hashtable_fetch(maphash, (void*) &table_id);
+    TABLE_MAP *map = hashtable_fetch(router->table_maps, (void*) &table_id);
     if (map)
     {
-        /** Right now the file is opened for every row event */
-        avro_schema_t schema;
-        char *schema_json = hashtable_fetch(router->schemas, &map->id);
-        avro_schema_from_json_length(schema_json, strlen(schema_json), &schema);
+        char table_ident[MYSQL_TABLE_MAXLEN + MYSQL_DATABASE_MAXLEN + 2];
+        snprintf(table_ident, sizeof(table_ident), "%s.%s", map->database, map->table);
+        AVRO_TABLE* table = hashtable_fetch(router->open_tables, table_ident);
+        TABLE_CREATE* create = hashtable_fetch(router->created_tables, table_ident);
 
-        avro_file_writer_t writer;
-        char outfile[PATH_MAX];
-        snprintf(outfile, sizeof(outfile), "/tmp/%s.%s.%s.avro", map->database, map->table, map->version_string);
-
-        if (access(outfile, F_OK) == 0)
+        if (ncolumns == map->columns)
         {
-            avro_file_writer_open(outfile, &writer);
+            avro_value_t record;
+            avro_generic_value_new(table->avro_writer_iface, &record);
+
+            /** Each event has one or more rows in it. The number of rows is not known
+             * beforehand so we must continue processing them until we reach the end
+             * of the event. */
+            int rows = 0;
+            while (ptr - start < hdr->event_size - BINLOG_EVENT_HDR_LEN)
+            {
+                ptr = process_row_event(map, create, &record, ptr, col_present, col_update);
+                avro_file_writer_append_value(table->avro_file, &record);
+                rows++;
+            }
+            MXS_INFO("Processed %d rows", rows);
+            avro_value_decref(&record);
+            avro_file_writer_flush(table->avro_file);
         }
         else
         {
-            avro_file_writer_create(outfile, schema, &writer);
+            MXS_ERROR("Row event and table map event have different column counts."
+                      " Only full row image is currently supported.");
         }
 
-        avro_value_iface_t  *writer_iface = avro_generic_class_from_schema(schema);
-        avro_value_t record;
-        avro_generic_value_new(writer_iface, &record);
-
-        /** Each event has one or more rows in it. The number of rows is not known
-         * beforehand so we must continue processing them until we reach the end
-         * of the event. */
-        while (ptr - buf < hdr->event_size - BINLOG_EVENT_HDR_LEN)
-        {
-            process_row_event(map, &record, &ptr, ncolumns, col_present, col_update);
-            avro_file_writer_append_value(writer, &record);
-        }
-        avro_file_writer_flush(writer);
-        avro_file_writer_close(writer);
-        avro_value_decref(&record);
-        avro_value_iface_decref(writer_iface);
-        avro_schema_decref(schema);
     }
-    free(buf);
+}
+
+void set_numeric_field_value(avro_value_t *field, uint8_t type, uint64_t value)
+{
+    switch (type)
+    {
+        case TABLE_COL_TYPE_DECIMAL:
+        case TABLE_COL_TYPE_TINY:
+        case TABLE_COL_TYPE_SHORT:
+        case TABLE_COL_TYPE_LONG:
+        case TABLE_COL_TYPE_INT24:
+            avro_value_set_int(field, (int)value);
+            break;
+
+        case TABLE_COL_TYPE_FLOAT:
+            avro_value_set_float(field, (float)value);
+            break;
+
+        case TABLE_COL_TYPE_DOUBLE:
+            avro_value_set_double(field, (double)value);
+            break;
+
+        case TABLE_COL_TYPE_NULL:
+            avro_value_set_null(field);
+            break;
+
+        case TABLE_COL_TYPE_LONGLONG:
+            avro_value_set_long(field, (long)value);
+            break;
+
+        default:
+            break;
+    }
+}
+
+bool column_is_null(uint8_t *ptr, int columns, int current_column)
+{
+    while (current_column > 8)
+    {
+        ptr++;
+        current_column -= 8;
+    }
+
+    return ((*ptr) & (1 << current_column)) == 0;
 }
 
 /**
@@ -189,29 +220,32 @@ void handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, HASHTABLE *maphash
  * @param columns_present
  * @param col_update
  */
-void process_row_event(TABLE_MAP *map, avro_value_t *record, uint8_t **orig_ptr, long ncolumns,
-                       uint64_t columns_present, uint64_t columns_update)
+uint8_t* process_row_event(TABLE_MAP *map, TABLE_CREATE *create, avro_value_t *record, uint8_t *ptr,
+                           uint64_t columns_present, uint64_t columns_update)
 {
     char rstr[2048];
-    uint8_t *ptr = *orig_ptr;
     int npresent = 0;
     avro_value_t field;
-    sprintf(rstr, "Row event for table %s.%s: %lu columns. ", map->database,
-            map->table, ncolumns);
+    long ncolumns = map->columns;
+    snprintf(rstr, sizeof(rstr), "Row event for table %s.%s: %lu columns. ",
+             map->database, map->table, ncolumns);
 
-    /** Skip the nul-bitmap */
+    /** Skip the null-bitmap */
+    uint8_t *null_bitmap = ptr;
     ptr += (ncolumns + 7) / 8;
 
     for (long i = 0; i < map->columns && npresent < ncolumns; i++)
     {
-        char colname[128];
-        sprintf(colname, "column_%ld", i + 1);
-        avro_value_get_by_name(record, colname, &field, NULL);
+        avro_value_get_by_name(record, create->column_names[i], &field, NULL);
 
         if (columns_present & (1 << i))
         {
             npresent++;
-            if (column_is_string_type(map->column_types[i]))
+            if (column_is_null(null_bitmap, ncolumns, i))
+            {
+                avro_value_set_null(&field);
+            }
+            else if (column_is_string_type(map->column_types[i]))
             {
                 size_t sz;
                 char *str = lestr_consume(&ptr, &sz);
@@ -219,7 +253,6 @@ void process_row_event(TABLE_MAP *map, avro_value_t *record, uint8_t **orig_ptr,
                 strcat(rstr, "S: ");
                 strncat(rstr, str, sz);
                 strcat(rstr, " ");
-
             }
             else
             {
@@ -235,13 +268,11 @@ void process_row_event(TABLE_MAP *map, avro_value_t *record, uint8_t **orig_ptr,
                     unpack_temporal_value(map->column_types[i], lval, &tm);
                     format_temporal_value(buf, sizeof(buf), map->column_types[i], &tm);
                     avro_value_set_string(&field, buf);
-                    MXS_DEBUG("%s: %s",
-                              table_type_to_string(map->column_types[i]), buf);
+                    MXS_DEBUG("%s: %s", table_type_to_string(map->column_types[i]), buf);
                 }
                 else
                 {
-                    sprintf(buf, "%lu", lval);
-                    avro_value_set_string(&field, buf);
+                    set_numeric_field_value(&field, map->column_types[i], lval);
                 }
             }
         }
@@ -277,5 +308,5 @@ void process_row_event(TABLE_MAP *map, avro_value_t *record, uint8_t **orig_ptr,
     }
 
     MXS_NOTICE("%s", rstr);
-    *orig_ptr = ptr;
+    return ptr;
 }

@@ -62,6 +62,8 @@
 #define BINLOG_NAMEFMT      "%s.%06d"
 #endif
 
+#define AVRO_TASK_DELAY_MAX 300
+
 static char *version_str = "V1.0.0";
 static const char* avro_task_name = "binlog_to_avro";
 
@@ -305,23 +307,26 @@ createInstance(SERVICE *service, char **options)
     inst->lastEventTimestamp = 0;
 
     inst->binlog_position = 0;
+    inst->task_delay = 1;
 
-    sprintf(inst->binlog_name, BINLOG_NAMEFMT, inst->fileroot, first_file);
-    strcpy(inst->prevbinlog, "");
+    snprintf(inst->binlog_name, sizeof(inst->binlog_name), BINLOG_NAMEFMT, inst->fileroot, first_file);
+    inst->prevbinlog[0] = '\0';
 
     if ((inst->table_maps = hashtable_alloc(1000, table_id_hash, table_id_cmp)) &&
-        (inst->schemas = hashtable_alloc(1000, table_id_hash, table_id_cmp)) &&
+        (inst->open_tables = hashtable_alloc(1000, simple_str_hash, strcmp)) &&
         (inst->created_tables = hashtable_alloc(1000, simple_str_hash, strcmp)))
     {
-        hashtable_memory_fns(inst->table_maps, i64dup, NULL, safe_key_free, NULL);
-        hashtable_memory_fns(inst->schemas, i64dup, NULL, safe_key_free, NULL);
+        hashtable_memory_fns(inst->table_maps, i64dup, NULL, safe_key_free,
+                             (HASHMEMORYFN)table_map_free);
+        hashtable_memory_fns(inst->open_tables, (HASHMEMORYFN)strdup, NULL,
+                             safe_key_free, (HASHMEMORYFN)avro_table_free);
         hashtable_memory_fns(inst->created_tables, (HASHMEMORYFN)strdup, NULL,
-                             safe_key_free, NULL);
+                             safe_key_free, (HASHMEMORYFN)table_create_free);
     }
     else
     {
         hashtable_free(inst->table_maps);
-        hashtable_free(inst->schemas);
+        hashtable_free(inst->open_tables);
         hashtable_free(inst->created_tables);
         MXS_ERROR("Hashtable allocation failed. This is most likely caused "
                   "by a lack of available memory.");
@@ -391,7 +396,7 @@ createInstance(SERVICE *service, char **options)
 
 
     /* Start the scan, read, convert task */
-    hktask_add(avro_task_name, converter_func, inst, 5);
+    hktask_oneshot(avro_task_name, converter_func, inst, inst->task_delay);
 
     MXS_INFO("AVRO: current MySQL binlog file is %s, pos is %lu\n",
              inst->binlog_name, inst->current_pos);
@@ -1159,6 +1164,7 @@ void converter_func(void* data)
 
     while (ok && binlog_next_file_exists(router->binlogdir, router->binlog_name))
     {
+        router->task_delay = 1;
         if (avro_open_binlog(router->binlogdir, router->binlog_name, &router->binlog_fd))
         {
             switch (avro_read_all_events(router))
@@ -1166,8 +1172,9 @@ void converter_func(void* data)
                 case AVRO_NO_ROTATE_CLOSE:
                     if (binlog_next_file_exists(router->binlogdir, router->binlog_name))
                     {
-                        sprintf(router->binlog_name, BINLOG_NAMEFMT, router->fileroot,
-                                blr_file_get_next_binlogname(router->binlog_name));
+                        snprintf(router->binlog_name, sizeof(router->binlog_name),
+                                 BINLOG_NAMEFMT, router->fileroot,
+                                 blr_file_get_next_binlogname(router->binlog_name));
                         MXS_NOTICE("Binlog was not properly closed but the next "
                                    "binlog file exists. Opening binlog file '%s' and "
                                    "reading events", router->binlog_name);
@@ -1197,11 +1204,10 @@ void converter_func(void* data)
 
     if (ok)
     {
+        router->task_delay = MIN(router->task_delay + 15, AVRO_TASK_DELAY_MAX);
+        hktask_oneshot(avro_task_name, converter_func, router, router->task_delay);
         MXS_NOTICE("Binlog file '%s' is still being processed. Waiting until"
-                   " the next binlog exists before processing.", router->binlog_name);
-    }
-    else
-    {
-        hktask_remove(avro_task_name);
+                   " the next binlog exists before processing. Next check in %d seconds.",
+                   router->binlog_name, router->task_delay);
     }
 }
