@@ -687,17 +687,22 @@ static int
 do_auth(DCB *dcb, GWBUF *buffer, void *data)
 {
     CDC_session *client_data = (CDC_session *)data;
+    int ret;
 
     if (strncmp(GWBUF_DATA(buffer), "massi", GWBUF_LENGTH(buffer)) == 0)
     {
-	strcpy(client_data->user, "massi");
-        return 1;
+        strcpy(client_data->user, "massi");
+        ret = 1;
     }
     else
     {
-	strcpy(client_data->user, "foobar");
-        return 0;
+        strcpy(client_data->user, "foobar");
+        ret = 0;
     }
+
+    dcb->user = strdup(client_data->user);
+
+    return ret;
 }
 
 /**

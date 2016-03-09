@@ -781,7 +781,8 @@ diagnostics(ROUTER *router, DCB *dcb)
             min10 /= 10.0;
             min5 /= 5.0;
 
-            dcb_printf(dcb, "\t\tClient UUID:					%s\n", session->uuid);
+            // TODO dcb_printf(dcb, "\t\tClient UUID:					%s\n", session->uuid);
+            dcb_printf(dcb, "\t\tClient UUID:					%s\n", "not yet added to router");
             dcb_printf(dcb,
                        "\t\tClient_host_port:				%s:%d\n",
                        session->dcb->remote, ntohs((session->dcb->ipv4).sin_port));
