@@ -69,6 +69,9 @@ TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len)
     uint8_t *column_types = ptr;
     ptr += column_count;
 
+    uint8_t* metadata = (uint8_t*)lestr_consume_dup(&ptr);
+    uint8_t *nullmap = ptr;
+    size_t nullmap_size = (column_count + 7) / 8;
     TABLE_MAP *map = malloc(sizeof(TABLE_MAP));
     if (map)
     {
@@ -78,14 +81,20 @@ TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len)
         map->flags = flags;
         map->columns = column_count;
         map->column_types = malloc(column_count);
+        map->column_metadata = metadata;
+        map->null_bitmap = malloc(nullmap_size);
         map->database = strdup(schema_name);
         map->table = strdup(table_name);
-        if (map->column_types && map->database && map->table)
+        if (map->column_types && map->database && map->table &&
+            map->column_metadata && map->null_bitmap)
         {
             memcpy(map->column_types, column_types, column_count);
+            memcpy(map->null_bitmap, nullmap, nullmap_size);
         }
         else
         {
+            free(map->null_bitmap);
+            free(map->column_metadata);
             free(map->column_types);
             free(map->database);
             free(map->table);
@@ -207,6 +216,19 @@ const char* table_type_to_string(uint8_t type)
     return "";
 }
 
+bool column_is_blob(uint8_t type)
+{
+    switch (type)
+    {
+        case TABLE_COL_TYPE_TINY_BLOB:
+        case TABLE_COL_TYPE_MEDIUM_BLOB:
+        case TABLE_COL_TYPE_LONG_BLOB:
+        case TABLE_COL_TYPE_BLOB:
+            return true;
+    }
+    return false;
+}
+
 /**
  * @brief Check if the column is a string type column
  *
@@ -224,10 +246,6 @@ bool column_is_string_type(uint8_t type)
         case TABLE_COL_TYPE_NEWDECIMAL:
         case TABLE_COL_TYPE_ENUM:
         case TABLE_COL_TYPE_SET:
-        case TABLE_COL_TYPE_TINY_BLOB:
-        case TABLE_COL_TYPE_MEDIUM_BLOB:
-        case TABLE_COL_TYPE_LONG_BLOB:
-        case TABLE_COL_TYPE_BLOB:
         case TABLE_COL_TYPE_VAR_STRING:
         case TABLE_COL_TYPE_STRING:
         case TABLE_COL_TYPE_GEOMETRY:

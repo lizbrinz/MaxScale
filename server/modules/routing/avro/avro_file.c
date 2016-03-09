@@ -97,6 +97,8 @@ AVRO_TABLE* avro_table_alloc(const char* filepath, const char* json_schema)
                                          &table->avro_schema))
         {
             MXS_ERROR("Avro error: %s", avro_strerror());
+            free(table);
+            return NULL;
         }
         int rc = 0;
         if (access(filepath, F_OK) == 0)
@@ -110,9 +112,19 @@ AVRO_TABLE* avro_table_alloc(const char* filepath, const char* json_schema)
         if (rc)
         {
             MXS_ERROR("Avro error: %s", avro_strerror());
+            avro_schema_decref(table->avro_schema);
+            free(table);
+            return NULL;
         }
 
-        table->avro_writer_iface = avro_generic_class_from_schema(table->avro_schema);
+        if ((table->avro_writer_iface = avro_generic_class_from_schema(table->avro_schema)) == NULL)
+        {
+            MXS_ERROR("Avro error: %s", avro_strerror());
+            avro_schema_decref(table->avro_schema);
+            avro_file_writer_close(table->avro_file);
+            free(table);
+            return NULL;
+        }
     }
     return table;
 }
@@ -200,29 +212,6 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             switch (n)
             {
                 case 0:
-                    MXS_NOTICE("End of binlog file [%s] at %llu.",
-                               router->binlog_name, pos);
-
-                    if (!rotate_seen && !stop_seen)
-                    {
-                        MXS_NOTICE("No STOP or ROTATE event seen.");
-                        /* create a new routine for this */
-                    }
-                    else if (rotate_seen)
-                    {
-                        /** Binlog file is processed, prepare for next one */
-                        strncpy(router->binlog_name, next_binlog, sizeof(router->binlog_name));
-                    }
-
-                    if (pending_transaction > 0)
-                    {
-                        MXS_WARNING("Binlog file %s contains a previously opened "
-                                    "transaction @ %llu. This pos is safe for slaves",
-                                    router->binlog_name,
-                                    last_known_commit);
-
-                    }
-
                     break;
                 case -1:
                 {
@@ -255,8 +244,9 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             {
                 router->binlog_position = last_known_commit;
                 router->current_pos = pos;
-                MXS_ERROR("Binlog '%s' ends at position %lu and has an incomplete transaction at %lu. ",
-                          router->binlog_name, router->current_pos, router->binlog_position);
+                MXS_ERROR("Binlog '%s' ends at position %lu and has an incomplete transaction at %lu. "
+                          "Stopping file conversion.", router->binlog_name,
+                          router->current_pos, router->binlog_position);
                 return AVRO_OPEN_TRANSACTION;
             }
             else
@@ -274,14 +264,52 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
                     router->current_pos = pos;
                     if (rotate_seen)
                     {
-                        return AVRO_OK;
+                        /** Binlog file is processed, prepare for next one */
+                        MXS_NOTICE("End of binlog file [%s] at %llu. Rotating to file [%s].",
+                                   router->binlog_name, pos, next_binlog);
+                        strncpy(router->binlog_name, next_binlog, sizeof(router->binlog_name));
+                        return AVRO_ROTATED;
                     }
                     else if(stop_seen)
                     {
-                        return AVRO_OK_CLOSED;
+                        if (binlog_next_file_exists(router->binlogdir, router->binlog_name))
+                        {
+                            snprintf(next_binlog, sizeof(next_binlog),
+                                     BINLOG_NAMEFMT, router->fileroot,
+                                     blr_file_get_next_binlogname(router->binlog_name));
+
+                            MXS_NOTICE("End of binlog file [%s] at %llu with a "
+                                       "close event. Rotating to next binlog file [%s].",
+                                       router->binlog_name, pos, next_binlog);
+
+                            strncpy(router->binlog_name, next_binlog, sizeof(router->binlog_name));
+                            return AVRO_CLOSED;
+                        }
+                        else
+                        {
+                            MXS_NOTICE("End of binlog file [%s] at %llu with a "
+                                       "close event. Next binlog file does not"
+                                       " exist, pausing file conversion.",
+                                       router->binlog_name, pos);
+                            return AVRO_CLOSED_LAST;
+                        }
                     }
                     else
                     {
+                        if (binlog_next_file_exists(router->binlogdir, router->binlog_name))
+                        {
+                            snprintf(next_binlog, sizeof(next_binlog),
+                                     BINLOG_NAMEFMT, router->fileroot,
+                                     blr_file_get_next_binlogname(router->binlog_name));
+                            
+                            MXS_NOTICE("End of binlog file [%s] at %llu with no "
+                                "close or rotate event. Rotating to next binlog file [%s].",
+                                       router->binlog_name, pos, next_binlog);
+                            
+                            strncpy(router->binlog_name, next_binlog, sizeof(router->binlog_name));
+                            return AVRO_CLOSED;
+                        }
+
                         return AVRO_NO_ROTATE_CLOSE;
                     }
                 }

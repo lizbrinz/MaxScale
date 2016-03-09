@@ -1180,40 +1180,9 @@ void converter_func(void* data)
         if (avro_open_binlog(router->binlogdir, router->binlog_name, &router->binlog_fd))
         {
             avro_binlog_end_t binlog_end = avro_read_all_events(router);
-            switch (binlog_end)
+            if (binlog_end == AVRO_BINLOG_ERROR || binlog_end == AVRO_OPEN_TRANSACTION)
             {
-                case AVRO_NO_ROTATE_CLOSE:
-                case AVRO_OK_CLOSED:
-                    if (binlog_next_file_exists(router->binlogdir, router->binlog_name))
-                    {
-                        snprintf(router->binlog_name, sizeof(router->binlog_name),
-                                 BINLOG_NAMEFMT, router->fileroot,
-                                 blr_file_get_next_binlogname(router->binlog_name));
-                        if (binlog_end == AVRO_NO_ROTATE_CLOSE)
-                        {
-                            MXS_NOTICE("Binlog was not properly closed but the next "
-                                "binlog file exists. Opening binlog file '%s' and "
-                                "reading events", router->binlog_name);
-                        }
-                    }
-                    break;
-
-                case AVRO_BINLOG_ERROR:
-                    MXS_ERROR("Encountered an error when processing binlog file '%s'",
-                              router->binlog_name);
-                    ok = false;
-                    break;
-
-                case AVRO_OPEN_TRANSACTION:
-                    MXS_ERROR("Binlog file '%s' ends with an open transaction. "
-                              "Stopping file conversion.", router->binlog_name);
-                    ok = false;
-                    break;
-
-                default:
-                    MXS_NOTICE("Opening binlog '%s' and reading events.", router->binlog_name);
-                    break;
-
+                ok = false;
             }
             avro_close_binlog(router->binlog_fd);
         }

@@ -102,6 +102,8 @@ typedef struct table_map
     uint64_t columns;
     uint16_t flags;
     uint8_t *column_types;
+    uint8_t *null_bitmap;
+    uint8_t *column_metadata;
     int version;
     char version_string[TABLE_MAP_VERSION_DIGITS + 1];
     char *table;
@@ -115,6 +117,7 @@ void table_map_rotate(TABLE_MAP *map);
 
 const char* table_type_to_string(uint8_t type);
 bool column_is_string_type(uint8_t type);
+bool column_is_blob(uint8_t type);
 
 /** Temporal values */
 bool is_temporal_value(uint8_t type);

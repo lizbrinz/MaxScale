@@ -205,7 +205,30 @@ bool column_is_null(uint8_t *ptr, int columns, int current_column)
         current_column -= 8;
     }
 
-    return ((*ptr) & (1 << current_column)) == 0;
+    return ((*ptr) & (1 << current_column));
+}
+
+int get_metadata_len(uint8_t type)
+{
+    switch (type)
+    {
+        case TABLE_COL_TYPE_STRING:
+        case TABLE_COL_TYPE_VAR_STRING:
+        case TABLE_COL_TYPE_VARCHAR:
+        case TABLE_COL_TYPE_DECIMAL:
+        case TABLE_COL_TYPE_NEWDECIMAL:
+        case TABLE_COL_TYPE_ENUM:
+        case TABLE_COL_TYPE_SET:
+            return 2;
+
+        case TABLE_COL_TYPE_BLOB:
+        case TABLE_COL_TYPE_DOUBLE:
+        case TABLE_COL_TYPE_FLOAT:
+            return 1;
+
+        default:
+            return 0;
+    }
 }
 
 /**
@@ -230,6 +253,8 @@ uint8_t* process_row_event(TABLE_MAP *map, TABLE_CREATE *create, avro_value_t *r
     snprintf(rstr, sizeof(rstr), "Row event for table %s.%s: %lu columns. ",
              map->database, map->table, ncolumns);
 
+    size_t metadata_offset = 0;
+
     /** Skip the null-bitmap */
     uint8_t *null_bitmap = ptr;
     ptr += (ncolumns + 7) / 8;
@@ -250,9 +275,19 @@ uint8_t* process_row_event(TABLE_MAP *map, TABLE_CREATE *create, avro_value_t *r
                 size_t sz;
                 char *str = lestr_consume(&ptr, &sz);
                 avro_value_set_string_len(&field, str, sz);
-                strcat(rstr, "S: ");
+                strncat(rstr, "S: ", sizeof(rstr));
                 strncat(rstr, str, sz);
-                strcat(rstr, " ");
+                strncat(rstr, " ", sizeof(rstr));
+            }
+            else if (column_is_blob(map->column_types[i]))
+            {
+                uint8_t bytes = map->column_metadata[metadata_offset];
+                uint64_t len = 0;
+                memcpy(&len, ptr, bytes);
+                ptr += bytes;
+                avro_value_set_bytes(&field, ptr, len);
+                strncat(rstr, "BLOB ", sizeof(rstr));
+                ptr += len;
             }
             else
             {
@@ -260,7 +295,7 @@ uint8_t* process_row_event(TABLE_MAP *map, TABLE_CREATE *create, avro_value_t *r
                 ptr += extract_field_value(ptr, map->column_types[i], &lval);
                 char buf[200];
                 snprintf(buf, sizeof(buf), "I: %lu ", lval);
-                strcat(rstr, buf);
+                strncat(rstr, buf, sizeof(rstr));
 
                 if (is_temporal_value(map->column_types[i]))
                 {
@@ -275,10 +310,12 @@ uint8_t* process_row_event(TABLE_MAP *map, TABLE_CREATE *create, avro_value_t *r
                     set_numeric_field_value(&field, map->column_types[i], lval);
                 }
             }
+            metadata_offset += get_metadata_len(map->column_types[i]);
         }
     }
 
-    if (columns_update != 0)
+    // TODO: implement update row event processing
+    if (columns_update != 0 && false)
     {
         /** Skip the nul-bitmap for the update rows */
         ptr += (ncolumns + 7) / 8;

@@ -65,6 +65,12 @@ static const char* column_type_to_avro_type(uint8_t type)
         case TABLE_COL_TYPE_LONGLONG:
             return "long";
 
+        case TABLE_COL_TYPE_TINY_BLOB:
+        case TABLE_COL_TYPE_MEDIUM_BLOB:
+        case TABLE_COL_TYPE_LONG_BLOB:
+        case TABLE_COL_TYPE_BLOB:
+            return "bytes";
+
         default:
             return "string";
     }
