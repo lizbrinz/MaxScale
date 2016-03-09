@@ -243,7 +243,7 @@ uint8_t* process_row_event(TABLE_MAP *map, TABLE_CREATE *create, avro_value_t *r
             npresent++;
             if (column_is_null(null_bitmap, ncolumns, i))
             {
-                avro_value_set_null(&field);
+                avro_value_set_string(&field, "NULL");
             }
             else if (column_is_string_type(map->column_types[i]))
             {
