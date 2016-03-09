@@ -662,24 +662,25 @@ diagnostics(ROUTER *router, DCB *dcb)
     min10 /= 10.0;
     min5 /= 5.0;
 
-    dcb_printf(dcb, "\tMaster connection state:			%s\n",
+    dcb_printf(dcb, "\tAVRO Converter state:			%s\n",
                blrm_states[router_inst->state]);
+    dcb_printf(dcb, "\tAVRO Converter infofile:	  		%s/avro_converter.ini\n",
+               router_inst->avrodir);
+    dcb_printf(dcb, "\tAVRO files directory:				%s\n",
+               router_inst->avrodir);
 
     localtime_r(&router_inst->stats.lastReply, &tm);
     asctime_r(&tm, buf);
 
     dcb_printf(dcb, "\tBinlog directory:				%s\n",
                router_inst->binlogdir);
-    dcb_printf(dcb, "\tAVRO files directory:				%s\n",
-               router_inst->avrodir);
     dcb_printf(dcb, "\tCurrent binlog file:		  		%s\n",
                router_inst->binlog_name);
     dcb_printf(dcb, "\tCurrent binlog position:	  		%lu\n",
                router_inst->current_pos);
-    dcb_printf(dcb, "\tNumber of slave servers:	   		%u\n",
+    dcb_printf(dcb, "\tNumber of AVRO clients:	   		%u\n",
                router_inst->stats.n_clients);
-    dcb_printf(dcb, "\tTotal no. of binlog events received:        	%u\n",
-               router_inst->stats.n_binlogs);
+
     minno = router_inst->stats.minno - 1;
     if (minno == -1)
     {
@@ -724,12 +725,13 @@ diagnostics(ROUTER *router, DCB *dcb)
         dcb_printf(dcb, "\tNo events received from master yet\n");
     }
     spinlock_release(&router_inst->lock);
-
+/*
     dcb_printf(dcb, "\tEvents received:\n");
     for (i = 0; i <= MAX_EVENT_TYPE; i++)
     {
         dcb_printf(dcb, "\t\t%-38s   %u\n", event_names[i], router_inst->stats.events[i]);
     }
+*/
 
 #if SPINLOCK_PROFILE
     dcb_printf(dcb, "\tSpinlock statistics (instlock):\n");
@@ -742,7 +744,7 @@ diagnostics(ROUTER *router, DCB *dcb)
 
     if (router_inst->clients)
     {
-        dcb_printf(dcb, "\tSlaves:\n");
+        dcb_printf(dcb, "\tClients:\n");
         spinlock_acquire(&router_inst->lock);
         session = router_inst->clients;
         while (session)
@@ -779,22 +781,31 @@ diagnostics(ROUTER *router, DCB *dcb)
             min10 /= 10.0;
             min5 /= 5.0;
 
-            dcb_printf(dcb, "\t\tSlave UUID:					%s\n", session->uuid);
+            dcb_printf(dcb, "\t\tClient UUID:					%s\n", session->uuid);
             dcb_printf(dcb,
-                       "\t\tSlave_host_port:				%s:%d\n",
+                       "\t\tClient_host_port:				%s:%d\n",
                        session->dcb->remote, ntohs((session->dcb->ipv4).sin_port));
             dcb_printf(dcb,
                        "\t\tUsername:					%s\n",
                        session->dcb->user);
             dcb_printf(dcb,
-                       "\t\tSlave DCB:					%p\n",
+                       "\t\tClient DCB:					%p\n",
                        session->dcb);
             dcb_printf(dcb,
                        "\t\tState:    					%s\n",
                        blrs_states[session->state]);
             dcb_printf(dcb,
-                       "\t\tBinlog file:					%s\n",
+                       "\t\tAvro file:					%s\n",
                        session->avrofile);
+            dcb_printf(dcb,
+                       "\t\tAvro Schema ID:					%lu\n",
+                       0);
+            dcb_printf(dcb,
+                       "\t\tAvro Transaction ID:					%lu\n",
+                       0);
+            dcb_printf(dcb,
+                       "\t\tAvro N.MaxTransactions:					%lu\n",
+                       0);
             dcb_printf(dcb,
                        "\t\tNo. requests:   				%u\n",
                        session->stats.n_requests);
