@@ -61,7 +61,7 @@ bool avro_open_binlog(const char *binlogdir, const char *file, int *dest)
 
     if ((fd = open(path, O_RDWR | O_APPEND, 0666)) == -1)
     {
-        MXS_ERROR("Failed to open binlog file %s for append.", path);
+        MXS_ERROR("Failed to open binlog file %s.", path);
         return false;
     }
 
@@ -272,9 +272,13 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
                 {
                     router->binlog_position = pos;
                     router->current_pos = pos;
-                    if (rotate_seen || stop_seen)
+                    if (rotate_seen)
                     {
                         return AVRO_OK;
+                    }
+                    else if(stop_seen)
+                    {
+                        return AVRO_OK_CLOSED;
                     }
                     else
                     {

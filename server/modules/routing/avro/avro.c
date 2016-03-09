@@ -1167,17 +1167,22 @@ void converter_func(void* data)
         router->task_delay = 1;
         if (avro_open_binlog(router->binlogdir, router->binlog_name, &router->binlog_fd))
         {
-            switch (avro_read_all_events(router))
+            avro_binlog_end_t binlog_end = avro_read_all_events(router);
+            switch (binlog_end)
             {
                 case AVRO_NO_ROTATE_CLOSE:
+                case AVRO_OK_CLOSED:
                     if (binlog_next_file_exists(router->binlogdir, router->binlog_name))
                     {
                         snprintf(router->binlog_name, sizeof(router->binlog_name),
                                  BINLOG_NAMEFMT, router->fileroot,
                                  blr_file_get_next_binlogname(router->binlog_name));
-                        MXS_NOTICE("Binlog was not properly closed but the next "
-                                   "binlog file exists. Opening binlog file '%s' and "
-                                   "reading events", router->binlog_name);
+                        if (binlog_end == AVRO_NO_ROTATE_CLOSE)
+                        {
+                            MXS_NOTICE("Binlog was not properly closed but the next "
+                                "binlog file exists. Opening binlog file '%s' and "
+                                "reading events", router->binlog_name);
+                        }
                     }
                     break;
 

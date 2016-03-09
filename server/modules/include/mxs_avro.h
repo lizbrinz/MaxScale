@@ -25,6 +25,7 @@ typedef enum avro_binlog_end
 {
     AVRO_OK = 0, /*< A newer binlog file exists with a rotate event to that file */
     AVRO_NO_ROTATE_CLOSE, /*< No close or rotate event was found */
+    AVRO_OK_CLOSED, /*< Found stop event */
     AVRO_OPEN_TRANSACTION, /*< The binlog ends with an open transaction */
     AVRO_BINLOG_ERROR /*< An error occurred while processing the binlog file */
 }avro_binlog_end_t;
