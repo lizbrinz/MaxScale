@@ -64,8 +64,7 @@ typedef struct {
 
 typedef struct avro_table_t
 {
-    TABLE_MAP *table_map;
-    TABLE_CREATE *table_create;
+    char* filename; /*< Absolute filename */
     char* json_schema; /*< JSON representation of the schema */
     avro_file_writer_t avro_file; /*< Current Avro data file */
     avro_value_iface_t *avro_writer_iface; /*< Avro C API writer interface */
@@ -146,6 +145,7 @@ extern void avro_close_binlog(int fd);
 avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router);
 AVRO_TABLE* avro_table_alloc(const char* filepath, const char* json_schema);
 void* avro_table_free(AVRO_TABLE *table);
+void avro_flush_all_tables(AVRO_INSTANCE *router);
 
 #define AVRO_CLIENT_UNREGISTERED 0x0000
 #define AVRO_CLIENT_REGISTERED   0x0001

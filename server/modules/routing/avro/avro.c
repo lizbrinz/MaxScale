@@ -1205,6 +1205,8 @@ void converter_func(void* data)
         }
     }
 
+    avro_flush_all_tables(router);
+
     if (ok)
     {
         router->task_delay = MIN(router->task_delay + 5, AVRO_TASK_DELAY_MAX);

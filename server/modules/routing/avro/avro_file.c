@@ -48,6 +48,8 @@ static const char* create_table_regex =
     "(?i)^create[a-z0-9[:space:]_]+table";
 static const char *statefile_section = "avro-conversion";
 
+void avro_flush_all_tables(AVRO_INSTANCE *router);
+
 /**
  * Prepare an existing binlog file to be appened to.
  *
@@ -127,6 +129,8 @@ AVRO_TABLE* avro_table_alloc(const char* filepath, const char* json_schema)
             free(table);
             return NULL;
         }
+        table->json_schema = strdup(json_schema);
+        table->filename = strdup(filepath);
     }
     return table;
 }
@@ -262,6 +266,8 @@ void* avro_table_free(AVRO_TABLE *table)
         avro_file_writer_close(table->avro_file);
         avro_value_iface_decref(table->avro_writer_iface);
         avro_schema_decref(table->avro_schema);
+        free(table->json_schema);
+        free(table->filename);
     }
     return NULL;
 }
@@ -708,7 +714,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
                 if (created)
                 {
                     char createlist[PATH_MAX + 1];
-                    snprintf(createlist, sizeof(createlist), "%s/create-table-list", get_cachedir());
+                    snprintf(createlist, sizeof(createlist), "%s/table-ddl.list", get_cachedir());
                     if (!table_create_save(created, createlist))
                     {
                         MXS_ERROR("Failed to store CREATE TABLE statement to disk: %s",
@@ -752,6 +758,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
         else if (hdr.event_type == XID_EVENT)
         {
             // TODO: Handle XID Event
+            avro_flush_all_tables(router);
             avro_save_conversion_state(router);
             pending_transaction--;
         }
@@ -823,7 +830,7 @@ bool avro_load_created_tables(AVRO_INSTANCE *router)
 {
     bool rval = false;
     char createlist[PATH_MAX + 1];
-    snprintf(createlist, sizeof(createlist), "%s/create-table-list", get_cachedir());
+    snprintf(createlist, sizeof(createlist), "%s/table-ddl.list", get_cachedir());
     struct stat st;
 
     if (stat(createlist, &st) == 0)
@@ -843,25 +850,28 @@ bool avro_load_created_tables(AVRO_INSTANCE *router)
 
                 while (tok)
                 {
-                    TABLE_CREATE *created = table_create_alloc(tok, "", router->current_gtid);
-
-                    if (created)
+                    int reg_err;
+                    if (mxs_pcre2_simple_match(create_table_regex, tok, 0, &reg_err) == MXS_PCRE2_MATCH)
                     {
-                        char table_ident[MYSQL_TABLE_MAXLEN + MYSQL_DATABASE_MAXLEN + 2];
-                        snprintf(table_ident, sizeof(table_ident), "%s.%s", created->database, created->table);
+                        TABLE_CREATE *created = table_create_alloc(tok, "", router->current_gtid);
 
-                        if (hashtable_fetch(router->created_tables, table_ident))
+                        if (created)
                         {
-                            hashtable_delete(router->created_tables, table_ident);
-                        }
-                        hashtable_add(router->created_tables, table_ident, created);
-                    }
-                    else
-                    {
-                        rval = false;
-                        break;
-                    }
+                            char table_ident[MYSQL_TABLE_MAXLEN + MYSQL_DATABASE_MAXLEN + 2];
+                            snprintf(table_ident, sizeof(table_ident), "%s.%s", created->database, created->table);
 
+                            if (hashtable_fetch(router->created_tables, table_ident))
+                            {
+                                hashtable_delete(router->created_tables, table_ident);
+                            }
+                            hashtable_add(router->created_tables, table_ident, created);
+                        }
+                        else
+                        {
+                            rval = false;
+                            break;
+                        }
+                    }
                     tok = strtok_r(NULL, "\n", &saveptr);
                 }
             }
@@ -870,4 +880,28 @@ bool avro_load_created_tables(AVRO_INSTANCE *router)
         }
     }
     return rval;
+}
+
+/**
+ * @brief Flush all Avro records to disk
+ * @param router Avro router instance
+ */
+void avro_flush_all_tables(AVRO_INSTANCE *router)
+{
+    HASHITERATOR *iter = hashtable_iterator(router->open_tables);
+
+    if (iter)
+    {
+        char *key;
+        while ((key = (char*)hashtable_next(iter)))
+        {
+            AVRO_TABLE *table = hashtable_fetch(router->open_tables, key);
+
+            if (table)
+            {
+                avro_file_writer_flush(table->avro_file);
+            }
+        }
+        hashtable_iterator_free(iter);
+    }
 }

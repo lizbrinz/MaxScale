@@ -102,6 +102,8 @@ char* json_new_schema_from_table(TABLE_MAP *map, TABLE_CREATE *create)
     json_t *array = json_array();
     json_array_append(array, json_pack_ex(&err, 0, "{s:s, s:s}", "name",
                                           "GTID", "type", "string"));
+    json_array_append(array, json_pack_ex(&err, 0, "{s:s, s:s}", "name",
+                                          "timestamp", "type", "int"));
 
     for (uint64_t i = 0; i < map->columns; i++)
     {

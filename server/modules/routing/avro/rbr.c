@@ -71,6 +71,7 @@ void handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr
             hashtable_add(router->open_tables, table_ident, avro_table);
             save_avro_schema(router->avrodir, json_schema, map);
             MXS_DEBUG("%s", json_schema);
+            free(json_schema);
         }
 
         strncpy(map->gtid, router->current_gtid, GTID_MAX_LEN);
@@ -147,10 +148,13 @@ void handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
             int rows = 0;
             while (ptr - start < hdr->event_size - BINLOG_EVENT_HDR_LEN)
             {
-                /** Add the current GTID */
+                /** Add the current GTID and timestamp */
                 avro_value_t field;
                 avro_value_get_by_name(&record, "GTID", &field, NULL);
                 avro_value_set_string(&field, router->current_gtid);
+
+                avro_value_get_by_name(&record, "timestamp", &field, NULL);
+                avro_value_set_int(&field, hdr->timestamp);
 
                 ptr = process_row_event_data(map, create, &record, ptr, col_present, col_update);
                 avro_file_writer_append_value(table->avro_file, &record);
@@ -278,7 +282,7 @@ uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value
             npresent++;
             if (column_is_null(null_bitmap, ncolumns, i))
             {
-                avro_value_set_string(&field, "NULL");
+                avro_value_set_null(&field);
             }
             else if (column_is_fixed_string(map->column_types[i]))
             {
@@ -312,7 +316,7 @@ uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value
             {
                 size_t sz;
                 char *str = lestr_consume(&ptr, &sz);
-                avro_value_set_string_len(&field, str, sz + 1);
+                avro_value_set_string_len(&field, str, sz);
             }
             else if (column_is_blob(map->column_types[i]))
             {
