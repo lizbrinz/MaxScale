@@ -62,6 +62,8 @@ const monitor_def_t monitor_event_definitions[MAX_MONITOR_EVENT] =
 static MONITOR  *allMonitors = NULL;
 static SPINLOCK monLock = SPINLOCK_INIT;
 
+static void monitor_servers_free(MONITOR_SERVERS *servers);
+
 /**
  * Allocate a new monitor, load the associated module for the monitor
  * and start execution on the monitor.
@@ -139,6 +141,7 @@ monitor_free(MONITOR *mon)
     }
     spinlock_release(&monLock);
     free_config_parameter(mon->parameters);
+    monitor_servers_free(mon->databases);
     free(mon->name);
     free(mon);
 }
@@ -183,12 +186,22 @@ void monitorStartAll()
 void
 monitorStop(MONITOR *monitor)
 {
+    spinlock_acquire(&monitor->lock);
     if (monitor->state != MONITOR_STATE_STOPPED)
     {
         monitor->state = MONITOR_STATE_STOPPING;
         monitor->module->stopMonitor(monitor);
         monitor->state = MONITOR_STATE_STOPPED;
+
+        MONITOR_SERVERS* db = monitor->databases;
+        while (db)
+        {
+            mysql_close(db->con);
+            db->con = NULL;
+            db = db->next;
+        }
     }
+    spinlock_release(&monitor->lock);
 }
 
 /**
@@ -251,6 +264,24 @@ monitorAddServer(MONITOR *mon, SERVER *server)
         ptr->next = db;
     }
     spinlock_release(&mon->lock);
+}
+
+/**
+ * Free monitor server list
+ * @param servers Servers to free
+ */
+static void monitor_servers_free(MONITOR_SERVERS *servers)
+{
+    while (servers)
+    {
+        MONITOR_SERVERS *tofree = servers;
+        servers = servers->next;
+        if (tofree->con)
+        {
+            mysql_close(tofree->con);
+        }
+        free(tofree);
+    }
 }
 
 /**
@@ -380,60 +411,39 @@ monitorSetInterval(MONITOR *mon, unsigned long interval)
  * @param type          The timeout handling type
  * @param value         The timeout to set
  */
-void
-monitorSetNetworkTimeout(MONITOR *mon, int type, int value) {
+bool
+monitorSetNetworkTimeout(MONITOR *mon, int type, int value)
+{
+    bool rval = true;
 
-    int max_timeout = (int)(mon->interval/1000);
-    int new_timeout = max_timeout -1;
-
-    if (new_timeout <= 0)
+    if (value > 0)
     {
-        new_timeout = DEFAULT_CONNECT_TIMEOUT;
+        switch (type)
+        {
+            case MONITOR_CONNECT_TIMEOUT:
+                mon->connect_timeout = value;
+                break;
+
+            case MONITOR_READ_TIMEOUT:
+                mon->read_timeout = value;
+                break;
+
+            case MONITOR_WRITE_TIMEOUT:
+                mon->write_timeout = value;
+                break;
+
+            default:
+                MXS_ERROR("Monitor setNetworkTimeout received an unsupported action type %i", type);
+                rval = false;
+                break;
+        }
     }
-
-    switch(type) {
-    case MONITOR_CONNECT_TIMEOUT:
-        if (value < max_timeout)
-        {
-            memcpy(&mon->connect_timeout, &value, sizeof(int));
-        }
-        else
-        {
-            memcpy(&mon->connect_timeout, &new_timeout, sizeof(int));
-            MXS_WARNING("Monitor Connect Timeout %i is greater than monitor interval ~%i seconds"
-                        ", lowering to %i seconds", value, max_timeout, new_timeout);
-        }
-        break;
-
-    case MONITOR_READ_TIMEOUT:
-        if (value < max_timeout)
-        {
-            memcpy(&mon->read_timeout, &value, sizeof(int));
-        }
-        else
-        {
-            memcpy(&mon->read_timeout, &new_timeout, sizeof(int));
-            MXS_WARNING("Monitor Read Timeout %i is greater than monitor interval ~%i seconds"
-                        ", lowering to %i seconds", value, max_timeout, new_timeout);
-        }
-        break;
-
-    case MONITOR_WRITE_TIMEOUT:
-        if (value < max_timeout)
-        {
-            memcpy(&mon->write_timeout, &value, sizeof(int));
-        }
-        else
-        {
-            memcpy(&mon->write_timeout, &new_timeout, sizeof(int));
-            MXS_WARNING("Monitor Write Timeout %i is greater than monitor interval ~%i seconds"
-                        ", lowering to %i seconds", value, max_timeout, new_timeout);
-        }
-        break;
-    default:
-        MXS_ERROR("Monitor setNetworkTimeout received an unsupported action type %i", type);
-        break;
+    else
+    {
+        MXS_ERROR("Negative value for monitor timeout.");
+        rval = false;
     }
+    return rval;
 }
 
 /**
@@ -512,24 +522,25 @@ bool check_monitor_permissions(MONITOR* monitor)
 {
     MYSQL* mysql;
     MYSQL_RES* res;
-    char *user,*dpasswd;
+    char *user, *dpasswd;
     SERVER* server;
-    int conn_timeout = 1;
     bool rval = true;
-
-    user = monitor->user;
-    dpasswd = decryptPassword(monitor->password);
 
     if ((mysql = mysql_init(NULL)) == NULL)
     {
         MXS_ERROR("[%s] Error: MySQL connection initialization failed.", __FUNCTION__);
-        free(dpasswd);
         return false;
     }
 
+    GATEWAY_CONF* cnf = config_get_global_options();
+
+    mysql_options(mysql, MYSQL_OPT_READ_TIMEOUT, &cnf->auth_read_timeout);
+    mysql_options(mysql, MYSQL_OPT_CONNECT_TIMEOUT, &cnf->auth_conn_timeout);
+    mysql_options(mysql, MYSQL_OPT_WRITE_TIMEOUT, &cnf->auth_write_timeout);
+
+    user = monitor->user;
+    dpasswd = decryptPassword(monitor->password);
     server = monitor->databases->server;
-    mysql_options(mysql,MYSQL_OPT_USE_REMOTE_CONNECTION,NULL);
-    mysql_options(mysql,MYSQL_OPT_CONNECT_TIMEOUT,&conn_timeout);
 
     /** Connect to the first server. This assumes all servers have identical
      * user permissions. */
@@ -546,17 +557,17 @@ bool check_monitor_permissions(MONITOR* monitor)
         return false;
     }
 
-    if (mysql_query(mysql,"show slave status") != 0)
+    if (mysql_query(mysql, "show slave status") != 0)
     {
         if (mysql_errno(mysql) == ER_SPECIFIC_ACCESS_DENIED_ERROR)
         {
             MXS_ERROR("%s: User '%s' is missing REPLICATION CLIENT privileges. MySQL error message: %s",
-                      monitor->name,user,mysql_error(mysql));
+                      monitor->name, user, mysql_error(mysql));
         }
         else
         {
             MXS_ERROR("%s: Monitor failed to query for slave status. MySQL error message: %s",
-                      monitor->name,mysql_error(mysql));
+                      monitor->name, mysql_error(mysql));
         }
         rval = false;
     }
@@ -565,7 +576,7 @@ bool check_monitor_permissions(MONITOR* monitor)
         if ((res = mysql_use_result(mysql)) == NULL)
         {
             MXS_ERROR("%s: Result retrieval failed when checking for REPLICATION CLIENT permissions: %s",
-                      monitor->name,mysql_error(mysql));
+                      monitor->name, mysql_error(mysql));
             rval = false;
         }
         else
@@ -896,47 +907,46 @@ mon_connect_to_db(MONITOR* mon, MONITOR_SERVERS *database)
         return rval;
     }
 
-    int connect_timeout = mon->connect_timeout;
-    int read_timeout = mon->read_timeout;
-    int write_timeout = mon->write_timeout;
-    char *uname = database->server->monuser ? database->server->monuser : mon->user;
-    char *passwd = database->server->monpw ? database->server->monpw : mon->password;
-    char *dpwd = decryptPassword(passwd);
-
     if (database->con)
     {
         mysql_close(database->con);
     }
-    database->con = mysql_init(NULL);
 
-    mysql_options(database->con, MYSQL_OPT_CONNECT_TIMEOUT, (void *) &connect_timeout);
-    mysql_options(database->con, MYSQL_OPT_READ_TIMEOUT, (void *) &read_timeout);
-    mysql_options(database->con, MYSQL_OPT_WRITE_TIMEOUT, (void *) &write_timeout);
-
-    time_t start = time(NULL);
-    bool result = (mysql_real_connect(database->con,
-                                      database->server->name,
-                                      uname,
-                                      dpwd,
-                                      NULL,
-                                      database->server->port,
-                                      NULL,
-                                      0) != NULL);
-    time_t end = time(NULL);
-
-    if (!result)
+    if ((database->con = mysql_init(NULL)))
     {
-        if ((int) difftime(end, start) >= connect_timeout)
+        char *uname = database->server->monuser ? database->server->monuser : mon->user;
+        char *passwd = database->server->monpw ? database->server->monpw : mon->password;
+        char *dpwd = decryptPassword(passwd);
+
+        mysql_options(database->con, MYSQL_OPT_CONNECT_TIMEOUT, (void *) &mon->connect_timeout);
+        mysql_options(database->con, MYSQL_OPT_READ_TIMEOUT, (void *) &mon->read_timeout);
+        mysql_options(database->con, MYSQL_OPT_WRITE_TIMEOUT, (void *) &mon->write_timeout);
+
+        time_t start = time(NULL);
+        bool result = (mysql_real_connect(database->con, database->server->name,
+                                          uname, dpwd, NULL, database->server->port,
+                                          NULL, 0) != NULL);
+        time_t end = time(NULL);
+
+        if (!result)
         {
-            rval = MONITOR_CONN_TIMEOUT;
+            if ((int) difftime(end, start) >= mon->connect_timeout)
+            {
+                rval = MONITOR_CONN_TIMEOUT;
+            }
+            else
+            {
+                rval = MONITOR_CONN_REFUSED;
+            }
         }
-        else
-        {
-            rval = MONITOR_CONN_REFUSED;
-        }
+
+        free(dpwd);
+    }
+    else
+    {
+        rval = MONITOR_CONN_REFUSED;
     }
 
-    free(dpwd);
     return rval;
 }
 

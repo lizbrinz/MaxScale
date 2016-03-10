@@ -60,7 +60,7 @@
 #include <router.h>
 #include <dcb.h>
 #include <sys/time.h>
-#include <poll.h>
+#include <maxscale/poll.h>
 #include <mysql_client_server_protocol.h>
 #include <housekeeper.h>
 
@@ -251,7 +251,7 @@ orphan_free(void* data)
          */
 
         if (ptr->session->state == SESSION_STATE_STOPPING &&
-            ptr->session->refcount == 0 && ptr->session->client == NULL)
+            ptr->session->refcount == 0 && ptr->session->client_dcb == NULL)
         {
             ptr->session->state = SESSION_STATE_TO_BE_FREED;
         }
@@ -407,6 +407,33 @@ createInstance(char **options, FILTER_PARAMETER **params)
                 }
             }
         }
+
+        int cflags = REG_ICASE;
+
+        if (options)
+        {
+            for (i = 0; options[i]; i++)
+            {
+                if (!strcasecmp(options[i], "ignorecase"))
+                {
+                    cflags |= REG_ICASE;
+                }
+                else if (!strcasecmp(options[i], "case"))
+                {
+                    cflags &= ~REG_ICASE;
+                }
+                else if (!strcasecmp(options[i], "extended"))
+                {
+                    cflags |= REG_EXTENDED;
+                }
+                else
+                {
+                    MXS_ERROR("tee: unsupported option '%s'.",
+                              options[i]);
+                }
+            }
+        }
+
         if (my_instance->service == NULL)
         {
             free(my_instance->match);
@@ -416,7 +443,7 @@ createInstance(char **options, FILTER_PARAMETER **params)
         }
 
         if (my_instance->match &&
-            regcomp(&my_instance->re, my_instance->match, REG_ICASE))
+            regcomp(&my_instance->re, my_instance->match, cflags))
         {
             MXS_ERROR("tee: Invalid regular expression '%s'"
                       " for the match parameter.",
@@ -427,8 +454,7 @@ createInstance(char **options, FILTER_PARAMETER **params)
             return NULL;
         }
         if (my_instance->nomatch &&
-            regcomp(&my_instance->nore, my_instance->nomatch,
-                    REG_ICASE))
+            regcomp(&my_instance->nore, my_instance->nomatch, cflags))
         {
             MXS_ERROR("tee: Invalid regular expression '%s'"
                       " for the nomatch paramter.\n",
@@ -485,7 +511,7 @@ newSession(FILTER *instance, SESSION *session)
         my_session->active = 1;
         my_session->residual = 0;
         my_session->tee_replybuf = NULL;
-        my_session->client_dcb = session->client;
+        my_session->client_dcb = session->client_dcb;
         my_session->instance = my_instance;
         my_session->client_multistatement = false;
         my_session->queue = NULL;
@@ -518,7 +544,7 @@ newSession(FILTER *instance, SESSION *session)
             FILTER_DEF* dummy;
             UPSTREAM* dummy_upstream;
 
-            if ((dcb = dcb_clone(session->client)) == NULL)
+            if ((dcb = dcb_clone(session->client_dcb)) == NULL)
             {
                 freeSession(instance, (void *) my_session);
                 my_session = NULL;
@@ -578,7 +604,7 @@ newSession(FILTER *instance, SESSION *session)
             }
 
             ses->tail = *dummy_upstream;
-            MySQLProtocol* protocol = (MySQLProtocol*) session->client->protocol;
+            MySQLProtocol* protocol = (MySQLProtocol*) session->client_dcb->protocol;
             my_session->use_ok = protocol->client_capabilities & (1 << 6);
             free(dummy_upstream);
         }

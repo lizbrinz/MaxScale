@@ -239,8 +239,6 @@ details, please read the [Monitor Common](../Monitors/Monitor-Common.md) documen
 There are a number bugs and known limitations within this version of MaxScale,
 the most serious of this are listed below.
 
-* The `connection_timeout` service parameter is not safe to use in version 1.3.0.
-
 * MaxScale can not manage authentication that uses wildcard matching in hostnames in the mysql.user table of the backend database. The only wildcards that can be used are in IP address entries.
 
 * When users have different passwords based on the host from which they connect MaxScale is unable to determine which password it should use to connect to the backend database. This results in failed connections and unusable usernames in MaxScale.
@@ -252,10 +250,6 @@ the most serious of this are listed below.
 * The Database Firewall filter does not support multi-statements. Using them will result in an error being sent to the client.
 
 * The SSL support is known to be unstable.
-
-* Importing a large dump via readwritesplit may fail.
-
-  Workaround is to bypass MaxScale when importing or to use the readconn router.
 
 ## Packaging
 

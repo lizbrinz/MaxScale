@@ -129,8 +129,7 @@ typedef struct session
     session_state_t state;            /*< Current descriptor state */
     size_t          ses_id;           /*< Unique session identifier */
     int             enabled_log_priorities; /*< Bitfield of enabled syslog priorities */
-    struct dcb      *client;          /*< The client connection */
-    void            *data;            /*< The session data */
+    struct dcb      *client_dcb;      /*< The client connection */
     void            *router_session;  /*< The router instance data */
     SESSION_STATS   stats;            /*< Session statistics */
     struct service  *service;         /*< The service this session is using */
@@ -146,7 +145,14 @@ typedef struct session
 #endif
 } SESSION;
 
-#define SESSION_PROTOCOL(x, type)       DCB_PROTOCOL((x)->client, type)
+/** Whether to do session timeout checks */
+extern bool check_timeouts;
+
+/** When the next timeout check is done. This is compared to hkheartbeat in
+ * hk_heartbeat.h */
+extern long next_timeout_check;
+
+#define SESSION_PROTOCOL(x, type)       DCB_PROTOCOL((x)->client_dcb, type)
 
 /**
  * A convenience macro that can be used by the protocol modules to route
@@ -178,13 +184,12 @@ void printSession(SESSION *);
 void dprintAllSessions(struct dcb *);
 void dprintSession(struct dcb *, SESSION *);
 void dListSessions(struct dcb *);
-char *session_state(int);
+char *session_state(session_state_t);
 bool session_link_dcb(SESSION *, struct dcb *);
-int session_unlink_dcb(SESSION*, DCB*);
 SESSION* get_session_by_router_ses(void* rses);
 void session_enable_log_priority(SESSION* ses, int priority);
 void session_disable_log_priority(SESSION* ses, int priority);
-void session_close_timeouts(void* data);
 RESULTSET *sessionGetList(SESSIONLISTFILTER);
-
+void process_idle_sessions();
+void enable_session_timeouts();
 #endif

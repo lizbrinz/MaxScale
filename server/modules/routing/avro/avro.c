@@ -444,7 +444,7 @@ newSession(ROUTER *instance, SESSION *session)
     client->state = BLRS_CREATED; /* Set initial state of the slave */
     client->uuid = NULL;
     spinlock_init(&client->catch_lock);
-    client->dcb = session->client;
+    client->dcb = session->client_dcb;
     client->router = inst;
 #ifdef BLFILE_IN_SLAVE
     client->file = NULL;

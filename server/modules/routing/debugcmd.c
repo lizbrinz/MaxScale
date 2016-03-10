@@ -63,7 +63,7 @@
 #include <spinlock.h>
 #include <buffer.h>
 #include <dcb.h>
-#include <poll.h>
+#include <maxscale/poll.h>
 #include <users.h>
 #include <dbusers.h>
 #include <maxconfig.h>
@@ -71,7 +71,6 @@
 #include <adminusers.h>
 #include <monitor.h>
 #include <debugcli.h>
-#include <poll.h>
 #include <housekeeper.h>
 
 #include <skygw_utils.h>
@@ -927,7 +926,7 @@ convert_arg(int mode, char *arg, int arg_type)
 int
 execute_cmd(CLI_SESSION *cli)
 {
-    DCB           *dcb = cli->session->client;
+    DCB           *dcb = cli->session->client_dcb;
     int            argc, i, j, found = 0;
     char          *args[MAXARGS + 1];
     unsigned long  arg1, arg2, arg3;

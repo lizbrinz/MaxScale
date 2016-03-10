@@ -45,7 +45,7 @@
  * 26/08/2015	Massimiliano Pinto	Added MariaDB 10 GTID event check with flags = 0
  *					This is the current supported condition for detecting
  *					MariaDB 10 transaction start point.
- *					It's no longer using QUERY_EVENT with BEGIN	
+ *					It's no longer using QUERY_EVENT with BEGIN
  * 25/09/2015	Massimiliano Pinto	Addition of lastEventReceived for slaves
  * 23/10/15	Markus Makela		Added current_safe_event
  *
@@ -142,7 +142,7 @@ DCB	*client;
 	router->residual = NULL;
 
 	spinlock_release(&router->lock);
-	if ((client = dcb_alloc(DCB_ROLE_INTERNAL)) == NULL)
+	if ((client = dcb_alloc(DCB_ROLE_INTERNAL, NULL)) == NULL)
 	{
 		MXS_ERROR("Binlog router: failed to create DCB for dummy client");
 		return;
@@ -1158,7 +1158,7 @@ int			n_bufs = -1, pn_bufs = -1;
 						if (hdr.event_type == MARIADB10_GTID_EVENT) {
 							uint64_t n_sequence;
 							uint32_t domainid;
-							unsigned int flags;	
+							unsigned int flags;
 							n_sequence = extract_field(ptr+4+20, 64);
 							domainid = extract_field(ptr+4+20 + 8, 32);
 							flags = *(ptr+4+20 + 8 + 4);
@@ -1679,7 +1679,7 @@ char		file[BINLOG_FNAMELEN+1];
 
 /**
  * Create the auth data needed to be able to call dcb_connect.
- * 
+ *
  * This doesn't really belong here and should be moved at some stage.
  */
 static void *
@@ -1957,7 +1957,7 @@ blr_master_connected(ROUTER_INSTANCE *router)
 }
 
 /**
- * Extract a result value from the set of messages that make up a 
+ * Extract a result value from the set of messages that make up a
  * MySQL response packet.
  *
  * @param buf	The GWBUF containing the response

@@ -25,13 +25,16 @@
  * Date         Who                     Description
  * 04/06/14     Mark Riddoch            Initial implementation
  * 24/10/14     Massimiliano Pinto      Added modutil_send_mysql_err_packet, modutil_create_mysql_err_msg
+ * 04/01/16     Martin Brampton         Streamline code in modutil_get_complete_packets
  *
  * @endverbatim
  */
 #include <buffer.h>
 #include <string.h>
 #include <mysql_client_server_protocol.h>
+#include <maxscale/poll.h>
 #include <modutil.h>
+#include <strings.h>
 
 /** These are used when converting MySQL wildcards to regular expressions */
 static SPINLOCK re_lock = SPINLOCK_INIT;
@@ -555,65 +558,54 @@ return_packetbuf:
  * @param p_readbuf Buffer to split, set to NULL if no partial packets are left
  * @return Head of the chain of complete packets, all in a single, contiguous buffer
  */
-GWBUF* modutil_get_complete_packets(GWBUF** p_readbuf)
+GWBUF* modutil_get_complete_packets(GWBUF **p_readbuf)
 {
-    GWBUF *buff = NULL, *packet;
+    GWBUF *complete_part = NULL;
     uint8_t *ptr;
-    uint32_t len,blen,total = 0;
+    uint32_t len, blen, total = 0;
 
+    /** Give up if the parameter is not a pointer to a pointer or
+     * the total buffer length is less than the 3 bytes needed to
+     * hold a packet length. */
     if (p_readbuf == NULL || (*p_readbuf) == NULL ||
-       gwbuf_length(*p_readbuf) < 3)
+       (blen = gwbuf_length(*p_readbuf)) < 3)
     {
         return NULL;
     }
 
-    packet = gwbuf_make_contiguous(*p_readbuf);
-    packet->next = NULL;
-    *p_readbuf = packet;
-    ptr = (uint8_t*)packet->start;
-    len = gw_mysql_get_byte3(ptr) + 4;
-    blen = gwbuf_length(packet);
+    *p_readbuf = gwbuf_make_contiguous(*p_readbuf);
+    ptr = (uint8_t*)(*p_readbuf)->start;
 
-    if (len == blen)
-    {
-        *p_readbuf = NULL;
-        return packet;
-    }
-    else if (len > blen)
-    {
-        return NULL;
-    }
-
-    while (total + len < blen)
+    /** We need at least 3 bytes of the packet header to know how long the next
+     * packet is going to be, if we are going to cycle round again. */
+    while (total + (len = gw_mysql_get_byte3(ptr) + 4) < (blen - 3))
     {
         ptr += len;
         total += len;
-
-        /** We need at least 3 bytes of the packet header to know how long the whole
-         * packet is going to be. */
-        if (total + 3 >= blen)
-        {
-            break;
-        }
-
-        len = gw_mysql_get_byte3(ptr) + 4;
     }
 
-    /** Full packets only, return original */
-    if (total + len == blen)
+    total += len;
+    /* If total has overshot the buffer(s) return null, this is an error. */
+    if (total > blen)
     {
+        return NULL;
+    }
+    /** Full packets only, return original and null the passed buffer */
+    if (total == blen)
+    {
+        GWBUF *packet = *p_readbuf;
         *p_readbuf = NULL;
         return packet;
     }
 
     /** The next packet is a partial, split into complete and partial packets */
-    if ((buff = gwbuf_clone_portion(packet, 0, total)) == NULL)
+    if ((complete_part = gwbuf_clone_portion(*p_readbuf, 0, total)) == NULL)
     {
-        MXS_ERROR("Failed to partially clone buffer.");
+        MXS_ERROR("Failed to partially clone buffer while extracting complete packets.");
         return NULL;
     }
-    gwbuf_consume(packet,total);
-    return buff;
+    *p_readbuf = gwbuf_consume(*p_readbuf, total);
+    return complete_part;
 }
 
 /**
@@ -623,7 +615,7 @@ GWBUF* modutil_get_complete_packets(GWBUF** p_readbuf)
  * detection of partial packets in buffers.
  * @param reply Buffer to use
  * @param use_ok Whether the DEPRECATE_EOF flag is set
- * @param n_found If there were previous packets found 
+ * @param n_found If there were previous packets found
  * @return Number of EOF packets
  */
 int
@@ -774,7 +766,7 @@ static void modutil_reply_routing_error(DCB*     backend_dcb,
  * @return Pointer to the first non-escaped, non-quoted occurrence of the character.
  * If the character is not found, NULL is returned.
  */
-void* strnchr_esc(char* ptr, char c, int len)
+char* strnchr_esc(char* ptr, char c, int len)
 {
     char* p = (char*)ptr;
     char* start = p;
@@ -808,6 +800,163 @@ void* strnchr_esc(char* ptr, char c, int len)
     }
 
     return NULL;
+}
+
+/**
+ * Find the first occurrence of a character in a string. This function ignores
+ * escaped characters and all characters that are enclosed in single or double quotes.
+ * MySQL style comment blocks and identifiers in backticks are also ignored.
+ * @param ptr Pointer to area of memory to inspect
+ * @param c Character to search for
+ * @param len Size of the memory area
+ * @return Pointer to the first non-escaped, non-quoted occurrence of the character.
+ * If the character is not found, NULL is returned.
+ */
+char* strnchr_esc_mysql(char* ptr, char c, int len)
+{
+    char* p = (char*) ptr;
+    char* start = p, *end = start + len;
+    bool quoted = false, escaped = false, backtick = false, comment = false;
+    char qc;
+
+    while (p < end)
+    {
+        if (escaped)
+        {
+            escaped = false;
+        }
+        else if ((!comment && !quoted && !backtick) || (comment && *p == '*') ||
+                 (!comment && quoted && *p == qc) || (!comment && backtick && *p == '`'))
+        {
+            switch (*p)
+            {
+                case '\\':
+                    escaped = true;
+                    break;
+
+                case '\'':
+                case '"':
+                    if (!quoted)
+                    {
+                        quoted = true;
+                        qc = *p;
+                    }
+                    else if (*p == qc)
+                    {
+                        quoted = false;
+                    }
+                    break;
+
+                case '/':
+                    if (p + 1 < end && *(p + 1) == '*')
+                    {
+                        comment = true;
+                        p += 1;
+                    }
+                    break;
+
+                case '*':
+                    if (comment && p + 1 < end && *(p + 1) == '/')
+                    {
+                        comment = false;
+                        p += 1;
+                    }
+                    break;
+
+                case '`':
+                    backtick = !backtick;
+                    break;
+
+                case '#':
+                    return NULL;
+
+                case '-':
+                    if (p + 2 < end && *(p + 1) == '-' &&
+                        isspace(*(p + 2)))
+                    {
+                        return NULL;
+                    }
+                    break;
+
+                default:
+                    break;
+            }
+
+            if (*p == c && !escaped && !quoted && !comment && !backtick)
+            {
+                return p;
+            }
+        }
+        p++;
+    }
+    return NULL;
+}
+
+/**
+ * @brief Check if the string is the final part of a valid SQL statement
+ *
+ * This function checks whether the string pointed by @p start contains any
+ * tokens that are interpreted as executable commands.
+ * @param start String containing the statement
+ * @param len Length of the string
+ * @return True if statement contains no executable parts
+ */
+bool is_mysql_statement_end(const char* start, int len)
+{
+    const char *ptr = start;
+    bool rval = false;
+
+    while (ptr < start + len && (isspace(*ptr) || *ptr == ';'))
+    {
+        ptr++;
+    }
+
+    if (ptr < start + len)
+    {
+        switch (*ptr)
+        {
+            case '-':
+                if (ptr < start + len - 2 && *(ptr + 1) == '-' && isspace(*(ptr + 2)))
+                {
+                    rval = true;
+                }
+                break;
+
+            case '#':
+                rval = true;
+                break;
+
+            case '/':
+                if (ptr < start + len - 1 && *(ptr + 1) == '*')
+                {
+                    rval = true;
+                }
+                break;
+        }
+    }
+    else
+    {
+        rval = true;
+    }
+
+    return rval;
+}
+
+/**
+ * @brief Check if the token is the END part of a BEGIN ... END block.
+ * @param ptr String with at least three non-whitespace characters in it
+ * @return True if the token is the final part of a BEGIN .. END block
+ */
+bool is_mysql_sp_end(const char* start, int len)
+{
+    const char *ptr = start;
+
+    while (ptr < start + len && (isspace(*ptr) || *ptr == ';'))
+    {
+        ptr++;
+    }
+
+    return ptr < start + len - 3 && strncasecmp(ptr, "end", 3) == 0;
 }
 
 /**

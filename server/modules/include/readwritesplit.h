@@ -252,6 +252,8 @@ typedef struct rwsplit_config_st
     int rw_max_sescmd_history_size;
     bool rw_disable_sescmd_hist;
     bool rw_master_reads; /*< Use master for reads */
+    bool rw_strict_multi_stmt; /*< Force non-multistatement queries to be routed
+                                * to the master after a multistatement query. */
 } rwsplit_config_t;
 
 #if defined(PREP_STMT_CACHING)
@@ -294,9 +296,11 @@ struct router_client_session {
         bool             rses_transaction_active;
         bool             rses_load_active; /*< If LOAD DATA LOCAL INFILE is
                                             * being currently executed */
+        bool             have_tmp_tables;
         uint64_t         rses_load_data_sent; /*< How much data has been sent */
         DCB* client_dcb;
         int             pos_generator;
+        backend_ref_t          *forced_node; /*< Current server where all queries should be sent */
 #if defined(PREP_STMT_CACHING)
         HASHTABLE*       rses_prep_stmt[2];
 #endif
