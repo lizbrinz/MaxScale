@@ -236,7 +236,7 @@ bool column_is_blob(uint8_t type)
  * @return True if the column is a string type column
  * @see lestr_consume
  */
-bool column_is_string_type(uint8_t type)
+bool column_is_variable_string(uint8_t type)
 {
     switch (type)
     {
@@ -244,10 +244,7 @@ bool column_is_string_type(uint8_t type)
         case TABLE_COL_TYPE_VARCHAR:
         case TABLE_COL_TYPE_BIT:
         case TABLE_COL_TYPE_NEWDECIMAL:
-        case TABLE_COL_TYPE_ENUM:
-        case TABLE_COL_TYPE_SET:
         case TABLE_COL_TYPE_VAR_STRING:
-        case TABLE_COL_TYPE_STRING:
         case TABLE_COL_TYPE_GEOMETRY:
             return true;
         default:
@@ -255,6 +252,17 @@ bool column_is_string_type(uint8_t type)
     }
 }
 
+/**
+ * @brief Check if the column is a string type column
+ *
+ * @param type Type of the column
+ * @return True if the column is a string type column
+ * @see lestr_consume
+ */
+bool column_is_fixed_string(uint8_t type)
+{
+    return type == TABLE_COL_TYPE_STRING;
+}
 /**
  * @brief Unpack a DATETIME
  *
@@ -327,10 +335,20 @@ static void unpack_date(uint64_t val, struct tm *dest)
  * @param type Column type
  * @return True if the type is temporal
  */
-bool is_temporal_value(uint8_t type)
+bool column_is_temporal(uint8_t type)
 {
     return type == TABLE_COL_TYPE_DATETIME || type == TABLE_COL_TYPE_DATE ||
            type == TABLE_COL_TYPE_TIMESTAMP || type == TABLE_COL_TYPE_TIME;
+}
+
+/**
+ * Check if a column is an ENUM or SET
+ * @param type Column type
+ * @return True if column is either ENUM or SET
+ */
+bool fixed_string_is_enum(uint8_t type)
+{
+    return type == TABLE_COL_TYPE_ENUM || type == TABLE_COL_TYPE_SET;
 }
 
 /**
@@ -543,68 +561,223 @@ static bool get_table_name(const char* sql, char* dest)
 }
 
 /**
+ * Extract the database name from a CREATE TABLE statement
+ * @param sql SQL statement
+ * @param dest Destination where the database name is extracted. Must be at least
+ * MYSQL_DATABASE_MAXLEN bytes long.
+ * @return True if extraction was successful
+ */
+static bool get_database_name(const char* sql, char* dest)
+{
+    bool rval = false;
+    const char* ptr = strchr(sql, '(');
+
+    if (ptr)
+    {
+        ptr--;
+        while (*ptr == '`' || isspace(*ptr))
+        {
+            ptr--;
+        }
+
+        while (*ptr != '`' && *ptr != '.' && !isspace(*ptr))
+        {
+            ptr--;
+        }
+        const char* end = ptr;
+        ptr--;
+
+        while (*ptr != '`' && *ptr != '.' && !isspace(*ptr))
+        {
+            ptr--;
+        }
+
+        ptr++;
+        memcpy(dest, ptr, end - ptr);
+        dest[end - ptr] = '\0';
+        rval = true;
+    }
+
+    return rval;
+}
+
+/**
+ * Get the start of the next field definition in a CREATE TABLE statement
+ * @param sql Table definition
+ * @return Start of the next field definition
+ */
+const char* get_next_field_def(const char* sql)
+{
+    int depth = 0;
+
+    while (*sql != '\0')
+    {
+        switch (*sql)
+        {
+            case '(':
+                depth++;
+                break;
+
+            case ')':
+                depth--;
+                break;
+
+            case ',':
+                if (depth == 0)
+                {
+                    sql++;
+                    while (isspace(*sql))
+                    {
+                        sql++;
+                    }
+                    return sql;
+                }
+                break;
+        }
+        sql++;
+    }
+    return NULL;
+}
+
+/**
+ * Process a table definition into an array of column names
+ * @param nameptr table definition
+ * @return Number of processed columns or -1 on error
+ */
+int process_column_definition(const char *nameptr, char*** dest)
+{
+    /** Process columns in groups of 8 */
+    size_t chunks = 1;
+    const size_t chunk_size = 8;
+    int i = 0;
+    char **names = malloc(sizeof(char*) * (chunks * chunk_size + 1));
+
+    if (names == NULL)
+    {
+        MXS_ERROR("Memory allocation failed when trying allocate %ld bytes of memory.",
+                  sizeof(char*) * chunks);
+        return -1;
+    }
+
+    while (nameptr)
+    {
+        if (i >= chunks * chunk_size)
+        {
+            char **tmp = realloc(names, (++chunks * chunk_size + 1) * sizeof(char*));
+            if (tmp == NULL)
+            {
+                for (int x = 0; x < i; x++)
+                {
+                    free(names[x]);
+                }
+                free(names);
+                MXS_ERROR("Memory allocation failed when trying allocate %ld bytes of memory.",
+                          sizeof(char*) * chunks);
+                return -1;
+            }
+            names = tmp;
+        }
+
+        char colname[64 + 1];
+        char *end = strchr(nameptr, ' ');
+        if (end)
+        {
+            sprintf(colname, "%.*s", (int) (end - nameptr), nameptr);
+
+            if ((names[i++] = strdup(colname)) == NULL)
+            {
+                for (int x = 0; x < i; x++)
+                {
+                    free(names[x]);
+                }
+                free(names);
+                MXS_ERROR("Memory allocation failed when trying allocate %ld bytes of memory.",
+                          sizeof(char*) * chunks);
+                return -1;
+            }
+
+            MXS_NOTICE("Column name: %s", colname);
+        }
+
+        nameptr = get_next_field_def(nameptr);
+    }
+
+    *dest = names;
+
+    return i;
+}
+
+/**
  * @brief Handle a query event which contains a CREATE TABLE statement
  * @param sql Query SQL
  * @param db Database where this query was executed
  * @return
  * TODO: NULL return value checks
  */
-TABLE_CREATE* table_create_alloc(const char* sql, const char* db)
+TABLE_CREATE* table_create_alloc(const char* sql, const char* event_db)
 {
     /** Extract the table definition so we can get the column names from it */
     int stmt_len = 0;
     const char* statement_sql = get_table_definition(sql, &stmt_len);
+    ss_dassert(statement_sql);
+    char table[MYSQL_TABLE_MAXLEN + 1];
+    char database[MYSQL_DATABASE_MAXLEN + 1];
+    const char *db = event_db;
+
     MXS_NOTICE("Create table statement: %.*s", stmt_len, statement_sql);
-    TABLE_CREATE *rval = NULL;
-    const char *nameptr = statement_sql;
-    char table[MYSQL_TABLE_MAXLEN];
-    get_table_name(sql, table);
 
-    /** Process columns in groups of 8 */
-    size_t names_size = 8;
-    int i = 0;
-    char **names = malloc(sizeof(char*) * names_size);
-
-    while (nameptr)
+    if (!get_table_name(sql, table))
     {
-        if (i >= names_size)
-        {
-            char **tmp = realloc(names, (names_size + 8) * sizeof(char*));
-            if (tmp)
-            {
-                names = tmp;
-                names_size += 8;
-            }
-        }
-
-        while (isspace(*nameptr))
-        {
-            nameptr++;
-        }
-        char colname[64 + 1];
-        char *end = strchr(nameptr, ' ');
-        if (end)
-        {
-            sprintf(colname, "%.*s", (int) (end - nameptr), nameptr);
-            names[i++] = strdup(colname);
-            MXS_NOTICE("Column name: %s", colname);
-        }
-
-        if ((nameptr = strchr(nameptr, ',')))
-        {
-            nameptr++;
-        }
+        MXS_ERROR("Malformed CREATE TABLE statement, could not extract table name: %s", sql);
+        return NULL;
     }
 
-    /** We have appear to have a valid CREATE TABLE statement */
-    if (i > 0)
+    /** The CREATE statement contains the database name */
+    if (strlen(db) == 0)
     {
-        rval = malloc(sizeof(TABLE_CREATE));
-        rval->column_names = names;
-        rval->columns = i;
-        rval->database = strdup(db);
-        rval->table = strdup(table);
-        rval->gtid[0] = '\0'; // GTID not yet implemented
+        if (!get_database_name(sql, database))
+        {
+            MXS_ERROR("Malformed CREATE TABLE statement, could not extract "
+                      "database name: %s", sql);
+            return NULL;
+        }
+        db = database;
+    }
+
+    char **names = NULL;
+    int n_columns = process_column_definition(statement_sql, &names);
+
+    /** We have appear to have a valid CREATE TABLE statement */
+    TABLE_CREATE *rval = NULL;
+    if (n_columns > 0)
+    {
+        if ((rval = malloc(sizeof(TABLE_CREATE))))
+        {
+            rval->column_names = names;
+            rval->columns = n_columns;
+            rval->database = strdup(db);
+            rval->table = strdup(table);
+            rval->gtid[0] = '\0'; // GTID not yet implemented
+        }
+
+        if (rval == NULL || rval->database == NULL || rval->table == NULL)
+        {
+            if (rval)
+            {
+                free(rval->database);
+                free(rval->table);
+                free(rval);
+            }
+
+            for (int i = 0; i < n_columns; i++)
+            {
+                free(names[i]);
+            }
+
+            free(names);
+            MXS_ERROR("Memory allocation failed when processing a CREATE TABLE statement.");
+            rval = NULL;
+        }
     }
 
     return rval;

@@ -136,7 +136,7 @@ void handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
         AVRO_TABLE* table = hashtable_fetch(router->open_tables, table_ident);
         TABLE_CREATE* create = hashtable_fetch(router->created_tables, table_ident);
 
-        if (ncolumns == map->columns)
+        if (table && create && ncolumns == map->columns)
         {
             avro_value_t record;
             avro_generic_value_new(table->avro_writer_iface, &record);
@@ -147,7 +147,12 @@ void handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
             int rows = 0;
             while (ptr - start < hdr->event_size - BINLOG_EVENT_HDR_LEN)
             {
-                ptr = process_row_event(map, create, &record, ptr, col_present, col_update);
+                /** Add the current GTID */
+                avro_value_t field;
+                avro_value_get_by_name(&record, "GTID", &field, NULL);
+                avro_value_set_string(&field, router->current_gtid);
+
+                ptr = process_row_event_data(map, create, &record, ptr, col_present, col_update);
                 avro_file_writer_append_value(table->avro_file, &record);
                 rows++;
             }
@@ -155,12 +160,19 @@ void handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
             avro_value_decref(&record);
             avro_file_writer_flush(table->avro_file);
         }
+        else if (table == NULL)
+        {
+            MXS_ERROR("Avro datafile to open properly for table %s.%s.", map->database, map->table);
+        }
+        else if (create == NULL)
+        {
+            MXS_ERROR("Create table statement for %s.%s was malformed.", map->database, map->table);
+        }
         else
         {
             MXS_ERROR("Row event and table map event have different column counts."
                       " Only full row image is currently supported.");
         }
-
     }
 }
 
@@ -243,8 +255,8 @@ int get_metadata_len(uint8_t type)
  * @param columns_present
  * @param col_update
  */
-uint8_t* process_row_event(TABLE_MAP *map, TABLE_CREATE *create, avro_value_t *record, uint8_t *ptr,
-                           uint64_t columns_present, uint64_t columns_update)
+uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value_t *record,
+                           uint8_t *ptr, uint64_t columns_present, uint64_t columns_update)
 {
     char rstr[2048];
     int npresent = 0;
@@ -268,16 +280,41 @@ uint8_t* process_row_event(TABLE_MAP *map, TABLE_CREATE *create, avro_value_t *r
             npresent++;
             if (column_is_null(null_bitmap, ncolumns, i))
             {
-                avro_value_set_string(&field, "NULL");
+                avro_value_set_null(&field);
             }
-            else if (column_is_string_type(map->column_types[i]))
+            else if (column_is_fixed_string(map->column_types[i]))
+            {
+                /** ENUM and SET are stored as STRING types with the type stored
+                 * in the metadata. */
+                if (fixed_string_is_enum(map->column_metadata[metadata_offset]))
+                {
+                    uint8_t bytes = map->column_metadata[metadata_offset + 1];
+                    uint64_t data = 0;
+                    char strval[32] = "NULL";
+                    memcpy(&data, ptr, bytes);
+                    for (uint8_t x = 0; x < sizeof(data); x++)
+                    {
+                        if(data & (1 << x))
+                        {
+                            snprintf(strval, sizeof(strval), "%d", x + 1);
+                            break;
+                        }
+                    }
+                    avro_value_set_string(&field, strval);
+                    ptr += bytes;
+                }
+                else
+                {
+                    uint8_t bytes = *ptr;
+                    avro_value_set_string_len(&field, (char*)ptr + 1, bytes);
+                    ptr += bytes + 1;
+                }
+            }
+            else if (column_is_variable_string(map->column_types[i]))
             {
                 size_t sz;
                 char *str = lestr_consume(&ptr, &sz);
-                avro_value_set_string_len(&field, str, sz);
-                strncat(rstr, "S: ", sizeof(rstr));
-                strncat(rstr, str, sz);
-                strncat(rstr, " ", sizeof(rstr));
+                avro_value_set_string_len(&field, str, sz + 1);
             }
             else if (column_is_blob(map->column_types[i]))
             {
@@ -286,24 +323,20 @@ uint8_t* process_row_event(TABLE_MAP *map, TABLE_CREATE *create, avro_value_t *r
                 memcpy(&len, ptr, bytes);
                 ptr += bytes;
                 avro_value_set_bytes(&field, ptr, len);
-                strncat(rstr, "BLOB ", sizeof(rstr));
                 ptr += len;
             }
             else
             {
                 uint64_t lval = 0;
                 ptr += extract_field_value(ptr, map->column_types[i], &lval);
-                char buf[200];
-                snprintf(buf, sizeof(buf), "I: %lu ", lval);
-                strncat(rstr, buf, sizeof(rstr));
 
-                if (is_temporal_value(map->column_types[i]))
+                if (column_is_temporal(map->column_types[i]))
                 {
+                    char buf[80];
                     struct tm tm;
                     unpack_temporal_value(map->column_types[i], lval, &tm);
                     format_temporal_value(buf, sizeof(buf), map->column_types[i], &tm);
                     avro_value_set_string(&field, buf);
-                    MXS_DEBUG("%s: %s", table_type_to_string(map->column_types[i]), buf);
                 }
                 else
                 {
@@ -325,7 +358,7 @@ uint8_t* process_row_event(TABLE_MAP *map, TABLE_CREATE *create, avro_value_t *r
 
             if (columns_update & (1 << i))
             {
-                if (column_is_string_type(map->column_types[i]))
+                if (column_is_variable_string(map->column_types[i]))
                 {
                     char *str = lestr_consume_dup(&ptr);
                     free(str);
@@ -334,7 +367,7 @@ uint8_t* process_row_event(TABLE_MAP *map, TABLE_CREATE *create, avro_value_t *r
                 {
                     uint64_t lval = 0;
                     ptr += extract_field_value(ptr, map->column_types[i], &lval);
-                    if (is_temporal_value(map->column_types[i]))
+                    if (column_is_temporal(map->column_types[i]))
                     {
                         struct tm tm;
                         unpack_temporal_value(map->column_types[i], lval, &tm);

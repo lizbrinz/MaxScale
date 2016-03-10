@@ -116,11 +116,18 @@ void* table_map_free(TABLE_MAP *map);
 void table_map_rotate(TABLE_MAP *map);
 
 const char* table_type_to_string(uint8_t type);
-bool column_is_string_type(uint8_t type);
-bool column_is_blob(uint8_t type);
 
-/** Temporal values */
-bool is_temporal_value(uint8_t type);
+/** Column type checking functions */
+bool column_is_variable_string(uint8_t type);
+bool column_is_fixed_string(uint8_t type);
+bool column_is_blob(uint8_t type);
+bool column_is_temporal(uint8_t type);
+
+/** Various types are stored as fixed string types and the real type is stored
+ * in the table metadata */
+bool fixed_string_is_enum(uint8_t type);
+
+/** Temporal value processing */
 void unpack_temporal_value(uint8_t type, uint64_t val, struct tm *tm);
 void format_temporal_value(char *str, size_t size, uint8_t type, struct tm *tm);
 

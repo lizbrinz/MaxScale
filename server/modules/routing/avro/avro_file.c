@@ -164,7 +164,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
     uint8_t hdbuf[BINLOG_EVENT_HDR_LEN];
     uint8_t *data;
     GWBUF *result;
-    unsigned long long pos = 4;
+    unsigned long long pos = router->current_pos;
     unsigned long long last_known_commit = 4;
     char next_binlog[BINLOG_FNAMELEN + 1];
     REP_HEADER hdr;
@@ -200,9 +200,6 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
     {
         filelen = statb.st_size;
     }
-
-    router->current_pos = 4;
-    router->binlog_position = 4;
 
     while (1)
     {
@@ -268,6 +265,8 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
                         MXS_NOTICE("End of binlog file [%s] at %llu. Rotating to file [%s].",
                                    router->binlog_name, pos, next_binlog);
                         strncpy(router->binlog_name, next_binlog, sizeof(router->binlog_name));
+                        router->binlog_position = 4;
+                        router->current_pos = 4;
                         return AVRO_ROTATED;
                     }
                     else if(stop_seen)
@@ -283,6 +282,8 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
                                        router->binlog_name, pos, next_binlog);
 
                             strncpy(router->binlog_name, next_binlog, sizeof(router->binlog_name));
+                            router->binlog_position = 4;
+                            router->current_pos = 4;
                             return AVRO_CLOSED;
                         }
                         else
@@ -307,6 +308,8 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
                                        router->binlog_name, pos, next_binlog);
                             
                             strncpy(router->binlog_name, next_binlog, sizeof(router->binlog_name));
+                            router->binlog_position = 4;
+                            router->current_pos = 4;
                             return AVRO_CLOSED;
                         }
 
@@ -543,11 +546,11 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             n_sequence = extract_field(ptr, 64);
             domainid = extract_field(ptr + 8, 32);
             flags = *(ptr + 8 + 4);
+            snprintf(router->current_gtid, sizeof(router->current_gtid), "%u-%u-%lu", domainid,
+                     hdr.serverid, n_sequence);
 
             if (flags == 0)
             {
-                snprintf(router->current_gtid, sizeof(router->current_gtid), "%u-%u-%lu", domainid,
-                         hdr.serverid, n_sequence);
                 // TODO: Handle GTID transactions
                 if (pending_transaction > 0)
                 {

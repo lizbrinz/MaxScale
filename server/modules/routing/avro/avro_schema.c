@@ -77,7 +77,10 @@ static const char* column_type_to_avro_type(uint8_t type)
 }
 
 /**
- * Create a new JSON Avro schema from the table map and create table abstractions
+ * @brief Create a new JSON Avro schema from the table map and create table abstractions
+ *
+ * The schema will always have a GTID field and all records contain the current
+ * GTID of the transaction.
  * @param map TABLE_MAP for this table
  * @param create The TABLE_CREATE for this table
  * @return New schema or NULL if an error occurred
@@ -97,6 +100,9 @@ char* json_new_schema_from_table(TABLE_MAP *map, TABLE_CREATE *create)
     json_object_set_new(schema, "name", json_string("ChangeRecord"));
 
     json_t *array = json_array();
+    json_array_append(array, json_pack_ex(&err, 0, "{s:s, s:s}", "name",
+                                          "GTID", "type", "string"));
+
     for (uint64_t i = 0; i < map->columns; i++)
     {
         json_array_append(array, json_pack_ex(&err, 0, "{s:s, s:s}", "name",

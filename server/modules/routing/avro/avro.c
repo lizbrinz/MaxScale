@@ -17,14 +17,14 @@
  */
 
 /**
- * @file avro.c - Avro router, allows MaxScale to act as an intermediatory for
+ * @file avro.c - Avro router, allows MaxScale to act as an intermediary for
  * MySQL replication binlog files and AVRO binary files
  *
  * @verbatim
  * Revision History
  *
- * Date         Who             Description
- * 25/02/2016   Massimiliano    Pinto  Initial implementation
+ * Date         Who                   Description
+ * 25/02/2016   Massimiliano Pinto    Initial implementation
  *
  * @endverbatim
  */
@@ -237,14 +237,14 @@ createInstance(SERVICE *service, char **options)
 
     memset(&inst->stats, 0, sizeof(AVRO_ROUTER_STATS));
 
-    inst->service = service;
     spinlock_init(&inst->lock);
     spinlock_init(&inst->fileslock);
-
+    inst->service = service;
     inst->binlog_fd = -1;
-
     inst->binlogdir = NULL;
     inst->avrodir = NULL;
+    inst->current_pos = 4;
+    inst->binlog_position = 4;
     int first_file = 1;
 
     if (options)
@@ -1175,9 +1175,9 @@ void converter_func(void* data)
     AVRO_INSTANCE* router = (AVRO_INSTANCE*) data;
     bool ok = true;
 
-    while (ok && binlog_next_file_exists(router->binlogdir, router->binlog_name))
+    while (ok)
     {
-        router->task_delay = 1;
+        uint64_t start_pos = router->current_pos;
         if (avro_open_binlog(router->binlogdir, router->binlog_name, &router->binlog_fd))
         {
             avro_binlog_end_t binlog_end = avro_read_all_events(router);
@@ -1185,7 +1185,19 @@ void converter_func(void* data)
             {
                 ok = false;
             }
+
+            /** We processed some data, reset the conversion task delay */
+            if (router->current_pos != start_pos)
+            {
+                router->task_delay = 1;
+            }
+
             avro_close_binlog(router->binlog_fd);
+        }
+
+        if (!binlog_next_file_exists(router->binlogdir, router->binlog_name))
+        {
+            break;
         }
     }
 
@@ -1193,8 +1205,8 @@ void converter_func(void* data)
     {
         router->task_delay = MIN(router->task_delay + 15, AVRO_TASK_DELAY_MAX);
         hktask_oneshot(avro_task_name, converter_func, router, router->task_delay);
-        MXS_NOTICE("Binlog file '%s' is still being processed. Waiting until"
-                   " the next binlog exists before processing. Next check in %d seconds.",
-                   router->binlog_name, router->task_delay);
+        MXS_NOTICE("Stopped processing file %s at position %lu. Waiting until"
+                   " more data is written before continuing. Next check in %d seconds.",
+                   router->binlog_name, router->current_pos, router->task_delay);
     }
 }

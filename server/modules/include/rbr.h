@@ -30,6 +30,6 @@
 
 void handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr);
 void handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr);
-uint8_t* process_row_event(TABLE_MAP *map, TABLE_CREATE *create, avro_value_t *record,
+uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value_t *record,
                        uint8_t *ptr, uint64_t columns_present, uint64_t columns_update);
 #endif
