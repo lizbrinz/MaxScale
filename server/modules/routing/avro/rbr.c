@@ -256,14 +256,12 @@ int get_metadata_len(uint8_t type)
  * @param col_update
  */
 uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value_t *record,
-                           uint8_t *ptr, uint64_t columns_present, uint64_t columns_update)
+                                uint8_t *ptr, uint64_t columns_present, uint64_t columns_update)
 {
     char rstr[2048];
     int npresent = 0;
     avro_value_t field;
     long ncolumns = map->columns;
-    snprintf(rstr, sizeof(rstr), "Row event for table %s.%s: %lu columns. ",
-             map->database, map->table, ncolumns);
 
     size_t metadata_offset = 0;
 
@@ -280,7 +278,7 @@ uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value
             npresent++;
             if (column_is_null(null_bitmap, ncolumns, i))
             {
-                avro_value_set_null(&field);
+                avro_value_set_string(&field, "NULL");
             }
             else if (column_is_fixed_string(map->column_types[i]))
             {
@@ -294,7 +292,7 @@ uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value
                     memcpy(&data, ptr, bytes);
                     for (uint8_t x = 0; x < sizeof(data); x++)
                     {
-                        if(data & (1 << x))
+                        if (data & (1 << x))
                         {
                             snprintf(strval, sizeof(strval), "%d", x + 1);
                             break;
@@ -348,35 +346,34 @@ uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value
     }
 
     // TODO: implement update row event processing
-    if (columns_update != 0 && false)
-    {
-        /** Skip the nul-bitmap for the update rows */
-        ptr += (ncolumns + 7) / 8;
-
-        for (long i = 0; i < map->columns && npresent < ncolumns; i++)
+    /*
+        if (columns_update != 0 && false)
         {
+            ptr += (ncolumns + 7) / 8;
 
-            if (columns_update & (1 << i))
+            for (long i = 0; i < map->columns && npresent < ncolumns; i++)
             {
-                if (column_is_variable_string(map->column_types[i]))
+
+                if (columns_update & (1 << i))
                 {
-                    char *str = lestr_consume_dup(&ptr);
-                    free(str);
-                }
-                else
-                {
-                    uint64_t lval = 0;
-                    ptr += extract_field_value(ptr, map->column_types[i], &lval);
-                    if (column_is_temporal(map->column_types[i]))
+                    if (column_is_variable_string(map->column_types[i]))
                     {
-                        struct tm tm;
-                        unpack_temporal_value(map->column_types[i], lval, &tm);
+                        char *str = lestr_consume_dup(&ptr);
+                        free(str);
+                    }
+                    else
+                    {
+                        uint64_t lval = 0;
+                        ptr += extract_field_value(ptr, map->column_types[i], &lval);
+                        if (column_is_temporal(map->column_types[i]))
+                        {
+                            struct tm tm;
+                            unpack_temporal_value(map->column_types[i], lval, &tm);
+                        }
                     }
                 }
             }
         }
-    }
-
-    MXS_NOTICE("%s", rstr);
+    */
     return ptr;
 }

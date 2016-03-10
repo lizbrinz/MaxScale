@@ -42,9 +42,11 @@
 #include <fcntl.h>
 #include <maxscale_pcre2.h>
 #include <rbr.h>
+#include <ini.h>
 
 static const char* create_table_regex =
     "(?i)^create[a-z0-9[:space:]_]+table";
+static const char *statefile_section = "avro-conversion";
 
 /**
  * Prepare an existing binlog file to be appened to.
@@ -65,7 +67,7 @@ bool avro_open_binlog(const char *binlogdir, const char *file, int *dest)
         return false;
     }
 
-    if ( lseek(fd, BINLOG_MAGIC_SIZE, SEEK_SET) < 4)
+    if (lseek(fd, BINLOG_MAGIC_SIZE, SEEK_SET) < 4)
     {
         /* If for any reason the file's length is between 1 and 3 bytes
          * then report an error. */
@@ -130,8 +132,126 @@ AVRO_TABLE* avro_table_alloc(const char* filepath, const char* json_schema)
 }
 
 /**
+ * @brief Write a new ini file with current conversion status
  *
- * @param table
+ * The file is stored in the cache directory as 'avro-conversion.ini'.
+ * @param router Avro router instance
+ * @return True if the file was written successfully to disk
+ *
+ */
+static bool avro_save_conversion_state(AVRO_INSTANCE *router)
+{
+    FILE *config_file;
+    char filename[PATH_MAX + 1];
+    char err_msg[STRERROR_BUFLEN];
+
+    snprintf(filename, sizeof(filename), "%s/avro-conversion.ini.tmp", get_cachedir());
+
+    /* open file for writing */
+    config_file = fopen(filename, "wb");
+    if (config_file == NULL)
+    {
+        MXS_ERROR("Failed to open file '%s': %d, %s", filename,
+                  errno, strerror_r(errno, err_msg, sizeof(err_msg)));
+        return false;
+    }
+
+    fprintf(config_file, "[%s]\n", statefile_section);
+    fprintf(config_file, "position=%lu\n", router->current_pos);
+    fprintf(config_file, "gtid=%s\n", router->current_gtid);
+    fprintf(config_file, "file=%s\n", router->binlog_name);
+    fclose(config_file);
+
+    /* rename tmp file to right filename */
+    char newname[PATH_MAX + 1];
+    snprintf(newname, sizeof(newname), "%s/avro-conversion.ini", get_cachedir());
+    int rc = rename(filename, newname);
+
+    if (rc == -1)
+    {
+        MXS_ERROR("Failed to rename file '%s' to '%s': %d, %s", filename, newname,
+                  errno, strerror_r(errno, err_msg, sizeof(err_msg)));
+        return false;
+    }
+
+    return true;
+}
+
+static int conv_state_handler(void* data, const char* section, const char* key, const char* value)
+{
+    AVRO_INSTANCE *router = (AVRO_INSTANCE*) data;
+
+    if (strcmp(section, statefile_section) == 0)
+    {
+        if (strcmp(key, "gtid") == 0)
+        {
+            strncpy(router->current_gtid, value, sizeof(router->current_gtid));
+        }
+        else if (strcmp(key, "position") == 0)
+        {
+            router->current_pos = strtol(value, NULL, 10);
+        }
+        else if (strcmp(key, "file") == 0)
+        {
+            strncpy(router->binlog_name, value, sizeof(router->binlog_name));
+        }
+        else
+        {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+/**
+ * @brief Load a stored conversion state from file
+ * @param router Avro router instance
+ * @return True if the stored state was loaded successfully
+ */
+bool avro_load_conversion_state(AVRO_INSTANCE *router)
+{
+    char filename[PATH_MAX + 1];
+    bool rval = false;
+
+    snprintf(filename, sizeof(filename), "%s/avro-conversion.ini", get_cachedir());
+
+    /** No stored state, this is the first time the router is started */
+    if (access(filename, F_OK) == -1)
+    {
+        return true;
+    }
+
+    int rc = ini_parse(filename, conv_state_handler, router);
+
+    switch (rc)
+    {
+        case 0:
+            rval = true;
+            MXS_NOTICE("Loaded stored binary log conversion state: File: [%s] Position: [%ld] GTID: [%s]",
+                       router->binlog_name, router->current_pos, router->current_gtid);
+            break;
+
+        case -1:
+            MXS_ERROR("Failed to open file '%s'. ", filename);
+            break;
+
+        case -2:
+            MXS_ERROR("Failed to allocate enough memory when parsing file '%s'. ", filename);
+            break;
+
+        default:
+            MXS_ERROR("Failed to parse stored conversion state '%s', error "
+                      "on line %d. ", filename, rc);
+            break;
+    }
+
+    return rval;
+}
+
+/**
+ * Free an AVRO_TABLE
+ * @param table Table to free
  * @return Always NULL
  */
 void* avro_table_free(AVRO_TABLE *table)
@@ -269,7 +389,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
                         router->current_pos = 4;
                         return AVRO_ROTATED;
                     }
-                    else if(stop_seen)
+                    else if (stop_seen)
                     {
                         if (binlog_next_file_exists(router->binlogdir, router->binlog_name))
                         {
@@ -302,11 +422,11 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
                             snprintf(next_binlog, sizeof(next_binlog),
                                      BINLOG_NAMEFMT, router->fileroot,
                                      blr_file_get_next_binlogname(router->binlog_name));
-                            
+
                             MXS_NOTICE("End of binlog file [%s] at %llu with no "
-                                "close or rotate event. Rotating to next binlog file [%s].",
+                                       "close or rotate event. Rotating to next binlog file [%s].",
                                        router->binlog_name, pos, next_binlog);
-                            
+
                             strncpy(router->binlog_name, next_binlog, sizeof(router->binlog_name));
                             router->binlog_position = 4;
                             router->current_pos = 4;
@@ -497,7 +617,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
         /* Decode CLOSE/STOP Event */
         else if (hdr.event_type == STOP_EVENT)
         {
-            char  next_file[BLRM_BINLOG_NAME_STR_LEN + 1];
+            char next_file[BLRM_BINLOG_NAME_STR_LEN + 1];
             stop_seen = true;
             snprintf(next_file, sizeof(next_file), BINLOG_NAMEFMT, router->fileroot,
                      blr_file_get_next_binlogname(router->binlog_name));
@@ -538,7 +658,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             rotate_seen = true;
 
         }
-        else  if (hdr.event_type == MARIADB10_GTID_EVENT)
+        else if (hdr.event_type == MARIADB10_GTID_EVENT)
         {
             uint64_t n_sequence; /* 8 bytes */
             uint32_t domainid; /* 4 bytes */
@@ -548,16 +668,15 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             flags = *(ptr + 8 + 4);
             snprintf(router->current_gtid, sizeof(router->current_gtid), "%u-%u-%lu", domainid,
                      hdr.serverid, n_sequence);
-
             if (flags == 0)
             {
+                pending_transaction++;
                 // TODO: Handle GTID transactions
                 if (pending_transaction > 0)
                 {
                     MXS_ERROR("In binlog file '%s' at position %llu: Missing XID Event before GTID Event.",
                               router->binlog_name, pos);
                 }
-                pending_transaction++;
             }
         }
         /**
@@ -583,11 +702,19 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             if (mxs_pcre2_simple_match(create_table_regex, statement_sql, 0, &reg_err) == MXS_PCRE2_MATCH)
             {
                 char db[db_name_len + 1];
-                strncpy(db, (char*)ptr + post_header_len + var_block_len, sizeof(db));
-                TABLE_CREATE *created = table_create_alloc(statement_sql, db);
+                strncpy(db, (char*) ptr + post_header_len + var_block_len, sizeof(db));
+                TABLE_CREATE *created = table_create_alloc(statement_sql, db, router->current_gtid);
 
                 if (created)
                 {
+                    char createlist[PATH_MAX + 1];
+                    snprintf(createlist, sizeof(createlist), "%s/create-table-list", get_cachedir());
+                    if (!table_create_save(created, createlist))
+                    {
+                        MXS_ERROR("Failed to store CREATE TABLE statement to disk: %s",
+                                  statement_sql);
+                    }
+
                     char table_ident[MYSQL_TABLE_MAXLEN + MYSQL_DATABASE_MAXLEN + 2];
                     snprintf(table_ident, sizeof(table_ident), "%s.%s", created->database, created->table);
 
@@ -625,6 +752,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
         else if (hdr.event_type == XID_EVENT)
         {
             // TODO: Handle XID Event
+            avro_save_conversion_state(router);
             pending_transaction--;
         }
 
@@ -670,6 +798,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             }
 
             pos = hdr.next_pos;
+            router->current_pos = pos;
         }
         else
         {
@@ -683,4 +812,62 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
     }
 
     return AVRO_BINLOG_ERROR;
+}
+
+/**
+ * @brief Load stored CREATE TABLE statements from file
+ * @param router Avro router instance
+ * @return True on success
+ */
+bool avro_load_created_tables(AVRO_INSTANCE *router)
+{
+    bool rval = false;
+    char createlist[PATH_MAX + 1];
+    snprintf(createlist, sizeof(createlist), "%s/create-table-list", get_cachedir());
+    struct stat st;
+
+    if (stat(createlist, &st) == 0)
+    {
+        size_t len = st.st_size;
+        char* buffer = malloc(len + 1);
+        FILE *file = fopen(createlist, "rb");
+
+        if (file)
+        {
+            if (fread(buffer, 1, len, file) == len)
+            {
+                buffer[len] = '\0';
+                char *saveptr;
+                char *tok = strtok_r(buffer, "\n", &saveptr);
+                rval = true;
+
+                while (tok)
+                {
+                    TABLE_CREATE *created = table_create_alloc(tok, "", router->current_gtid);
+
+                    if (created)
+                    {
+                        char table_ident[MYSQL_TABLE_MAXLEN + MYSQL_DATABASE_MAXLEN + 2];
+                        snprintf(table_ident, sizeof(table_ident), "%s.%s", created->database, created->table);
+
+                        if (hashtable_fetch(router->created_tables, table_ident))
+                        {
+                            hashtable_delete(router->created_tables, table_ident);
+                        }
+                        hashtable_add(router->created_tables, table_ident, created);
+                    }
+                    else
+                    {
+                        rval = false;
+                        break;
+                    }
+
+                    tok = strtok_r(NULL, "\n", &saveptr);
+                }
+            }
+
+            fclose(file);
+        }
+    }
+    return rval;
 }

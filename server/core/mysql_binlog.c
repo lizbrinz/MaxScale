@@ -474,6 +474,28 @@ size_t extract_field_value(uint8_t *ptr, uint8_t type, uint64_t* val)
 }
 
 /**
+ *
+ * @param create
+ * @param path
+ * @return
+ */
+bool table_create_save(TABLE_CREATE *create, const char *path)
+{
+    bool rval = false;
+    const char statement_template[] = "CREATE TABLE %s.%s(%s);\n";
+
+    FILE *file = fopen(path, "ab");
+    if (file)
+    {
+        fprintf(file, statement_template, create->database, create->table, create->table_definition);
+        fclose(file);
+        rval = true;
+    }
+
+    return rval;
+}
+
+/**
  * Extract the table definition from a CREATE TABLE statement
  * @param sql The SQL statement
  * @param size Length of the statement
@@ -691,12 +713,10 @@ int process_column_definition(const char *nameptr, char*** dest)
                     free(names[x]);
                 }
                 free(names);
-                MXS_ERROR("Memory allocation failed when trying allocate %ld bytes of memory.",
-                          sizeof(char*) * chunks);
+                MXS_ERROR("Memory allocation failed when trying allocate %lu bytes of memory.",
+                          strlen(colname));
                 return -1;
             }
-
-            MXS_NOTICE("Column name: %s", colname);
         }
 
         nameptr = get_next_field_def(nameptr);
@@ -714,7 +734,8 @@ int process_column_definition(const char *nameptr, char*** dest)
  * @return
  * TODO: NULL return value checks
  */
-TABLE_CREATE* table_create_alloc(const char* sql, const char* event_db)
+TABLE_CREATE* table_create_alloc(const char* sql, const char* event_db,
+                                 const char* gtid)
 {
     /** Extract the table definition so we can get the column names from it */
     int stmt_len = 0;
@@ -724,7 +745,7 @@ TABLE_CREATE* table_create_alloc(const char* sql, const char* event_db)
     char database[MYSQL_DATABASE_MAXLEN + 1];
     const char *db = event_db;
 
-    MXS_NOTICE("Create table statement: %.*s", stmt_len, statement_sql);
+    MXS_DEBUG("Create table statement: %.*s", stmt_len, statement_sql);
 
     if (!get_table_name(sql, table))
     {
@@ -753,11 +774,16 @@ TABLE_CREATE* table_create_alloc(const char* sql, const char* event_db)
     {
         if ((rval = malloc(sizeof(TABLE_CREATE))))
         {
+            if ((rval->table_definition = malloc(stmt_len + 1)))
+            {
+                memcpy(rval->table_definition, statement_sql, stmt_len);
+                rval->table_definition[stmt_len] = '\0';
+            }
             rval->column_names = names;
             rval->columns = n_columns;
             rval->database = strdup(db);
             rval->table = strdup(table);
-            rval->gtid[0] = '\0'; // GTID not yet implemented
+            strncpy(rval->gtid, gtid, sizeof(rval->gtid));
         }
 
         if (rval == NULL || rval->database == NULL || rval->table == NULL)
@@ -795,6 +821,7 @@ void* table_create_free(TABLE_CREATE* value)
         {
             free(value->column_names[i]);
         }
+        free(value->table_definition);
         free(value->column_names);
         free(value->table);
         free(value->database);

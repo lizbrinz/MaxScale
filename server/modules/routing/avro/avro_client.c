@@ -128,9 +128,9 @@ avro_client_handle_request(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *qu
     switch (client->state)
     {
         case AVRO_CLIENT_ERRORED:
-                // force disconnection;
-                return 1;
-                break;
+            // force disconnection;
+            return 1;
+            break;
         case AVRO_CLIENT_UNREGISTERED:
             reg_ret = avro_client_do_registration(router, client, queue);
             /* discard data in incoming buffer */
@@ -150,20 +150,22 @@ avro_client_handle_request(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *qu
                 dcb_printf(client->dcb, "OK");
                 client->state = AVRO_CLIENT_REGISTERED;
                 MXS_INFO("%s: Client [%s] has completd REGISTRATION action",
-                                         client->dcb->service->name,
-                                         client->dcb->remote != NULL ? client->dcb->remote : "");
+                         client->dcb->service->name,
+                         client->dcb->remote != NULL ? client->dcb->remote : "");
 
                 break;
             }
         case AVRO_CLIENT_REGISTERED:
         case AVRO_CLIENT_REQUEST_DATA:
             if (client->state == AVRO_CLIENT_REGISTERED)
+            {
                 client->state = AVRO_CLIENT_REQUEST_DATA;
+            }
 
-             memcpy(ptr, "ECHO:", 5);
-             reply = gwbuf_append(reply, queue);
-             client->dcb->func.write(client->dcb, reply);
-             break;
+            memcpy(ptr, "ECHO:", 5);
+            reply = gwbuf_append(reply, queue);
+            client->dcb->func.write(client->dcb, reply);
+            break;
         default:
             client->state = AVRO_CLIENT_ERRORED;
             return 1;
@@ -175,7 +177,7 @@ avro_client_handle_request(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *qu
 
 /**
  * Hande the REGISTRATION command
- * 
+ *
  * @param dcb    DCB with allocateid protocol
  * @param data   GWBUF with registration message
  * @return       1 for successful registration 0 otherwise
@@ -201,19 +203,21 @@ avro_client_do_registration(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *d
 
         if ((sep_ptr = strchr(uuid, ',')) != NULL)
         {
-            *sep_ptr='\0';
+            *sep_ptr = '\0';
         }
-        if ((sep_ptr = strchr(uuid+strlen(uuid), ' ')) != NULL)
+        if ((sep_ptr = strchr(uuid + strlen(uuid), ' ')) != NULL)
         {
-            *sep_ptr='\0';
+            *sep_ptr = '\0';
         }
         if ((sep_ptr = strchr(uuid, ' ')) != NULL)
         {
-            *sep_ptr='\0';
+            *sep_ptr = '\0';
         }
 
         if (strlen(uuid) < uuid_len)
-          data_len -= (uuid_len - strlen(uuid));
+        {
+            data_len -= (uuid_len - strlen(uuid));
+        }
 
         uuid_len = strlen(uuid);
 
@@ -227,12 +231,14 @@ avro_client_do_registration(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *d
             {
                 int cdc_type_len = (data_len > CDC_TYPE_LEN) ? CDC_TYPE_LEN : data_len;
                 if (strlen(tmp_ptr) < data_len)
+                {
                     cdc_type_len -= (data_len - strlen(tmp_ptr));
+                }
 
                 cdc_type_len -= strlen("TYPE=");
 
                 if (strncmp(tmp_ptr + 5, "AVRO", 5) == 0)
-                { 
+                {
                     ret = 1;
                     client->state = AVRO_CLIENT_REGISTERED;
                 }

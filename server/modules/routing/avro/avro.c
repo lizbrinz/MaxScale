@@ -88,6 +88,8 @@ extern int MaxScaleUptime();
 void converter_func(void* data);
 bool binlog_next_file_exists(const char* binlogdir, const char* binlog);
 int blr_file_get_next_binlogname(const char *router);
+bool avro_load_conversion_state(AVRO_INSTANCE *router);
+bool avro_load_created_tables(AVRO_INSTANCE *router);
 
 /** The module object definition */
 static ROUTER_OBJECT MyObject =
@@ -388,6 +390,8 @@ createInstance(SERVICE *service, char **options)
     instances = inst;
     spinlock_release(&instlock);
 
+    avro_load_conversion_state(inst);
+    avro_load_created_tables(inst);
     /*
      * Add tasks for statistic computation
      */
@@ -727,13 +731,13 @@ diagnostics(ROUTER *router, DCB *dcb)
         dcb_printf(dcb, "\tNo events received from master yet\n");
     }
     spinlock_release(&router_inst->lock);
-/*
-    dcb_printf(dcb, "\tEvents received:\n");
-    for (i = 0; i <= MAX_EVENT_TYPE; i++)
-    {
-        dcb_printf(dcb, "\t\t%-38s   %u\n", event_names[i], router_inst->stats.events[i]);
-    }
-*/
+    /*
+        dcb_printf(dcb, "\tEvents received:\n");
+        for (i = 0; i <= MAX_EVENT_TYPE; i++)
+        {
+            dcb_printf(dcb, "\t\t%-38s   %u\n", event_names[i], router_inst->stats.events[i]);
+        }
+    */
 
 #if SPINLOCK_PROFILE
     dcb_printf(dcb, "\tSpinlock statistics (instlock):\n");
@@ -1203,7 +1207,7 @@ void converter_func(void* data)
 
     if (ok)
     {
-        router->task_delay = MIN(router->task_delay + 15, AVRO_TASK_DELAY_MAX);
+        router->task_delay = MIN(router->task_delay + 5, AVRO_TASK_DELAY_MAX);
         hktask_oneshot(avro_task_name, converter_func, router, router->task_delay);
         MXS_NOTICE("Stopped processing file %s at position %lu. Waiting until"
                    " more data is written before continuing. Next check in %d seconds.",

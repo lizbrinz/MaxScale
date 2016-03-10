@@ -89,6 +89,7 @@ typedef struct table_create
     char **column_names;
     char *table;
     char *database;
+    char *table_definition;
     char gtid[GTID_MAX_LEN]; /*< the current GTID event or NULL if GTID is not enabled */
 } TABLE_CREATE;
 
@@ -134,7 +135,8 @@ void format_temporal_value(char *str, size_t size, uint8_t type, struct tm *tm);
 /** Field value extraction */
 uint64_t extract_field_value(uint8_t *ptr, uint8_t type, uint64_t* val);
 
-TABLE_CREATE* table_create_alloc(const char* sql, const char* db);
+TABLE_CREATE* table_create_alloc(const char* sql, const char* db, const char* gtid);
 void* table_create_free(TABLE_CREATE* value);
+bool table_create_save(TABLE_CREATE *create, const char *path);
 
 #endif /* MYSQL_BINLOG_H */
