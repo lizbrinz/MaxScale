@@ -61,7 +61,6 @@ static int cdc_close(DCB *dcb);
 static int cdc_listen(DCB *dcb, char *config);
 static CDC_protocol *cdc_protocol_init(DCB* dcb);
 static void cdc_protocol_done(DCB* dcb);
-static int cdc_do_registration(DCB *dcb, GWBUF *data);
 static int do_auth(DCB *dcb, GWBUF *buffer, void *data);
 static void write_auth_ack(DCB *dcb);
 static void write_auth_err(DCB *dcb);
@@ -153,13 +152,17 @@ cdc_read_event(DCB* dcb)
 
                         if (auth_rc == 1)
                         {
-                             protocol->state = CDC_STATE_REGISTRATION;
+                             protocol->state = CDC_STATE_HANDLE_REQUEST;
 
                              write_auth_ack(dcb);
 
                              MXS_INFO("%s: Client [%s] authenticated with user [%s]",
                                       dcb->service->name, dcb->remote != NULL ? dcb->remote : "",
                                       client_data->user);
+
+                             // start a real session
+                             session = session_alloc(dcb->service, dcb);
+
                              break;
                         }
                         else
@@ -174,47 +177,6 @@ cdc_read_event(DCB* dcb)
                             dcb_close(dcb);
 
                             return 0;
-                        }
-                    case CDC_STATE_REGISTRATION:
-                        {
-                           /**
-                            * Registration in CDC is not part of authentication:
-                            * 
-                            * It culd be done in protocol or in router.
-                            * Levaing in the protocol for now.
-                            *
-                            * If registration succeeds it should set:
-                            * uuid and type
-                            */
-
-                           if (cdc_do_registration(dcb, head))
-                           {
-                               MXS_INFO("%s: Client [%s] has completd REGISTRATION action",
-                                         dcb->service->name,
-                                         dcb->remote != NULL ? dcb->remote : "");
-
-                               protocol->state = CDC_STATE_HANDLE_REQUEST;
-
-                               dcb_printf(dcb, "OK");
-
-                               // start a real session
-                               session = session_alloc(dcb->service, dcb);
-
-                               // discard data
-                               while ((head = gwbuf_consume(head, GWBUF_LENGTH(head))) != NULL);
-
-                               break;
-                           }
-                           else
-                           {
-                               // discard data
-                               while ((head = gwbuf_consume(head, GWBUF_LENGTH(head))) != NULL);
-                               dcb_printf(dcb, "ERR, code 12, msg: abcd");
-                               
-                               /* force the client connecton close */
-                               dcb_close(dcb);
-                               return 0;
-                           }
                         }
                     case CDC_STATE_HANDLE_REQUEST:
                         // handle CLOSE command, it shoudl be routed as well and client connection closed after last transmission
@@ -593,85 +555,6 @@ cdc_protocol_done(DCB* dcb)
    p->state = CDC_STATE_CLOSE;
 
    spinlock_release(&p->lock);
-}
-
-/**
- * Hande the REGISTRATION comannd in CDC protocol
- *
- * @param dcb    DCB with allocateid protocol
- * @param data   GWBUF with registration message
- * @return       1 for successful registration 0 otherwise
- *
- */
-static int
-cdc_do_registration(DCB *dcb, GWBUF *data)
-{
-    int reg_rc = 0;
-    int data_len = GWBUF_LENGTH(data) - strlen("REGISTER UUID=");
-    char *request = GWBUF_DATA(data);
-    // 36 +1
-    char uuid[CDC_UUID_LEN + 1];
-
-    if (strstr(request, "REGISTER UUID=") != NULL)
-    {
-        CDC_session *client_data = (CDC_session *)dcb->data;
-        CDC_protocol *protocol = (CDC_protocol *)dcb->protocol;
-        char *tmp_ptr;
-        char *sep_ptr;
-        int uuid_len = (data_len > CDC_UUID_LEN) ? CDC_UUID_LEN : data_len;
-        strncpy(uuid, request + strlen("REGISTER UUID="), uuid_len);
-        uuid[uuid_len] = '\0';
-
-        if ((sep_ptr = strchr(uuid, ',')) != NULL)
-        {
-            *sep_ptr='\0';
-        }
-        if ((sep_ptr = strchr(uuid+strlen(uuid), ' ')) != NULL)
-        {
-            *sep_ptr='\0';
-        }
-        if ((sep_ptr = strchr(uuid, ' ')) != NULL)
-        {
-            *sep_ptr='\0';
-        }
-
-        if (strlen(uuid) < uuid_len)
-          data_len -= (uuid_len - strlen(uuid));
-
-        uuid_len = strlen(uuid);
-
-        strcpy(client_data->uuid, uuid);
-
-        if (data_len > 0)
-        {
-            /* Check for CDC request type */
-            tmp_ptr = strstr(request + strlen("REGISTER UUID=") + uuid_len, "TYPE=");
-            if (tmp_ptr)
-            {
-                int cdc_type_len = (data_len > CDC_TYPE_LEN) ? CDC_TYPE_LEN : data_len;
-                if (strlen(tmp_ptr) < data_len)
-                    cdc_type_len -= (data_len - strlen(tmp_ptr));
-
-                cdc_type_len -= strlen("TYPE=");
-
-                strncpy(protocol->type, tmp_ptr + 5, cdc_type_len);
-                protocol->type[cdc_type_len] = '\0';
-                
-            }
-            else 
-                strcpy(protocol->type, "AVRO");
-        }
-        else
-        {
-            strcpy(protocol->type, "AVRO");
-        }
-
-        return 1;
-    }
-    else
-    {
-        return 0;
-    } 
 }
 
 /**

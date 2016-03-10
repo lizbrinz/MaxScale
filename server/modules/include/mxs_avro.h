@@ -13,6 +13,7 @@
 #include <mysql_binlog.h>
 #include <dbusers.h>
 #include <avro.h>
+#include <cdc.h>
 
 /**
  * How often to call the router status function (seconds)
@@ -69,7 +70,7 @@ typedef struct avro_table_t
     avro_file_writer_t avro_file; /*< Current Avro data file */
     avro_value_iface_t *avro_writer_iface; /*< Avro C API writer interface */
     avro_schema_t avro_schema; /*< Native Avro schema of the table */
-}AVRO_TABLE;
+} AVRO_TABLE;
 
 /**
  * The client structure used within this router.
@@ -138,12 +139,18 @@ typedef struct avro_instance {
     struct avro_instance  *next;
 } AVRO_INSTANCE;
 
-extern int avro_client_request(AVRO_INSTANCE *, AVRO_CLIENT *, GWBUF *);
+extern int avro_client_handle_request(AVRO_INSTANCE *, AVRO_CLIENT *, GWBUF *);
 extern void avro_client_rotate(AVRO_INSTANCE *router, AVRO_CLIENT *client, uint8_t *ptr);
 extern bool avro_open_binlog(const char *binlogdir, const char *file, int *fd);
 extern void avro_close_binlog(int fd);
 avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router);
 AVRO_TABLE* avro_table_alloc(const char* filepath, const char* json_schema);
 void* avro_table_free(AVRO_TABLE *table);
+
+#define AVRO_CLIENT_UNREGISTERED 0x0000
+#define AVRO_CLIENT_REGISTERED   0x0001
+#define AVRO_CLIENT_REQUEST_DATA 0x0002
+#define AVRO_CLIENT_ERRORED      0x0003
+#define AVRO_CLIENT_MAXSTATE     0x0003
 
 #endif

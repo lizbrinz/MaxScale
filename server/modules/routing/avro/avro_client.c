@@ -15,7 +15,7 @@
  */
 
 /**
- * @file blr_slave.c - contains code for the router to slave communication
+ * @file avro_client.c - contains code for the router to slave communication
  *
  * The binlog router is designed to be used in replication environments to
  * increase the replication fanout of a master server. It provides a transparant
@@ -96,7 +96,7 @@ extern char *blr_extract_column(GWBUF *buf, int col);
 extern uint32_t extract_field(uint8_t *src, int bits);
 extern int MaxScaleUptime();
 // AVRO
-static int avro_client_register(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, GWBUF *queue);
+static int avro_client_do_registration(AVRO_INSTANCE *, AVRO_CLIENT *, GWBUF *);
 static int avro_client_binlog_dump(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, GWBUF *queue);
 int avro_client_callback(DCB *dcb, DCB_REASON reason, void *data);
 
@@ -119,18 +119,127 @@ void poll_fake_write_event(DCB *dcb);
  * @param queue     The incoming request packet
  */
 int
-avro_client_request(AVRO_INSTANCE *router, AVRO_CLIENT *slave, GWBUF *queue)
+avro_client_handle_request(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *queue)
 {
     GWBUF *reply = gwbuf_alloc(5);
     uint8_t *ptr = GWBUF_DATA(reply);
+    int reg_ret;
 
-    memcpy(ptr, "ECHO:", 5);
+    switch (client->state)
+    {
+        case AVRO_CLIENT_ERRORED:
+                // force disconnection;
+                return 1;
+                break;
+        case AVRO_CLIENT_UNREGISTERED:
+            reg_ret = avro_client_do_registration(router, client, queue);
+            /* discard data in incoming buffer */
+            while ((queue = gwbuf_consume(queue, GWBUF_LENGTH(queue))) != NULL);
 
-    reply = gwbuf_append(reply, queue);
+            if (reg_ret == 0)
+            {
+                client->state = AVRO_CLIENT_ERRORED;
+                dcb_printf(client->dcb, "ERR, code 12, msg: abcd");
+                // force disconnection;
+                dcb_close(client->dcb);
+                return 0;
+                break;
+            }
+            else
+            {
+                dcb_printf(client->dcb, "OK");
+                client->state = AVRO_CLIENT_REGISTERED;
+                MXS_INFO("%s: Client [%s] has completd REGISTRATION action",
+                                         client->dcb->service->name,
+                                         client->dcb->remote != NULL ? client->dcb->remote : "");
 
-    slave->dcb->func.write(slave->dcb, reply);
+                break;
+            }
+        case AVRO_CLIENT_REGISTERED:
+        case AVRO_CLIENT_REQUEST_DATA:
+            if (client->state == AVRO_CLIENT_REGISTERED)
+                client->state = AVRO_CLIENT_REQUEST_DATA;
+
+             memcpy(ptr, "ECHO:", 5);
+             reply = gwbuf_append(reply, queue);
+             client->dcb->func.write(client->dcb, reply);
+             break;
+        default:
+            client->state = AVRO_CLIENT_ERRORED;
+            return 1;
+            break;
+    }
 
     return 0;
+}
+
+/**
+ * Hande the REGISTRATION command
+ * 
+ * @param dcb    DCB with allocateid protocol
+ * @param data   GWBUF with registration message
+ * @return       1 for successful registration 0 otherwise
+ *
+ */
+static int
+avro_client_do_registration(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *data)
+{
+    int reg_rc = 0;
+    int data_len = GWBUF_LENGTH(data) - strlen("REGISTER UUID=");
+    char *request = GWBUF_DATA(data);
+    /* 36 +1 */
+    char uuid[CDC_UUID_LEN + 1];
+    int ret = 0;
+
+    if (strstr(request, "REGISTER UUID=") != NULL)
+    {
+        char *tmp_ptr;
+        char *sep_ptr;
+        int uuid_len = (data_len > CDC_UUID_LEN) ? CDC_UUID_LEN : data_len;
+        strncpy(uuid, request + strlen("REGISTER UUID="), uuid_len);
+        uuid[uuid_len] = '\0';
+
+        if ((sep_ptr = strchr(uuid, ',')) != NULL)
+        {
+            *sep_ptr='\0';
+        }
+        if ((sep_ptr = strchr(uuid+strlen(uuid), ' ')) != NULL)
+        {
+            *sep_ptr='\0';
+        }
+        if ((sep_ptr = strchr(uuid, ' ')) != NULL)
+        {
+            *sep_ptr='\0';
+        }
+
+        if (strlen(uuid) < uuid_len)
+          data_len -= (uuid_len - strlen(uuid));
+
+        uuid_len = strlen(uuid);
+
+        client->uuid = strdup(uuid);
+
+        if (data_len > 0)
+        {
+            /* Check for CDC request type */
+            tmp_ptr = strstr(request + strlen("REGISTER UUID=") + uuid_len, "TYPE=");
+            if (tmp_ptr)
+            {
+                int cdc_type_len = (data_len > CDC_TYPE_LEN) ? CDC_TYPE_LEN : data_len;
+                if (strlen(tmp_ptr) < data_len)
+                    cdc_type_len -= (data_len - strlen(tmp_ptr));
+
+                cdc_type_len -= strlen("TYPE=");
+
+                if (strncmp(tmp_ptr + 5, "AVRO", 5) != 0)
+                { 
+                    ret = 1;
+                    client->state = AVRO_CLIENT_REGISTERED;
+                }
+            }
+        }
+    }
+    return ret;
 }
 
 /**

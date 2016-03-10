@@ -454,6 +454,8 @@ newSession(ROUTER *instance, SESSION *session)
     client->lastEventTimestamp = 0;
     client->lastEventReceived = 0;
 
+    client->state = AVRO_CLIENT_UNREGISTERED;
+
     /**
      * Add this session to the list of active sessions.
      */
@@ -564,7 +566,7 @@ routeQuery(ROUTER *instance, void *router_session, GWBUF *queue)
     AVRO_INSTANCE *router = (AVRO_INSTANCE *) instance;
     AVRO_CLIENT *client = (AVRO_CLIENT *) router_session;
 
-    return avro_client_request(router, client, queue);
+    return avro_client_handle_request(router, client, queue);
 }
 
 static char *event_names[] =
