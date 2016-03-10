@@ -231,7 +231,7 @@ avro_client_do_registration(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *d
 
                 cdc_type_len -= strlen("TYPE=");
 
-                if (strncmp(tmp_ptr + 5, "AVRO", 5) != 0)
+                if (strncmp(tmp_ptr + 5, "AVRO", 5) == 0)
                 { 
                     ret = 1;
                     client->state = AVRO_CLIENT_REGISTERED;
