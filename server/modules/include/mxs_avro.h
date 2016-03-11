@@ -151,4 +151,6 @@ void avro_flush_all_tables(AVRO_INSTANCE *router);
 #define AVRO_CLIENT_ERRORED      0x0003
 #define AVRO_CLIENT_MAXSTATE     0x0003
 
+#define AVRO_MAX_FILENAME_LEN         255
+
 #endif
