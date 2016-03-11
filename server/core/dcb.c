@@ -3033,16 +3033,21 @@ dcb_accept(DCB *listener)
                           INET_ADDRSTRLEN);
                 }
             }
-            if ((authfuncs = (GWAUTHENTICATOR *)load_module(listener->listener->authenticator,
-                MODULE_AUTHENTICATOR)) == NULL)
+
+            /* Check whether an outhenticator module has been configured */
+            if (listener->listener->authenticator != NULL)
             {
-                MXS_ERROR("Failed to load authenticator module for %s, free dcb %p\n",
-                  listener->listener->authenticator,
-                  client_dcb);
-                dcb_close(client_dcb);
-                return NULL;
+                if ((authfuncs = (GWAUTHENTICATOR *)load_module(listener->listener->authenticator,
+                    MODULE_AUTHENTICATOR)) == NULL)
+                {
+                    MXS_ERROR("Failed to load authenticator module for %s, free dcb %p\n",
+                              listener->listener->authenticator,
+                              client_dcb);
+                    dcb_close(client_dcb);
+                    return NULL;
+                }
+                memcpy(&(client_dcb->authfunc), authfuncs, sizeof(GWAUTHENTICATOR));
             }
-            memcpy(&(client_dcb->authfunc), authfuncs, sizeof(GWAUTHENTICATOR));
 
         }
     }
