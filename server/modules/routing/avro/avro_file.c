@@ -596,7 +596,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
         {
             int len = hdr.event_size - BINLOG_EVENT_HDR_LEN - 8;
 
-            if (!found_chksum)
+            if (found_chksum)
             {
                 len -= 4;
             }
