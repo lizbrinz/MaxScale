@@ -51,6 +51,7 @@ static const char* column_type_to_avro_type(uint8_t type)
         case TABLE_COL_TYPE_SHORT:
         case TABLE_COL_TYPE_LONG:
         case TABLE_COL_TYPE_INT24:
+        case TABLE_COL_TYPE_BIT:
             return "int";
 
         case TABLE_COL_TYPE_FLOAT:

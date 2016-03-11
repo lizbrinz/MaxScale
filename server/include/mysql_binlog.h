@@ -105,18 +105,23 @@ typedef struct table_map
     uint8_t *column_types;
     uint8_t *null_bitmap;
     uint8_t *column_metadata;
+    size_t column_metadata_size;
     int version;
     char version_string[TABLE_MAP_VERSION_DIGITS + 1];
     char *table;
     char *database;
-    char gtid[GTID_MAX_LEN]; /*< the current GTID event or NULL if GTID is not enabled */
+    char gtid[GTID_MAX_LEN + 1]; /*< the current GTID event or NULL if GTID is not enabled */
 } TABLE_MAP;
 
 TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len);
 void* table_map_free(TABLE_MAP *map);
 void table_map_rotate(TABLE_MAP *map);
 
-const char* table_type_to_string(uint8_t type);
+TABLE_CREATE* table_create_alloc(const char* sql, const char* db, const char* gtid);
+void* table_create_free(TABLE_CREATE* value);
+bool table_create_save(TABLE_CREATE *create, const char *filename);
+
+const char* column_type_to_string(uint8_t type);
 
 /** Column type checking functions */
 bool column_is_variable_string(uint8_t type);
@@ -128,15 +133,13 @@ bool column_is_temporal(uint8_t type);
  * in the table metadata */
 bool fixed_string_is_enum(uint8_t type);
 
-/** Temporal value processing */
-void unpack_temporal_value(uint8_t type, uint64_t val, struct tm *tm);
+/** Value unpacking */
+uint64_t unpack_temporal_value(uint8_t type, uint8_t *ptr, uint8_t* metadata, struct tm *tm);
+uint64_t unpack_enum(uint8_t *ptr, uint8_t *metadata, uint8_t *dest);
+uint64_t unpack_numeric_field(uint8_t *ptr, uint8_t type, uint8_t* metadata, uint8_t* val);
+uint64_t unpack_bit(uint8_t *ptr, uint8_t *null_mask, uint32_t col_count,
+                    uint32_t curr_col_index, uint8_t *metadata, uint64_t *dest);
+
 void format_temporal_value(char *str, size_t size, uint8_t type, struct tm *tm);
-
-/** Field value extraction */
-uint64_t extract_field_value(uint8_t *ptr, uint8_t type, uint64_t* val);
-
-TABLE_CREATE* table_create_alloc(const char* sql, const char* db, const char* gtid);
-void* table_create_free(TABLE_CREATE* value);
-bool table_create_save(TABLE_CREATE *create, const char *filename);
 
 #endif /* MYSQL_BINLOG_H */

@@ -127,7 +127,7 @@ typedef struct avro_instance {
     int                     binlog_fd;      /*< File descriptor of the binlog file being read */
     uint8_t event_types;
     uint8_t event_type_hdr_lens[MAX_EVENT_TYPE_END];
-    char    current_gtid[GTID_MAX_LEN];
+    char    current_gtid[GTID_MAX_LEN + 1];
     HASHTABLE     *table_maps;
     HASHTABLE     *open_tables;
     HASHTABLE     *created_tables;

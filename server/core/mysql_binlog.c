@@ -69,7 +69,8 @@ TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len)
     uint8_t *column_types = ptr;
     ptr += column_count;
 
-    uint8_t* metadata = (uint8_t*)lestr_consume_dup(&ptr);
+    size_t metadata_size = 0;
+    uint8_t* metadata = (uint8_t*)lestr_consume(&ptr, &metadata_size);
     uint8_t *nullmap = ptr;
     size_t nullmap_size = (column_count + 7) / 8;
     TABLE_MAP *map = malloc(sizeof(TABLE_MAP));
@@ -81,7 +82,8 @@ TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len)
         map->flags = flags;
         map->columns = column_count;
         map->column_types = malloc(column_count);
-        map->column_metadata = metadata;
+        map->column_metadata = malloc(metadata_size);
+        map->column_metadata_size = metadata_size;
         map->null_bitmap = malloc(nullmap_size);
         map->database = strdup(schema_name);
         map->table = strdup(table_name);
@@ -90,6 +92,7 @@ TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len)
         {
             memcpy(map->column_types, column_types, column_count);
             memcpy(map->null_bitmap, nullmap, nullmap_size);
+            memcpy(map->column_metadata, metadata, metadata_size);
         }
         else
         {
@@ -145,7 +148,7 @@ void table_map_rotate(TABLE_MAP *map)
  * @return The type of the column in human readable format
  * @see lestr_consume
  */
-const char* table_type_to_string(uint8_t type)
+const char* column_type_to_string(uint8_t type)
 {
     switch (type)
     {
@@ -210,10 +213,9 @@ const char* table_type_to_string(uint8_t type)
         case TABLE_COL_TYPE_GEOMETRY:
             return "GEOMETRY";
         default:
-            MXS_ERROR("Unknown column type: %x", type);
             break;
     }
-    return "";
+    return "UNKNOWN";
 }
 
 bool column_is_blob(uint8_t type)
@@ -253,6 +255,27 @@ bool column_is_variable_string(uint8_t type)
 }
 
 /**
+ * Check if a column is of a temporal type
+ * @param type Column type
+ * @return True if the type is temporal
+ */
+bool column_is_temporal(uint8_t type)
+{
+    switch (type)
+    {
+        case TABLE_COL_TYPE_YEAR:
+        case TABLE_COL_TYPE_DATE:
+        case TABLE_COL_TYPE_TIME:
+        case TABLE_COL_TYPE_DATETIME:
+        case TABLE_COL_TYPE_DATETIME2:
+        case TABLE_COL_TYPE_TIMESTAMP:
+        case TABLE_COL_TYPE_TIMESTAMP2:
+            return true;
+    }
+    return false;
+}
+
+/**
  * @brief Check if the column is a string type column
  *
  * @param type Type of the column
@@ -263,6 +286,31 @@ bool column_is_fixed_string(uint8_t type)
 {
     return type == TABLE_COL_TYPE_STRING;
 }
+
+/**
+ * Check if a column is an ENUM or SET
+ * @param type Column type
+ * @return True if column is either ENUM or SET
+ */
+bool fixed_string_is_enum(uint8_t type)
+{
+    return type == TABLE_COL_TYPE_ENUM || type == TABLE_COL_TYPE_SET;
+}
+
+/**
+ * @brief Unpack a YEAR type
+ *
+ * The value seems to be stored as an offset from the year 1900
+ * @param val Stored value
+ * @param dest Destination where unpacked value is stored
+ */
+static void unpack_year(uint8_t *ptr, struct tm *dest)
+{
+    memset(dest, 0, sizeof(*dest));
+    dest->tm_year = *ptr;
+}
+
+#ifdef USE_OLD_DATETIME
 /**
  * @brief Unpack a DATETIME
  *
@@ -271,7 +319,7 @@ bool column_is_fixed_string(uint8_t type)
  * @param val Value read from the binary log
  * @param dest Pointer where the unpacked value is stored
  */
-static void unpack_datetime(uint64_t val, struct tm *dest)
+static void unpack_datetime(uint8_t *ptr, uint8_t decimals, struct tm *dest)
 {
     uint32_t second = val - ((val / 100) * 100);
     val /= 100;
@@ -293,18 +341,83 @@ static void unpack_datetime(uint64_t val, struct tm *dest)
     dest->tm_min = minute;
     dest->tm_sec = second;
 }
+#endif
 
+/**
+ * Unpack a 5 byte reverse byte order value
+ * @param data pointer to data
+ * @return Unpacked value
+ */
+static inline uint64_t unpack5(uint8_t* data)
+{
+    uint64_t rval = data[4];
+    rval += ((uint64_t)data[3]) << 8;
+    rval += ((uint64_t)data[2]) << 16;
+    rval += ((uint64_t)data[1]) << 24;
+    rval += ((uint64_t)data[0]) << 32;
+    return rval;
+}
+
+/** The DATETIME values are stored in the binary logs with an offset */
+#define DATETIME2_OFFSET 0x8000000000LL
+
+/**
+ * @brief Unpack a DATETIME2
+ *
+ * The DATETIME2 is only used by row based replication in newer MariaDB servers.
+ * @param val Value read from the binary log
+ * @param dest Pointer where the unpacked value is stored
+ */
+static void unpack_datetime2(uint8_t *ptr, uint8_t decimals, struct tm *dest)
+{
+    int64_t unpacked = unpack5(ptr) - DATETIME2_OFFSET;
+    if (unpacked < 0)
+    {
+        unpacked = -unpacked;
+    }
+
+    uint64_t date = unpacked >> 17;
+    uint64_t yearmonth = date >> 5;
+    uint64_t time = unpacked % (1 << 17);
+
+    memset(dest, 0, sizeof(*dest));
+    dest->tm_sec = time % (1 << 6);
+    dest->tm_min = (time >> 6) % (1 << 6);
+    dest->tm_hour = time >> 12;
+    dest->tm_mday = date % (1 << 5);
+    dest->tm_mon = yearmonth % 13;
+    dest->tm_year = yearmonth / 13;
+}
+
+/** Unpack a "reverse" byte order value */
+#define unpack4(data) (data[3] + (data[2] << 8) + (data[1] << 16) + (data[0] << 24))
+
+/**
+ * @brief Unpack a TIMESTAMP
+ *
+ * The timestamps are stored with the high bytes first
+ * @param val The stored value
+ * @param dest Destination where the result is stored
+ */
+static void unpack_timestamp(uint8_t *ptr, uint8_t decimals, struct tm *dest)
+{
+    time_t t = unpack4(ptr);
+    localtime_r(&t, dest);
+}
+
+#define unpack3(data) (data[2] + (data[1] << 8) + (data[0] << 16))
 
 /**
  * @brief Unpack a TIME
  *
- * The ETIME is stored as a 3 byte value with the values stored as multiples
+ * The TIME is stored as a 3 byte value with the values stored as multiples
  * of 100. This means that the stored value is in the format HHMMSS.
  * @param val Value read from the binary log
  * @param dest Pointer where the unpacked value is stored
  */
-static void unpack_time(uint64_t val, struct tm *dest)
+static void unpack_time(uint8_t *ptr, struct tm *dest)
 {
+    uint64_t val = unpack3(ptr);
     uint32_t second = val - ((val / 100) * 100);
     val /= 100;
     uint32_t minute = val - ((val / 100) * 100);
@@ -319,11 +432,12 @@ static void unpack_time(uint64_t val, struct tm *dest)
 
 /**
  * @brief Unpack a DATE value
- * @param val Packed value
+ * @param ptr Pointer to packed value
  * @param dest Pointer where the unpacked value is stored
  */
-static void unpack_date(uint64_t val, struct tm *dest)
+static void unpack_date(uint8_t *ptr, struct tm *dest)
 {
+    uint64_t val = ptr[0] + (ptr[1] << 8) + (ptr[2] << 16);
     memset(dest, 0, sizeof(struct tm));
     dest->tm_mday = val & 31;
     dest->tm_mon = (val >> 5) & 15;
@@ -331,24 +445,78 @@ static void unpack_date(uint64_t val, struct tm *dest)
 }
 
 /**
- * Check if a column is of a temporal type
- * @param type Column type
- * @return True if the type is temporal
+ * @brief Unpack an ENUM or SET field
+ * @param ptr Pointer to packed value
+ * @param metadata Pointer to field metadata
+ * @return Length of the processed field in bytes
  */
-bool column_is_temporal(uint8_t type)
+uint64_t unpack_enum(uint8_t *ptr, uint8_t *metadata, uint8_t *dest)
 {
-    return type == TABLE_COL_TYPE_DATETIME || type == TABLE_COL_TYPE_DATE ||
-           type == TABLE_COL_TYPE_TIMESTAMP || type == TABLE_COL_TYPE_TIME;
+    memcpy(dest, ptr, metadata[1]);
+    return metadata[1];
 }
 
 /**
- * Check if a column is an ENUM or SET
- * @param type Column type
- * @return True if column is either ENUM or SET
+ * @brief Unpack a BIT
+ *
+ * A part of the BIT values are stored in the NULL value bitmask of the row event.
+ * This makes extracting them a bit more complicated since the other fields
+ * in the table could have an effect on the location of the stored values.
+ *
+ * It is possible that the BIT value is fully stored in the NULL value bitmask
+ * which means that the actual row data is zero bytes for this field.
+ * @param ptr Pointer to packed value
+ * @param null_mask NULL field mask
+ * @param col_count Number of columns in the row event
+ * @param curr_col_index Current position of the field in the row event (zero indexed)
+ * @param metadata Field metadata
+ * @param dest Destination where the value is stored
+ * @return Length of the processed field in bytes
  */
-bool fixed_string_is_enum(uint8_t type)
+uint64_t unpack_bit(uint8_t *ptr, uint8_t *null_mask, uint32_t col_count,
+                    uint32_t curr_col_index, uint8_t *metadata, uint64_t *dest)
 {
-    return type == TABLE_COL_TYPE_ENUM || type == TABLE_COL_TYPE_SET;
+    if (metadata[1])
+    {
+        memcpy(ptr, dest, metadata[1]);
+    }
+    return metadata[1];
+}
+
+
+/**
+ * @brief Get the length of a temporal field
+ * @param type Field type
+ * @param decimals How many decimals the field has
+ * @return Number of bytes the temporal value takes
+ */
+static size_t temporal_field_size(uint8_t type, uint8_t decimals)
+{
+    switch (type)
+    {
+        case TABLE_COL_TYPE_YEAR:
+            return 1;
+
+        case TABLE_COL_TYPE_TIME:
+        case TABLE_COL_TYPE_DATE:
+            return 3;
+
+        case TABLE_COL_TYPE_DATETIME:
+        case TABLE_COL_TYPE_TIMESTAMP:
+            return 4;
+
+        case TABLE_COL_TYPE_TIMESTAMP2:
+            return 4 + ((decimals + 1) / 2);
+
+        case TABLE_COL_TYPE_DATETIME2:
+            return 5 + ((decimals + 1) / 2);
+            
+        default:
+            MXS_ERROR("Unknown field type: %x %s", type, column_type_to_string(type));
+            break;
+    }
+
+    return 0;
 }
 
 /**
@@ -360,27 +528,37 @@ bool fixed_string_is_enum(uint8_t type)
  * @param val Extracted packed value
  * @param tm Pointer where the unpacked temporal value is stored
  */
-void unpack_temporal_value(uint8_t type, uint64_t val, struct tm *tm)
+uint64_t unpack_temporal_value(uint8_t type, uint8_t *ptr, uint8_t *metadata, struct tm *tm)
 {
     switch (type)
     {
+        case TABLE_COL_TYPE_YEAR:
+            unpack_year(ptr, tm);
+            break;
+        
         case TABLE_COL_TYPE_DATETIME:
-            unpack_datetime(val, tm);
+            // This is not used with MariaDB RBR
+            //unpack_datetime(ptr, *metadata, tm);
+            break;
+
+        case TABLE_COL_TYPE_DATETIME2:
+            unpack_datetime2(ptr, *metadata, tm);
             break;
 
         case TABLE_COL_TYPE_TIME:
-            unpack_time(val, tm);
+            unpack_time(ptr, tm);
             break;
 
         case TABLE_COL_TYPE_DATE:
-            unpack_date(val, tm);
+            unpack_date(ptr, tm);
             break;
 
         case TABLE_COL_TYPE_TIMESTAMP:
-            // TODO: add TIMESTAMP extraction
-            memset(tm, 0, sizeof(struct tm));
+        case TABLE_COL_TYPE_TIMESTAMP2:
+            unpack_timestamp(ptr, *metadata, tm);
             break;
     }
+    return temporal_field_size(type, *metadata);
 }
 
 void format_temporal_value(char *str, size_t size, uint8_t type, struct tm *tm)
@@ -390,6 +568,9 @@ void format_temporal_value(char *str, size_t size, uint8_t type, struct tm *tm)
     switch (type)
     {
         case TABLE_COL_TYPE_DATETIME:
+        case TABLE_COL_TYPE_DATETIME2:
+        case TABLE_COL_TYPE_TIMESTAMP:
+        case TABLE_COL_TYPE_TIMESTAMP2:
             format = "%Y-%m-%d %H:%M:%S";
             break;
 
@@ -401,18 +582,18 @@ void format_temporal_value(char *str, size_t size, uint8_t type, struct tm *tm)
             format = "%Y-%m-%d";
             break;
 
-        case TABLE_COL_TYPE_TIMESTAMP:
-            // TODO: implement TIMESTAMP extraction
-            //format = "%Y-%m-%d %H:%M:%S";
+        case TABLE_COL_TYPE_YEAR:
+            format = "%Y";
             break;
 
         default:
-            MXS_ERROR("Unexpected temporal type: %x", type);
+            MXS_ERROR("Unexpected temporal type: %x %s", type, column_type_to_string(type));
             ss_dassert(false);
             break;
     }
     strftime(str, size, format, tm);
 }
+
 /**
  * @brief Extract a value from a row event
  *
@@ -421,56 +602,45 @@ void format_temporal_value(char *str, size_t size, uint8_t type, struct tm *tm)
  * values need to be unpacked from the compact format they are stored in.
  * @param ptr Pointer to the start of the field value
  * @param type Column type of the field
- * @param val The extracted value is stored here
+ * @param metadata Pointer to the field metadata
+ * @param val Destination where the extracted value is stored
  * @return Number of bytes copied
  * @see extract_temporal_value
  */
-size_t extract_field_value(uint8_t *ptr, uint8_t type, uint64_t* val)
+size_t unpack_numeric_field(uint8_t *src, uint8_t type, uint8_t *metadata, uint8_t *dest)
 {
+    size_t size = 0;
     switch (type)
     {
         case TABLE_COL_TYPE_LONG:
-        case TABLE_COL_TYPE_INT24:
         case TABLE_COL_TYPE_FLOAT:
-            memcpy(val, ptr, 4);
-            return 4;
+            size = 4;
+            break;
+
+        case TABLE_COL_TYPE_INT24:
+            size = 3;
+            break;
 
         case TABLE_COL_TYPE_LONGLONG:
         case TABLE_COL_TYPE_DOUBLE:
-            memcpy(val, ptr, 8);
-            return 8;
+            size = 8;
+            break;
 
         case TABLE_COL_TYPE_SHORT:
-        case TABLE_COL_TYPE_YEAR:
-            memcpy(val, ptr, 2);
-            return 2;
+            size = 2;
+            break;
 
         case TABLE_COL_TYPE_TINY:
-            memcpy(val, ptr, 1);
-            return 1;
-
-        /** The following seem to differ from the MySQL documentation and
-         * they are stored as some sort of binary values when tested with
-         * MariaDB 10.0.23. The MariaDB source code also mentions that
-         * there are differences between various versions.*/
-        case TABLE_COL_TYPE_DATETIME:
-            memcpy(val, ptr, 8);
-            return 8;
-
-        case TABLE_COL_TYPE_TIME:
-        case TABLE_COL_TYPE_DATE:
-            memcpy(val, ptr, 3);
-            return 3;
-
-        case TABLE_COL_TYPE_TIMESTAMP:
-            memcpy(val, ptr, 4);
-            return 4;
+            size = 1;
+            break;
 
         default:
-            MXS_ERROR("Bad column type: %x", type);
+            MXS_ERROR("Bad column type: %x %s", type, column_type_to_string(type));
             break;
     }
-    return 0;
+
+    memcpy(dest, src, size);
+    return size;
 }
 
 /**

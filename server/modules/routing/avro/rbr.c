@@ -67,14 +67,13 @@ void handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr
             snprintf(filepath, sizeof(filepath), "%s/%s.%s.avro", router->avrodir,
                      table_ident, map->version_string);
             AVRO_TABLE *avro_table = avro_table_alloc(filepath, json_schema);
+            strncpy(map->gtid, router->current_gtid, GTID_MAX_LEN);
             hashtable_add(router->table_maps, (void*) &map->id, map);
             hashtable_add(router->open_tables, table_ident, avro_table);
             save_avro_schema(router->avrodir, json_schema, map);
             MXS_DEBUG("%s", json_schema);
             free(json_schema);
         }
-
-        strncpy(map->gtid, router->current_gtid, GTID_MAX_LEN);
         spinlock_release(&router->lock);
     }
 }
@@ -180,32 +179,45 @@ void handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
     }
 }
 
-void set_numeric_field_value(avro_value_t *field, uint8_t type, uint64_t value)
+void set_numeric_field_value(avro_value_t *field, uint8_t type, uint8_t *metadata, uint8_t *value)
 {
+    int64_t i = 0;
+
     switch (type)
     {
-        case TABLE_COL_TYPE_DECIMAL:
         case TABLE_COL_TYPE_TINY:
+            i = *value;
+            avro_value_set_int(field, i);
+            break;
+
         case TABLE_COL_TYPE_SHORT:
-        case TABLE_COL_TYPE_LONG:
+            memcpy(&i, value, 2);
+            avro_value_set_int(field, i);
+            break;
+            
         case TABLE_COL_TYPE_INT24:
-            avro_value_set_int(field, (int)value);
+            memcpy(&i, value, 3);
+            avro_value_set_int(field, i);
             break;
 
-        case TABLE_COL_TYPE_FLOAT:
-            avro_value_set_float(field, (float)value);
-            break;
-
-        case TABLE_COL_TYPE_DOUBLE:
-            avro_value_set_double(field, (double)value);
-            break;
-
-        case TABLE_COL_TYPE_NULL:
-            avro_value_set_null(field);
+        case TABLE_COL_TYPE_LONG:
+            memcpy(&i, value, 4);
+            avro_value_set_int(field, i);
             break;
 
         case TABLE_COL_TYPE_LONGLONG:
-            avro_value_set_long(field, (long)value);
+            memcpy(&i, value, 8);
+            avro_value_set_int(field, i);
+            break;
+
+        case TABLE_COL_TYPE_FLOAT:
+            memcpy(&i, value, 4);
+            avro_value_set_float(field, (float)i);
+            break;
+
+        case TABLE_COL_TYPE_DOUBLE:
+            memcpy(&i, value, 8);
+            avro_value_set_float(field, (double)i);
             break;
 
         default:
@@ -235,11 +247,14 @@ int get_metadata_len(uint8_t type)
         case TABLE_COL_TYPE_NEWDECIMAL:
         case TABLE_COL_TYPE_ENUM:
         case TABLE_COL_TYPE_SET:
+        case TABLE_COL_TYPE_BIT:
             return 2;
 
+        case TABLE_COL_TYPE_LONG:
+        case TABLE_COL_TYPE_LONGLONG:
         case TABLE_COL_TYPE_BLOB:
-        case TABLE_COL_TYPE_DOUBLE:
         case TABLE_COL_TYPE_FLOAT:
+        case TABLE_COL_TYPE_DOUBLE:
             return 1;
 
         default:
@@ -262,12 +277,12 @@ int get_metadata_len(uint8_t type)
 uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value_t *record,
                                 uint8_t *ptr, uint64_t columns_present, uint64_t columns_update)
 {
-    char rstr[2048];
     int npresent = 0;
     avro_value_t field;
     long ncolumns = map->columns;
-
+    uint8_t *metadata = map->column_metadata;
     size_t metadata_offset = 0;
+    int extra_bits = (((ncolumns + 7) / 8) * 8) - ncolumns;
 
     /** Skip the null-bitmap */
     uint8_t *null_bitmap = ptr;
@@ -288,20 +303,15 @@ uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value
             {
                 /** ENUM and SET are stored as STRING types with the type stored
                  * in the metadata. */
-                if (fixed_string_is_enum(map->column_metadata[metadata_offset]))
+                if (fixed_string_is_enum(metadata[metadata_offset]))
                 {
-                    uint8_t bytes = map->column_metadata[metadata_offset + 1];
-                    uint64_t data = 0;
-                    char strval[32] = "NULL";
-                    memcpy(&data, ptr, bytes);
-                    for (uint8_t x = 0; x < sizeof(data); x++)
-                    {
-                        if (data & (1 << x))
-                        {
-                            snprintf(strval, sizeof(strval), "%d", x + 1);
-                            break;
-                        }
-                    }
+                    uint8_t val[metadata[metadata_offset + 1]];
+                    uint64_t bytes = unpack_enum(ptr, &metadata[metadata_offset], val);
+                    char strval[32];
+
+                    /** Right now only ENUMs/SETs with less than 256 values
+                     * are printed correctly */
+                    snprintf(strval, sizeof(strval), "%hhu", val[0]);
                     avro_value_set_string(&field, strval);
                     ptr += bytes;
                 }
@@ -312,6 +322,18 @@ uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value
                     ptr += bytes + 1;
                 }
             }
+            else if (map->column_types[i] == TABLE_COL_TYPE_BIT)
+            {
+                uint64_t value = 0;
+                int width = metadata[metadata_offset] + metadata[metadata_offset + 1] * 8;
+                int bits_in_nullmap = MIN(width, extra_bits);
+                extra_bits -= bits_in_nullmap;
+                width -= bits_in_nullmap;
+                size_t bytes = width / 8;
+                // TODO: extract the bytes
+                avro_value_set_int(&field, value);
+                ptr += bytes;
+            }
             else if (column_is_variable_string(map->column_types[i]))
             {
                 size_t sz;
@@ -320,31 +342,30 @@ uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value
             }
             else if (column_is_blob(map->column_types[i]))
             {
-                uint8_t bytes = map->column_metadata[metadata_offset];
+                uint8_t bytes = metadata[metadata_offset];
                 uint64_t len = 0;
                 memcpy(&len, ptr, bytes);
                 ptr += bytes;
                 avro_value_set_bytes(&field, ptr, len);
                 ptr += len;
             }
+            else if (column_is_temporal(map->column_types[i]))
+            {
+                char buf[80];
+                struct tm tm;
+                ptr += unpack_temporal_value(map->column_types[i], ptr, &metadata[metadata_offset], &tm);
+                format_temporal_value(buf, sizeof(buf), map->column_types[i], &tm);
+                avro_value_set_string(&field, buf);
+            }
             else
             {
-                uint64_t lval = 0;
-                ptr += extract_field_value(ptr, map->column_types[i], &lval);
-
-                if (column_is_temporal(map->column_types[i]))
-                {
-                    char buf[80];
-                    struct tm tm;
-                    unpack_temporal_value(map->column_types[i], lval, &tm);
-                    format_temporal_value(buf, sizeof(buf), map->column_types[i], &tm);
-                    avro_value_set_string(&field, buf);
-                }
-                else
-                {
-                    set_numeric_field_value(&field, map->column_types[i], lval);
-                }
+                uint8_t lval[16];
+                memset(lval, 0, sizeof(lval));
+                ptr += unpack_numeric_field(ptr, map->column_types[i],
+                                           &metadata[metadata_offset], lval);
+                set_numeric_field_value(&field, map->column_types[i], &metadata[metadata_offset], lval);
             }
+            ss_dassert(metadata_offset <= map->column_metadata_size);
             metadata_offset += get_metadata_len(map->column_types[i]);
         }
     }
