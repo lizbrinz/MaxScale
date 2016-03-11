@@ -137,6 +137,6 @@ uint64_t extract_field_value(uint8_t *ptr, uint8_t type, uint64_t* val);
 
 TABLE_CREATE* table_create_alloc(const char* sql, const char* db, const char* gtid);
 void* table_create_free(TABLE_CREATE* value);
-bool table_create_save(TABLE_CREATE *create, const char *path);
+bool table_create_save(TABLE_CREATE *create, const char *filename);
 
 #endif /* MYSQL_BINLOG_H */

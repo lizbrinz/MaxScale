@@ -149,7 +149,7 @@ static bool avro_save_conversion_state(AVRO_INSTANCE *router)
     char filename[PATH_MAX + 1];
     char err_msg[STRERROR_BUFLEN];
 
-    snprintf(filename, sizeof(filename), "%s/avro-conversion.ini.tmp", get_cachedir());
+    snprintf(filename, sizeof(filename), "%s/avro-conversion.ini.tmp", router->avrodir);
 
     /* open file for writing */
     config_file = fopen(filename, "wb");
@@ -168,7 +168,7 @@ static bool avro_save_conversion_state(AVRO_INSTANCE *router)
 
     /* rename tmp file to right filename */
     char newname[PATH_MAX + 1];
-    snprintf(newname, sizeof(newname), "%s/avro-conversion.ini", get_cachedir());
+    snprintf(newname, sizeof(newname), "%s/avro-conversion.ini", router->avrodir);
     int rc = rename(filename, newname);
 
     if (rc == -1)
@@ -218,7 +218,7 @@ bool avro_load_conversion_state(AVRO_INSTANCE *router)
     char filename[PATH_MAX + 1];
     bool rval = false;
 
-    snprintf(filename, sizeof(filename), "%s/avro-conversion.ini", get_cachedir());
+    snprintf(filename, sizeof(filename), "%s/avro-conversion.ini", router->avrodir);
 
     /** No stored state, this is the first time the router is started */
     if (access(filename, F_OK) == -1)
@@ -664,7 +664,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
                 if (created)
                 {
                     char createlist[PATH_MAX + 1];
-                    snprintf(createlist, sizeof(createlist), "%s/table-ddl.list", get_cachedir());
+                    snprintf(createlist, sizeof(createlist), "%s/table-ddl.list", router->avrodir);
                     if (!table_create_save(created, createlist))
                     {
                         MXS_ERROR("Failed to store CREATE TABLE statement to disk: %s",
@@ -780,7 +780,7 @@ bool avro_load_created_tables(AVRO_INSTANCE *router)
 {
     bool rval = false;
     char createlist[PATH_MAX + 1];
-    snprintf(createlist, sizeof(createlist), "%s/table-ddl.list", get_cachedir());
+    snprintf(createlist, sizeof(createlist), "%s/table-ddl.list", router->avrodir);
     struct stat st;
 
     if (stat(createlist, &st) == 0)

@@ -474,17 +474,17 @@ size_t extract_field_value(uint8_t *ptr, uint8_t type, uint64_t* val)
 }
 
 /**
- *
- * @param create
- * @param path
- * @return
+ * @brief Persist a CREATE TABLE statement on disk
+ * @param create The TABLE_CREATE object
+ * @param filename File where the CREATE TABLE statement is appended to
+ * @return True if persisting the statement to disk was successful
  */
-bool table_create_save(TABLE_CREATE *create, const char *path)
+bool table_create_save(TABLE_CREATE *create, const char *filename)
 {
     bool rval = false;
     const char statement_template[] = "CREATE TABLE %s.%s(%s);\n";
 
-    FILE *file = fopen(path, "ab");
+    FILE *file = fopen(filename, "ab");
     if (file)
     {
         fprintf(file, statement_template, create->database, create->table, create->table_definition);
@@ -628,7 +628,7 @@ static bool get_database_name(const char* sql, char* dest)
  * @param sql Table definition
  * @return Start of the next field definition
  */
-const char* get_next_field_def(const char* sql)
+static const char* get_next_field_def(const char* sql)
 {
     int depth = 0;
 
@@ -661,12 +661,30 @@ const char* get_next_field_def(const char* sql)
     return NULL;
 }
 
+const char* get_field_name_start(const char* ptr)
+{
+    while (isspace(*ptr) || *ptr == '`')
+    {
+        ptr++;
+    }
+    return ptr;
+}
+
+const char* get_field_name_end(const char* ptr)
+{
+    while (!isspace(*ptr) && *ptr != '`')
+    {
+        ptr++;
+    }
+    return ptr;
+}
+
 /**
  * Process a table definition into an array of column names
  * @param nameptr table definition
  * @return Number of processed columns or -1 on error
  */
-int process_column_definition(const char *nameptr, char*** dest)
+static int process_column_definition(const char *nameptr, char*** dest)
 {
     /** Process columns in groups of 8 */
     size_t chunks = 1;
@@ -683,6 +701,7 @@ int process_column_definition(const char *nameptr, char*** dest)
 
     while (nameptr)
     {
+        nameptr = get_field_name_start(nameptr);
         if (i >= chunks * chunk_size)
         {
             char **tmp = realloc(names, (++chunks * chunk_size + 1) * sizeof(char*));
@@ -700,11 +719,12 @@ int process_column_definition(const char *nameptr, char*** dest)
             names = tmp;
         }
 
-        char colname[64 + 1];
-        char *end = strchr(nameptr, ' ');
+        char colname[128 + 1];
+        const char *end = get_field_name_end(nameptr);
+
         if (end)
         {
-            sprintf(colname, "%.*s", (int) (end - nameptr), nameptr);
+            snprintf(colname, sizeof(colname), "%.*s", (int) (end - nameptr), nameptr);
 
             if ((names[i++] = strdup(colname)) == NULL)
             {
