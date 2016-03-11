@@ -135,7 +135,6 @@ cdc_read_event(DCB* dcb)
     GWBUF *head = NULL;
     int rc;
     CDC_session *client_data;
-    // AUTH_OBJ *auth;
     int auth_val;
 
     client_data = (CDC_session *)dcb->data;
@@ -150,30 +149,37 @@ cdc_read_event(DCB* dcb)
                 {
                     case CDC_STATE_WAIT_FOR_AUTH:
                         if (CDC_STATE_AUTH_OK == (
+                            /* Fill CDC_session from incoming packet */
                             auth_val = dcb->authfunc.extract(dcb, head)))
                         {
+                            /* Call protocol authentication */
                             auth_val = dcb->authfunc.authenticate(dcb, &head);
                         }
+
+                        /* Discard input buffer */
                         while ((head = gwbuf_consume(head, GWBUF_LENGTH(head))) != NULL);
 
                         if (auth_val == CDC_STATE_AUTH_OK)
                         {
-                             protocol->state = CDC_STATE_HANDLE_REQUEST;
-
-                             write_auth_ack(dcb);
-
-                             MXS_INFO("%s: Client [%s] authenticated with user [%s]",
-                                      dcb->service->name, dcb->remote != NULL ? dcb->remote : "",
-                                      client_data->user);
-
                              /* start a real session */
                              session = session_alloc(dcb->service, dcb);
 
-                             /* TODO add session fail check */
+                             if (session != NULL)
+                             {
+                                 protocol->state = CDC_STATE_HANDLE_REQUEST;
 
-                             break;
+                                 write_auth_ack(dcb);
+
+                                 MXS_INFO("%s: Client [%s] authenticated with user [%s]",
+                                      dcb->service->name, dcb->remote != NULL ? dcb->remote : "",
+                                      client_data->user);
+                             } else
+                             {
+                                 auth_val = CDC_STATE_AUTH_NO_SESSION;
+                             }
                         }
-                        else
+
+                        if (auth_val != CDC_STATE_AUTH_OK) 
                         {
                             protocol->state = CDC_STATE_AUTH_ERR;
 
@@ -184,8 +190,8 @@ cdc_read_event(DCB* dcb)
                             /* force the client connecton close */
                             dcb_close(dcb);
 
-                            return 0;
                         }
+                        break;
                     case CDC_STATE_HANDLE_REQUEST:
                         // handle CLOSE command, it shoudl be routed as well and client connection closed after last transmission
                         if (strncmp(GWBUF_DATA(head), "CLOSE", GWBUF_LENGTH(head)) == 0)

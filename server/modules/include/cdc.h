@@ -54,9 +54,10 @@
 #define CDC_STATE_AUTH_OK                3
 #define CDC_STATE_AUTH_FAILED            4
 #define CDC_STATE_AUTH_ERR               5
-#define CDC_STATE_REGISTRATION           6
-#define CDC_STATE_HANDLE_REQUEST         7
-#define CDC_STATE_CLOSE                  8
+#define CDC_STATE_AUTH_NO_SESSION        6
+#define CDC_STATE_REGISTRATION           7
+#define CDC_STATE_HANDLE_REQUEST         8
+#define CDC_STATE_CLOSE                  9
 
 #define CDC_UUID_LEN 32
 #define CDC_TYPE_LEN 16
