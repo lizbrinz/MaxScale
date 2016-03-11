@@ -147,19 +147,10 @@ service_alloc(const char *servname, const char *router)
     service->credentials.authdata = NULL;
     service->credentials.name = NULL;
     service->version_string = NULL;
-    service->ctx = NULL;
     service->svc_config_param = NULL;
     service->users = NULL;
     service->routerOptions = NULL;
-    service->ssl_mode = SSL_DISABLED;
-    service->ssl_init_done = false;
-    service->ssl_ca_cert = NULL;
-    service->ssl_cert = NULL;
-    service->ssl_key = NULL;
     service->log_auth_warnings = true;
-    service->ssl_cert_verify_depth = DEFAULT_SSL_CERT_VERIFY_DEPTH;
-    /** Support the highest possible SSL/TLS methods available as the default */
-    service->ssl_method_type = SERVICE_SSL_TLS_MAX;
     if (service->name == NULL || service->routerModule == NULL)
     {
         if (service->name)
@@ -427,30 +418,41 @@ int serviceStartAllPorts(SERVICE* service)
 {
     SERV_LISTENER *port = service->ports;
     int listeners = 0;
-    while (!service->svc_do_shutdown && port)
+
+    if (port)
     {
-        listeners += serviceStartPort(service, port);
-        port = port->next;
+        while (!service->svc_do_shutdown && port)
+        {
+            listeners += serviceStartPort(service, port);
+            port = port->next;
+        }
+
+        if (listeners)
+        {
+            service->state = SERVICE_STATE_STARTED;
+            service->stats.started = time(0);
+        }
+        else if (service->retry_start)
+        {
+            /** Service failed to start any ports. Try again later. */
+            service->stats.n_failed_starts++;
+            char taskname[strlen(service->name) + strlen("_start_retry_") +
+                (int) ceil(log10(INT_MAX)) + 1];
+            int retry_after = MIN(service->stats.n_failed_starts * 10, SERVICE_MAX_RETRY_INTERVAL);
+            snprintf(taskname, sizeof(taskname), "%s_start_retry_%d",
+                     service->name, service->stats.n_failed_starts);
+            hktask_oneshot(taskname, service_internal_restart,
+                           (void*) service, retry_after);
+            MXS_NOTICE("Failed to start service %s, retrying in %d seconds.",
+                       service->name, retry_after);
+        }
+    }
+    else
+    {
+        MXS_WARNING("Service '%s' has no listeners defined.", service->name);
+        listeners = 1; /** Set this to one to suppress errors */
     }
 
-    if (listeners)
-    {
-        service->state = SERVICE_STATE_STARTED;
-        service->stats.started = time(0);
-    }
-    else if (service->retry_start)
-    {
-        /** Service failed to start any ports. Try again later. */
-        service->stats.n_failed_starts++;
-        char taskname[strlen(service->name) + strlen("_start_retry_") + (int)ceil(log10(INT_MAX)) + 1];
-        int retry_after = MIN(service->stats.n_failed_starts * 10, SERVICE_MAX_RETRY_INTERVAL);
-        snprintf(taskname, sizeof (taskname), "%s_start_retry_%d",
-                 service->name, service->stats.n_failed_starts);
-        hktask_oneshot(taskname, service_internal_restart,
-                       (void*) service, retry_after);
-        MXS_NOTICE("Failed to start service %s, retrying in %d seconds.",
-                   service->name, retry_after);
-    }
     return listeners;
 }
 
@@ -656,13 +658,9 @@ service_free(SERVICE *service)
     free(service->routerModule);
     free(service->weightby);
     free(service->version_string);
-    free(service->ssl_key);
-    free(service->ssl_cert);
-    free(service->ssl_ca_cert);
     free(service->credentials.name);
     free(service->credentials.authdata);
 
-    SSL_CTX_free(service->ctx);
     free_config_parameter(service->svc_config_param);
     users_free(service->users);
     hashtable_free(service->resources);
@@ -945,128 +943,6 @@ serviceOptimizeWildcard(SERVICE *service, int action)
 }
 
 /**
- * Set the locations of the server's SSL certificate, server's private key and the CA
- * certificate which both the client and the server should trust.
- * @param service Service to configure
- * @param cert SSL certificate
- * @param key SSL private key
- * @param ca_cert SSL CA certificate
- */
-void
-serviceSetCertificates(SERVICE *service, char* cert,char* key, char* ca_cert)
-{
-    if (service->ssl_cert)
-    {
-        free(service->ssl_cert);
-    }
-    service->ssl_cert = strdup(cert);
-
-    if (service->ssl_key)
-    {
-        free(service->ssl_key);
-    }
-    service->ssl_key = strdup(key);
-
-    if (service->ssl_ca_cert)
-    {
-        free(service->ssl_ca_cert);
-    }
-    service->ssl_ca_cert = strdup(ca_cert);
-}
-
-/**
- * Set the maximum SSL/TLS version the service will support
- * @param service Service to configure
- * @param version SSL/TLS version string
- * @return  0 on success, -1 on invalid version string
- */
-int
-serviceSetSSLVersion(SERVICE *service, char* version)
-{
-    if (strcasecmp(version,"SSLV3") == 0)
-    {
-        service->ssl_method_type = SERVICE_SSLV3;
-    }
-    else if (strcasecmp(version,"TLSV10") == 0)
-    {
-        service->ssl_method_type = SERVICE_TLS10;
-    }
-#ifdef OPENSSL_1_0
-    else if (strcasecmp(version,"TLSV11") == 0)
-    {
-        service->ssl_method_type = SERVICE_TLS11;
-    }
-    else if (strcasecmp(version,"TLSV12") == 0)
-    {
-        service->ssl_method_type = SERVICE_TLS12;
-    }
-#endif
-    else if (strcasecmp(version,"MAX") == 0)
-    {
-        service->ssl_method_type = SERVICE_SSL_TLS_MAX;
-    }
-    else
-    {
-        return -1;
-    }
-    return 0;
-}
-
-/**
- * Set the service's SSL certificate verification depth. Depth of 0 means the peer
- * certificate, 1 is the CA and 2 is a higher CA and so on.
- * @param service Service to configure
- * @param depth Certificate verification depth
- * @return 0 on success, -1 on incorrect depth value
- */
-int serviceSetSSLVerifyDepth(SERVICE* service, int depth)
-{
-    if (depth < 0)
-    {
-        return -1;
-    }
-
-    service->ssl_cert_verify_depth = depth;
-    return 0;
-}
-
-/**
- * Enable or disable the service SSL capability of a service.
- * The SSL mode string passed as a parameter should be one of required, enabled
- * or disabled. Required requires all connections to use SSL encryption, enabled
- * allows both SSL and non-SSL connections and disabled does not use SSL encryption.
- * If the service SSL mode is set to enabled, then the client will decide whether
- * SSL encryption is used.
- *  @param service Service to configure
- *  @param action Mode string. One of required, enabled or disabled.
- *  @return 0 on success, -1 on error
- */
-int
-serviceSetSSL(SERVICE *service, char* action)
-{
-    int rval = 0;
-
-    if (strcasecmp(action,"required") == 0)
-    {
-        service->ssl_mode = SSL_REQUIRED;
-    }
-    else if (strcasecmp(action,"enabled") == 0)
-    {
-        service->ssl_mode = SSL_ENABLED;
-    }
-    else if (strcasecmp(action,"disabled") == 0)
-    {
-        service->ssl_mode = SSL_DISABLED;
-    }
-    else
-    {
-        rval = -1;
-    }
-
-    return rval;
-}
-
-/**
  * Whether to strip escape characters from the name of the database the client
  * is connecting to.
  * @param service Service to configure
@@ -1283,8 +1159,6 @@ printService(SERVICE *service)
     printf("\tUsers data:           %p\n", (void *)service->users);
     printf("\tTotal connections:    %d\n", service->stats.n_sessions);
     printf("\tCurrently connected:  %d\n", service->stats.n_current);
-    printf("\tSSL:  %s\n", service->ssl_mode == SSL_DISABLED ? "Disabled":
-           (service->ssl_mode == SSL_ENABLED ? "Enabled":"Required"));
 }
 
 /**
@@ -1396,8 +1270,6 @@ void dprintService(DCB *dcb, SERVICE *service)
                service->stats.n_sessions);
     dcb_printf(dcb, "\tCurrently connected:                 %d\n",
                service->stats.n_current);
-    dcb_printf(dcb,"\tSSL:  %s\n", service->ssl_mode == SSL_DISABLED ? "Disabled":
-               (service->ssl_mode == SSL_ENABLED ? "Enabled":"Required"));
 }
 
 /**

@@ -370,17 +370,20 @@ In order for MaxScale to obtain all the data it must be given a username it can 
 The account used must be able to select from the mysql.user table, the following is an example showing how to create this user.
 
 ```
-MariaDB [mysql]> create user 'maxscale'@'maxscalehost' identified by 'Mhu87p2D';
+MariaDB [mysql]> CREATE USER 'maxscale'@'maxscalehost' IDENTIFIED BY 'Mhu87p2D';
 Query OK, 0 rows affected (0.01 sec)
 
-MariaDB [mysql]> grant SELECT on mysql.user to 'maxscale'@'maxscalehost';
+MariaDB [mysql]> GRANT SELECT ON mysql.user TO 'maxscale'@'maxscalehost';
 Query OK, 0 rows affected (0.00 sec)
 ```
 
-Additionally, `GRANT SELECT` on the `mysql.db` table and `SHOW DATABASES` privileges are required in order to load databases name and grants suitable for database name authorization.
+Additionally, `SELECT` privileges on the `mysql.db` and `mysql.tables_priv` tables and `SHOW DATABASES` privileges are required in order to load databases name and grants suitable for database name authorization.
 
 ```
 MariaDB [(none)]> GRANT SELECT ON mysql.db TO 'maxscale'@'maxscalehost';
+Query OK, 0 rows affected (0.00 sec)
+
+MariaDB [(none)]> GRANT SELECT ON mysql.tables_priv TO 'maxscale'@'maxscalehost';
 Query OK, 0 rows affected (0.00 sec)
 
 MariaDB [(none)]> GRANT SHOW DATABASES ON *.* TO 'maxscale'@'maxscalehost';
@@ -626,11 +629,12 @@ A string giving a file path that identifies an existing readable file. The file 
 #### `ssl_version`
 
 This parameter controls the level of encryption used. Accepted values are:
- * SSLv3
  * TLSv10
  * TLSv11
  * TLSv12
  * MAX   
+
+`MAX` is the maximum available TLS version which at the time of writing is TLSv1.2.
 
 #### `ssl_cert_verification_depth`
 

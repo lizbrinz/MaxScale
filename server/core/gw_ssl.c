@@ -186,7 +186,5 @@ ssl_required_by_dcb(DCB *dcb)
 bool
 ssl_required_but_not_negotiated(DCB *dcb)
 {
-    return (NULL != dcb->listener &&
-        NULL != dcb->listener->ssl &&
-        SSL_HANDSHAKE_UNKNOWN == dcb->ssl_state);
+    return (dcb->listener && dcb->listener->ssl && SSL_HANDSHAKE_UNKNOWN == dcb->ssl_state);
 }

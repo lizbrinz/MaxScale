@@ -660,11 +660,11 @@ createInstance(SERVICE *service, char **options)
 
                     if (perc == 0)
                     {
-                        perc = 1;
                         MXS_ERROR("Weighting parameter '%s' with a value of %d for"
                                   " server '%s' rounds down to zero with total weight"
                                   " of %d for service '%s'. No queries will be "
-                                  "routed to this server.", weightby, wght,
+                                  "routed to this server as long as a server with"
+                                  " positive weight is available.", weightby, wght,
                                   backend->backend_server->unique_name, total,
                                   service->name);
                     }
@@ -833,7 +833,7 @@ static void* newSession(
         client_rses->rses_transaction_active = false;
         client_rses->have_tmp_tables = false;
         client_rses->forced_node = NULL;
-
+        
         router_nservers = router_get_servercount(router);
 
         if (!have_enough_servers(&client_rses,
@@ -2178,7 +2178,7 @@ static bool route_single_stmt(
      * Check if this is a LOAD DATA LOCAL INFILE query. If so, send all queries
      * to the master until the last, empty packet arrives.
      */
-    if (!rses->rses_load_active)
+    if (!rses->rses_load_active && packet_type == MYSQL_COM_QUERY)
     {
         qc_query_op_t queryop = qc_get_operation(querybuf);
         if (queryop == QUERY_OP_LOAD)
@@ -2964,8 +2964,21 @@ int bref_cmp_router_conn(
         BACKEND* b1 = ((backend_ref_t *)bref1)->bref_backend;
         BACKEND* b2 = ((backend_ref_t *)bref2)->bref_backend;
 
-        return ((1000 * b1->backend_conn_count) / b1->weight)
-			  - ((1000 * b2->backend_conn_count) / b2->weight);
+        if (b1->weight == 0 && b2->weight == 0)
+        {
+            return b1->backend_server->stats.n_current - b2->backend_server->stats.n_current;
+        }
+        else if (b1->weight == 0)
+        {
+            return 1;
+        }
+        else if (b2->weight == 0)
+        {
+            return -1;
+        }
+
+        return ((1000 + 1000 * b1->backend_conn_count) / b1->weight)
+			  - ((1000 + 1000 * b2->backend_conn_count) / b2->weight);
 }
 
 /** Compare nunmber of global connections in backend servers */
@@ -2976,10 +2989,22 @@ int bref_cmp_global_conn(
         BACKEND* b1 = ((backend_ref_t *)bref1)->bref_backend;
         BACKEND* b2 = ((backend_ref_t *)bref2)->bref_backend;
 
-        return ((1000 * b1->backend_server->stats.n_current) / b1->weight)
-		  - ((1000 * b2->backend_server->stats.n_current) / b2->weight);
-}
+        if (b1->weight == 0 && b2->weight == 0)
+        {
+            return b1->backend_server->stats.n_current - b2->backend_server->stats.n_current;
+        }
+        else if (b1->weight == 0)
+        {
+            return 1;
+        }
+        else if (b2->weight == 0)
+        {
+            return -1;
+        }
 
+        return ((1000 + 1000 * b1->backend_server->stats.n_current) / b1->weight)
+		  - ((1000 + 1000 * b2->backend_server->stats.n_current) / b2->weight);
+}
 
 /** Compare relication lag between backend servers */
 int bref_cmp_behind_master(
@@ -3002,6 +3027,19 @@ int bref_cmp_current_load(
         SERVER*  s2 = ((backend_ref_t *)bref2)->bref_backend->backend_server;
         BACKEND* b1 = ((backend_ref_t *)bref1)->bref_backend;
         BACKEND* b2 = ((backend_ref_t *)bref2)->bref_backend;
+
+        if (b1->weight == 0 && b2->weight == 0)
+        {
+            return b1->backend_server->stats.n_current - b2->backend_server->stats.n_current;
+        }
+        else if (b1->weight == 0)
+        {
+            return 1;
+        }
+        else if (b2->weight == 0)
+        {
+            return -1;
+        }
 
         return ((1000 * s1->stats.n_current_ops) - b1->weight)
 			- ((1000 * s2->stats.n_current_ops) - b2->weight);
@@ -3290,11 +3328,6 @@ static bool select_connect_backend_servers(
              i++)
         {
                 BACKEND* b = backend_ref[i].bref_backend;
-
-		if (router->servers[i]->weight == 0)
-		{
-			continue;
-		}
 
                 if (SERVER_IS_RUNNING(b->backend_server) &&
                         ((b->backend_server->status & router->bitmask) ==
@@ -5368,9 +5401,9 @@ static void check_for_multi_stmt(ROUTER_CLIENT_SES* rses, GWBUF *buf,
         if ((ptr = strnchr_esc_mysql(data, ';', buflen)))
         {
             /** Skip stored procedures etc. */
-            while (ptr && is_mysql_sp_end(ptr, ptr - data))
+            while (ptr && is_mysql_sp_end(ptr, buflen - (ptr - data)))
             {
-                ptr = strnchr_esc_mysql(ptr + 1, ';',  ptr - data);
+                ptr = strnchr_esc_mysql(ptr + 1, ';',  buflen - (ptr - data) - 1);
             }
 
             if (ptr)
