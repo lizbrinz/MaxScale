@@ -32,7 +32,7 @@ install(TARGETS maxscaled DESTINATION ${MAXSCALE_LIBDIR})
 
 if(BUILD_CDC)
   add_library(CDC SHARED cdc.c)
-  target_link_libraries(CDC log_manager)
+  target_link_libraries(CDC maxscale-common)
   set_target_properties(CDC PROPERTIES VERSION "1.0.1")
   install(TARGETS CDC DESTINATION ${MAXSCALE_LIBDIR})
 endif()

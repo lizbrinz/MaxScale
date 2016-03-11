@@ -30,7 +30,7 @@
  * @verbatim
  * Revision History
  * Date		Who			Description
- * 11/01/2016	Massimiliano Pinto	Initial version
+ * 11/01/2016	Massimiliano Pinto	Initial implementation
  *
  * @endverbatim
  */
@@ -39,12 +39,15 @@
 #include <gw.h>
 #include <modinfo.h>
 #include <log_manager.h>
+#include <gw_protocol.h>
+#include <modinfo.h>
+#include <maxscale/poll.h>
 
 MODULE_INFO info = {
 	MODULE_API_PROTOCOL,
 	MODULE_IN_DEVELOPMENT,
 	GWPROTOCOL_VERSION,
-	"A Change Data Cappure Listener implementation for use in binlog events retrievial"
+	"A Change Data Capture Listener implementation for use in binlog events retrievial"
 };
 
 #define ISspace(x) isspace((int)(x))
@@ -290,114 +293,57 @@ cdc_hangup(DCB *dcb)
  * @param dcb    The descriptor control block
  */
 static int
-cdc_accept(DCB *dcb)
+cdc_accept(DCB *listener)
 {
 int n_connect = 0;
+DCB *client_dcb;
 
-    while (1)
+    while ((client_dcb = dcb_accept(listener)) != NULL) 
     {
-        int so = -1;
-        DCB *client = NULL;
         CDC_session *client_data = NULL;
-        socklen_t client_len = sizeof(struct sockaddr_storage);
-        struct sockaddr client_conn;
-        CDC_protocol *protocol;
+        CDC_protocol *protocol = NULL;
 
-        if ((so = accept(dcb->fd, (struct sockaddr *)&client_conn, &client_len)) == -1)
-            return n_connect;
-        else
+        /* allocating CDC protocol */
+        protocol = cdc_protocol_init(client_dcb);
+        if (protocol == NULL)
         {
-            atomic_add(&dcb->stats.n_accepts, 1);
-
-            /* set NONBLOCKING mode */
-            setnonblocking(so);
-
-            /* create DCB for new connection */
-            if ((client = dcb_alloc(DCB_ROLE_REQUEST_HANDLER)))
-            {
-                client->service = dcb->session->service;	
-                client->fd = so;
-
-                /* Dummy session */
-                client->session = session_set_dummy(client);
-
-                /* Add new DCB to polling queue */
-                if (NULL == client->session || poll_add_dcb(client) == -1)
-                {
-                    close(so);
-                    dcb_close(client);
-                    return n_connect;
-                }
-
-                // get client address
-                if (client_conn.sa_family == AF_UNIX)
-                {
-                    // set client address
-                    client->remote = strdup("localhost_from_socket");
-                    // set localhost IP for user authentication
-                    (client->ipv4).sin_addr.s_addr = 0x0100007F;
-                }
-                else
-                {
-                    /* client IPv4 in raw data*/
-                    memcpy(&client->ipv4,
-                           (struct sockaddr_in *)&client_conn,
-                           sizeof(struct sockaddr_in));
-
-                    /* client IPv4 in string representation */
-                    client->remote = (char *)calloc(INET_ADDRSTRLEN + 1, sizeof(char));
-
-                    if (client->remote != NULL)
-                    {
-                        inet_ntop(AF_INET,
-                                  &(client->ipv4).sin_addr,
-                                  client->remote,
-                                  INET_ADDRSTRLEN);
-                    }
-                }
-
-                /* allocating CDC protocol */
-                protocol = cdc_protocol_init(client);
-                if (!protocol)
-                {
-                    client->protocol = NULL;
-                    close(so);
-                    dcb_close(client);
-
-                    MXS_ERROR("%lu [cdc_accept] Failed to create "
-                              "protocol object for client connection.",
-                              pthread_self());
-                    return n_connect;
-                }
-                client->protocol = (CDC_protocol *)protocol;
-
-                /* copy protocol function pointers into new DCB */
-                memcpy(&client->func, &MyObject, sizeof(GWPROTOCOL));
-
-                /* create the session data for CDC */
-                /* this coud be done in anothe routine, let's keep it here for now */
-                client_data = (CDC_session *)calloc(1, sizeof(CDC_session));
-                if (client_data == NULL)
-                {
-                    dcb_close(dcb);
-                    return n_connect;
-                }
-
-                client->data = client_data;
-
-                /* client protocol state change to CDC_STATE_WAIT_FOR_AUTH */
-                protocol->state = CDC_STATE_WAIT_FOR_AUTH;
-				
-                MXS_NOTICE("%s: new connection from [%s]", client->service->name,
-                           client->remote != NULL ? client->remote : "");
-
-                n_connect++;
-            }
-            else
-            {
-                close(so);
-            }
+            client_dcb->protocol = NULL;
+            dcb_close(client_dcb);
+            continue;
         }
+
+        client_dcb->protocol = (CDC_protocol *)protocol;
+
+        /* copy protocol function pointers into new DCB */
+        memcpy(&client_dcb->func, &MyObject, sizeof(GWPROTOCOL));
+
+        /* Dummy session */
+        client_dcb->session = session_set_dummy(client_dcb);
+
+        if (NULL == client_dcb->session || poll_add_dcb(client_dcb))
+        {
+            dcb_close(client_dcb);
+            continue;
+        }
+
+        /* create the session data for CDC */
+        /* this coud be done in anothe routine, let's keep it here for now */
+        client_data = (CDC_session *)calloc(1, sizeof(CDC_session));
+        if (client_data == NULL)
+        {
+             dcb_close(client_dcb);
+             continue;
+        }
+
+        client_dcb->data = client_data;
+
+        /* client protocol state change to CDC_STATE_WAIT_FOR_AUTH */
+        protocol->state = CDC_STATE_WAIT_FOR_AUTH;
+				
+        MXS_NOTICE("%s: new connection from [%s]", client_dcb->service->name,
+                    client_dcb->remote != NULL ? client_dcb->remote : "");
+
+        n_connect++;
     }
 	
     return n_connect;
@@ -432,65 +378,7 @@ cdc_close(DCB *dcb)
 static int
 cdc_listen(DCB *listener, char *config)
 {
-    int one = 1;
-    int syseno = 0;
-    int rc;
-    struct sockaddr_in addr;
-
-    memcpy(&listener->func, &MyObject, sizeof(GWPROTOCOL));
-    if (!parse_bindconfig(config, 6442, &addr))
-        return 0;
-
-    if ((listener->fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-    {
-        return 0;
-    }
-
-    /* socket options */
-    syseno = setsockopt(listener->fd,
-                        SOL_SOCKET,
-                        SO_REUSEADDR,
-                        (char *)&one,
-                        sizeof(one));
-
-    if(syseno != 0){
-        char errbuf[STRERROR_BUFLEN];
-        MXS_ERROR("Failed to set socket options. Error %d: %s",
-                  errno, strerror_r(errno, errbuf, sizeof(errbuf)));
-        return 0;
-    }
-    /* set NONBLOCKING mode */
-    setnonblocking(listener->fd);
-
-    /* bind address and port */
-    if (bind(listener->fd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
-    {
-        return 0;
-    }
-
-    rc = listen(listener->fd, SOMAXCONN);
-        
-    if (rc == 0)
-    {
-        MXS_NOTICE("Listening CDC connections at %s", config);
-    }
-    else
-    {
-        int eno = errno;
-        errno = 0;
-        char errbuf[STRERROR_BUFLEN];
-        MXS_ERROR("Failed to start listening for maxscale CDC connections "
-                  "due error %d, %s",
-                  eno, strerror_r(eno, errbuf, sizeof(errbuf)));
-        return 0;
-    }
-
-        
-    if (poll_add_dcb(listener) == -1)
-    {
-        return 0;
-    }
-    return 1;
+    return (dcb_listen(listener, config, "CDC") < 0) ? 0 : 1;
 }
 
 /**
