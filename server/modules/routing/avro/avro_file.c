@@ -625,13 +625,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
                      hdr.serverid, n_sequence);
             if (flags == 0)
             {
-                pending_transaction++;
-                // TODO: Handle GTID transactions
-                if (pending_transaction > 0)
-                {
-                    MXS_ERROR("In binlog file '%s' at position %llu: Missing XID Event before GTID Event.",
-                              router->binlog_name, pos);
-                }
+                pending_transaction = 1;
             }
         }
         /**
@@ -693,14 +687,14 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
                     MXS_ERROR("In binlog file '%s' at position %llu: Missing COMMIT before BEGIN.",
                               router->binlog_name, pos);
                 }
-                pending_transaction++;
+                pending_transaction = 1;
             }
 
             /* Commit received for non transactional tables, i.e. MyISAM */
             if (strncmp(statement_sql, "COMMIT", 6) == 0)
             {
                 // TODO: Handle COMMIT
-                pending_transaction--;
+                pending_transaction = 0;
             }
             free(statement_sql);
 
@@ -710,7 +704,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             // TODO: Handle XID Event
             avro_flush_all_tables(router);
             avro_save_conversion_state(router);
-            pending_transaction--;
+            pending_transaction = 0;
         }
 
         gwbuf_free(result);
