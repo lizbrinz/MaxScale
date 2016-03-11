@@ -136,7 +136,7 @@ cdc_read_event(DCB* dcb)
     int rc;
     CDC_session *client_data;
     // AUTH_OBJ *auth;
-    int auth_rc;
+    int auth_val;
 
     client_data = (CDC_session *)dcb->data;
 
@@ -149,11 +149,14 @@ cdc_read_event(DCB* dcb)
                 switch (protocol->state)
                 {
                     case CDC_STATE_WAIT_FOR_AUTH:
-                        auth_rc = do_auth(dcb, head, (void *)client_data);
-
+                        if (CDC_STATE_AUTH_OK == (
+                            auth_val = dcb->authfunc.extract(dcb, head)))
+                        {
+                            auth_val = dcb->authfunc.authenticate(dcb, &head);
+                        }
                         while ((head = gwbuf_consume(head, GWBUF_LENGTH(head))) != NULL);
 
-                        if (auth_rc == 1)
+                        if (auth_val == CDC_STATE_AUTH_OK)
                         {
                              protocol->state = CDC_STATE_HANDLE_REQUEST;
 
@@ -163,8 +166,10 @@ cdc_read_event(DCB* dcb)
                                       dcb->service->name, dcb->remote != NULL ? dcb->remote : "",
                                       client_data->user);
 
-                             // start a real session
+                             /* start a real session */
                              session = session_alloc(dcb->service, dcb);
+
+                             /* TODO add session fail check */
 
                              break;
                         }
@@ -443,37 +448,6 @@ cdc_protocol_done(DCB* dcb)
    p->state = CDC_STATE_CLOSE;
 
    spinlock_release(&p->lock);
-}
-
-/**
- * Do authentication against client data
- *
- * @param dcb    Current client DCB
- * @param buffer Authenticatio data from client
- * @param data   Structure that holds auht data
- * @return       1 for successful authentication, 0 otherwise
- *
- */
-static int
-do_auth(DCB *dcb, GWBUF *buffer, void *data)
-{
-    CDC_session *client_data = (CDC_session *)data;
-    int ret;
-
-    if (strncmp(GWBUF_DATA(buffer), "massi", GWBUF_LENGTH(buffer)) == 0)
-    {
-        strcpy(client_data->user, "massi");
-        ret = 1;
-    }
-    else
-    {
-        strcpy(client_data->user, "foobar");
-        ret = 0;
-    }
-
-    dcb->user = strdup(client_data->user);
-
-    return ret;
 }
 
 /**

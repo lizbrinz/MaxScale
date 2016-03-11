@@ -52,10 +52,11 @@
 #define CDC_ALLOC                        1
 #define CDC_STATE_WAIT_FOR_AUTH          2
 #define CDC_STATE_AUTH_OK                3
-#define CDC_STATE_AUTH_ERR               4
-#define CDC_STATE_REGISTRATION           5
-#define CDC_STATE_HANDLE_REQUEST         6
-#define CDC_STATE_CLOSE                  7
+#define CDC_STATE_AUTH_FAILED            4
+#define CDC_STATE_AUTH_ERR               5
+#define CDC_STATE_REGISTRATION           6
+#define CDC_STATE_HANDLE_REQUEST         7
+#define CDC_STATE_CLOSE                  8
 
 #define CDC_UUID_LEN 32
 #define CDC_TYPE_LEN 16
@@ -66,6 +67,7 @@ typedef struct cdc_session {
     char user[CDC_USER_MAXLEN + 1];            /*< username for authentication */
     char uuid[CDC_UUID_LEN + 1];               /*< client uuid in registration */
     unsigned int flags[2];                     /*< Received flags              */
+    uint8_t  auth_data[SHA_DIGEST_LENGTH];     /*< Password Hash               */
     int state;                                 /*< CDC protocol state          */
 } CDC_session;
 
