@@ -21,6 +21,9 @@
 #define AVRO_STATS_FREQ          60
 #define AVRO_NSTATS_MINUTES      30
 
+static char *avro_client_states[] = { "Unregistered", "Registered",
+        "Processing", "Errored" };
+
 /** How a binlog file is closed */
 typedef enum avro_binlog_end
 {

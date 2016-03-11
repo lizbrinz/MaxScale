@@ -684,6 +684,8 @@ diagnostics(ROUTER *router, DCB *dcb)
                router_inst->binlog_name);
     dcb_printf(dcb, "\tCurrent binlog position:	  		%lu\n",
                router_inst->current_pos);
+    dcb_printf(dcb, "\tCurrent GTID:	  		%s\n",
+               router_inst->current_gtid);
     dcb_printf(dcb, "\tNumber of AVRO clients:	   		%u\n",
                router_inst->stats.n_clients);
 
@@ -799,7 +801,7 @@ diagnostics(ROUTER *router, DCB *dcb)
                        session->dcb);
             dcb_printf(dcb,
                        "\t\tState:    					%s\n",
-                       blrs_states[session->state]);
+                       avro_client_states[session->state]);
             dcb_printf(dcb,
                        "\t\tAvro file:					%s\n",
                        session->avrofile);

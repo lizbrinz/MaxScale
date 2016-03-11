@@ -258,20 +258,18 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
         char *file_ptr = command_ptr + strlen("REQUEST-DATA");
         int data_len = GWBUF_LENGTH(queue) - strlen("REQUEST-DATA");
 
-        fprintf(stderr, "AVRO file name len is %i, packet size %lu\n", data_len, GWBUF_LENGTH(queue));
-
         if (data_len > 1)
         {
             char *cmd_sep;
 
             strncpy(avro_file, file_ptr + 1, data_len - 1);
             avro_file[data_len - 1] = '\0';
-            fprintf(stderr, "AVRO file name len is %lu\n", strlen(avro_file));
             cmd_sep = strchr(avro_file, ' ');
             if (cmd_sep)
                *cmd_sep = '\0'; 
 
-            fprintf(stderr, "AVRO file name len is %lu\n", strlen(avro_file));
+            strcpy(client->avrofile, avro_file);
+
             avro_client_avro_to_json_ouput(router, client, avro_file);
         }
         else
