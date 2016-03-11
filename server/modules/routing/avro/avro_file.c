@@ -273,6 +273,114 @@ void* avro_table_free(AVRO_TABLE *table)
 }
 
 /**
+ * @brief Rotate to next file if it exists
+ *
+ * @param router Avro router instance
+ * @param pos Current position, used for logging
+ * @param stop_seen If a stop event was seen when processing current file
+ * @return AVRO_OK if the next file exists, AVRO_LAST_FILE if this is the last
+ * available file.
+ */
+static avro_binlog_end_t rotate_to_next_file_if_exists(AVRO_INSTANCE* router, uint64_t pos, bool stop_seen)
+{
+    char next_binlog[BINLOG_FNAMELEN + 1];
+    avro_binlog_end_t rval = AVRO_LAST_FILE;
+
+    if (binlog_next_file_exists(router->binlogdir, router->binlog_name))
+    {
+        snprintf(next_binlog, sizeof(next_binlog),
+                 BINLOG_NAMEFMT, router->fileroot,
+                 blr_file_get_next_binlogname(router->binlog_name));
+
+        if (stop_seen)
+        {
+            MXS_NOTICE("End of binlog file [%s] at %lu with a "
+                       "close event. Rotating to next binlog file [%s].",
+                       router->binlog_name, pos, next_binlog);
+        }
+        else
+        {
+            MXS_NOTICE("End of binlog file [%s] at %lu with no "
+                       "close or rotate event. Rotating to next binlog file [%s].",
+                       router->binlog_name, pos, next_binlog);
+        }
+
+        rval = AVRO_OK;
+        strncpy(router->binlog_name, next_binlog, sizeof(router->binlog_name));
+        router->binlog_position = 4;
+        router->current_pos = 4;
+    }
+    else if (stop_seen)
+    {
+        MXS_NOTICE("End of binlog file [%s] at %lu with a close event. "
+                   "Next binlog file does not exist, pausing file conversion.",
+                   router->binlog_name, pos);
+    }
+
+    return rval;
+}
+
+/**
+ * @brief Rotate to a specific file
+ *
+ * This rotates the current binlog file being processed to a specific file.
+ * Currently this is only used to rotate to files that rotate events point to.
+ * @param router Avro router instance
+ * @param pos Current position, only used for logging
+ * @param next_binlog The next file to rotate to
+ */
+static void rotate_to_file(AVRO_INSTANCE* router, uint64_t pos, const char *next_binlog)
+{
+    /** Binlog file is processed, prepare for next one */
+    MXS_NOTICE("End of binlog file [%s] at %lu. Rotating to file [%s].",
+               router->binlog_name, pos, next_binlog);
+    strncpy(router->binlog_name, next_binlog, sizeof(router->binlog_name));
+    router->binlog_position = 4;
+    router->current_pos = 4;
+}
+
+static GWBUF* read_event_data(AVRO_INSTANCE *router, REP_HEADER* hdr, uint64_t pos)
+{
+    GWBUF* result;
+    /* Allocate a GWBUF for the event */
+    if ((result = gwbuf_alloc(hdr->event_size - BINLOG_EVENT_HDR_LEN)))
+    {
+        uint8_t *data = GWBUF_DATA(result);
+        int n = pread(router->binlog_fd, data, hdr->event_size - BINLOG_EVENT_HDR_LEN,
+                      pos + BINLOG_EVENT_HDR_LEN);
+
+        if (n != hdr->event_size - BINLOG_EVENT_HDR_LEN)
+        {
+            if (n == -1)
+            {
+                char err_msg[STRERROR_BUFLEN];
+                MXS_ERROR("Error reading the event at %lu in %s. "
+                          "%s, expected %d bytes.",
+                          pos, router->binlog_name,
+                          strerror_r(errno, err_msg, sizeof(err_msg)),
+                          hdr->event_size - BINLOG_EVENT_HDR_LEN);
+            }
+            else
+            {
+                MXS_ERROR("Short read when reading the event at %lu in %s. "
+                          "Expected %d bytes got %d bytes.",
+                          pos, router->binlog_name,
+                          hdr->event_size - BINLOG_EVENT_HDR_LEN, n);
+            }
+            gwbuf_free(result);
+            result = NULL;
+        }
+    }
+    else
+    {
+        MXS_ERROR("Failed to allocate memory for binlog entry, "
+                  "size %d at %lu.",
+                  hdr->event_size, pos);
+    }
+    return result;
+}
+
+/**
  * Read all replication events from a binlog file.
  *
  * Routine detects errors and pending transactions
@@ -285,10 +393,7 @@ void* avro_table_free(AVRO_TABLE *table)
  */
 avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
 {
-    unsigned long filelen = 0;
-    struct stat statb;
     uint8_t hdbuf[BINLOG_EVENT_HDR_LEN];
-    uint8_t *data;
     GWBUF *result;
     unsigned long long pos = router->current_pos;
     unsigned long long last_known_commit = 4;
@@ -299,32 +404,21 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
     int db_name_len;
     uint8_t *ptr;
     int var_block_len;
-    int statement_len;
-    int found_chksum = 0;
-    unsigned long transaction_events = 0;
+    bool found_chksum = false;
+
+    /** For statistics */
+    unsigned long events = 0;
     unsigned long total_bytes = 0;
     unsigned long event_bytes = 0;
     unsigned long max_bytes = 0;
-    BINLOG_EVENT_DESC first_event;
-    BINLOG_EVENT_DESC last_event;
-    BINLOG_EVENT_DESC fde_event;
-    int fde_seen = 0;
+
     bool rotate_seen = false;
     bool stop_seen = false;
-
-    memset(&first_event, '\0', sizeof(first_event));
-    memset(&last_event, '\0', sizeof(last_event));
-    memset(&fde_event, '\0', sizeof(fde_event));
 
     if (router->binlog_fd == -1)
     {
         MXS_ERROR("Current binlog file %s is not open", router->binlog_name);
         return AVRO_BINLOG_ERROR;
-    }
-
-    if (fstat(router->binlog_fd, &statb) == 0)
-    {
-        filelen = statb.st_size;
     }
 
     while (1)
@@ -358,15 +452,10 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
                     break;
             }
 
-            /**
-             * Check for errors and force last_known_commit position
-             * and current pos
-             */
+            router->current_pos = pos;
 
             if (pending_transaction > 0)
             {
-                router->binlog_position = last_known_commit;
-                router->current_pos = pos;
                 MXS_ERROR("Binlog '%s' ends at position %lu and has an incomplete transaction at %lu. "
                           "Stopping file conversion.", router->binlog_name,
                           router->current_pos, router->binlog_position);
@@ -377,69 +466,18 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
                 /* any error */
                 if (n != 0)
                 {
-                    router->binlog_position = last_known_commit;
-                    router->current_pos = pos;
                     return AVRO_BINLOG_ERROR;
                 }
                 else
                 {
-                    router->binlog_position = pos;
-                    router->current_pos = pos;
                     if (rotate_seen)
                     {
-                        /** Binlog file is processed, prepare for next one */
-                        MXS_NOTICE("End of binlog file [%s] at %llu. Rotating to file [%s].",
-                                   router->binlog_name, pos, next_binlog);
-                        strncpy(router->binlog_name, next_binlog, sizeof(router->binlog_name));
-                        router->binlog_position = 4;
-                        router->current_pos = 4;
-                        return AVRO_ROTATED;
-                    }
-                    else if (stop_seen)
-                    {
-                        if (binlog_next_file_exists(router->binlogdir, router->binlog_name))
-                        {
-                            snprintf(next_binlog, sizeof(next_binlog),
-                                     BINLOG_NAMEFMT, router->fileroot,
-                                     blr_file_get_next_binlogname(router->binlog_name));
-
-                            MXS_NOTICE("End of binlog file [%s] at %llu with a "
-                                       "close event. Rotating to next binlog file [%s].",
-                                       router->binlog_name, pos, next_binlog);
-
-                            strncpy(router->binlog_name, next_binlog, sizeof(router->binlog_name));
-                            router->binlog_position = 4;
-                            router->current_pos = 4;
-                            return AVRO_CLOSED;
-                        }
-                        else
-                        {
-                            MXS_NOTICE("End of binlog file [%s] at %llu with a "
-                                       "close event. Next binlog file does not"
-                                       " exist, pausing file conversion.",
-                                       router->binlog_name, pos);
-                            return AVRO_CLOSED_LAST;
-                        }
+                        rotate_to_file(router, pos, next_binlog);
+                        return AVRO_OK;
                     }
                     else
                     {
-                        if (binlog_next_file_exists(router->binlogdir, router->binlog_name))
-                        {
-                            snprintf(next_binlog, sizeof(next_binlog),
-                                     BINLOG_NAMEFMT, router->fileroot,
-                                     blr_file_get_next_binlogname(router->binlog_name));
-
-                            MXS_NOTICE("End of binlog file [%s] at %llu with no "
-                                       "close or rotate event. Rotating to next binlog file [%s].",
-                                       router->binlog_name, pos, next_binlog);
-
-                            strncpy(router->binlog_name, next_binlog, sizeof(router->binlog_name));
-                            router->binlog_position = 4;
-                            router->current_pos = 4;
-                            return AVRO_CLOSED;
-                        }
-
-                        return AVRO_NO_ROTATE_CLOSE;
+                        return rotate_to_next_file_if_exists(router, pos, stop_seen);
                     }
                 }
             }
@@ -476,55 +514,10 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             return AVRO_BINLOG_ERROR;
         }
 
-        /* Allocate a GWBUF for the event */
-        if ((result = gwbuf_alloc(hdr.event_size)) == NULL)
+        if ((result = read_event_data(router, &hdr, pos)) == NULL)
         {
-            MXS_ERROR("Failed to allocate memory for binlog entry, "
-                      "size %d at %llu.",
-                      hdr.event_size, pos);
-
             router->binlog_position = last_known_commit;
             router->current_pos = pos;
-            return AVRO_BINLOG_ERROR;
-        }
-
-        /* Copy the header in the buffer */
-        data = GWBUF_DATA(result);
-        memcpy(data, hdbuf, BINLOG_EVENT_HDR_LEN); // Copy the header in
-
-        /* Read event data */
-        if ((n = pread(router->binlog_fd, &data[BINLOG_EVENT_HDR_LEN], hdr.event_size - BINLOG_EVENT_HDR_LEN,
-                       pos + BINLOG_EVENT_HDR_LEN)) != hdr.event_size - BINLOG_EVENT_HDR_LEN)
-        {
-            if (n == -1)
-            {
-                char err_msg[BLRM_STRERROR_R_MSG_SIZE + 1] = "";
-                strerror_r(errno, err_msg, BLRM_STRERROR_R_MSG_SIZE);
-                MXS_ERROR("Error reading the event at %llu in %s. "
-                          "%s, expected %d bytes.",
-                          pos, router->binlog_name,
-                          err_msg, hdr.event_size - BINLOG_EVENT_HDR_LEN);
-            }
-            else
-            {
-                MXS_ERROR("Short read when reading the event at %llu in %s. "
-                          "Expected %d bytes got %d bytes.",
-                          pos, router->binlog_name,
-                          hdr.event_size - BINLOG_EVENT_HDR_LEN, n);
-
-                if (filelen > 0 && filelen - pos < hdr.event_size)
-                {
-                    MXS_ERROR("Binlog event is close to the end of the binlog file %s, "
-                              " size is %lu.",
-                              router->binlog_name, filelen);
-                }
-            }
-
-            gwbuf_free(result);
-
-            router->binlog_position = last_known_commit;
-            router->current_pos = pos;
-
             MXS_WARNING("an error has been found. "
                         "Setting safe pos to %lu, current pos %lu",
                         router->binlog_position, router->current_pos);
@@ -537,22 +530,8 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             last_known_commit = pos;
         }
 
-        /* get first event timestamp, after FDE */
-        if (fde_seen)
-        {
-            first_event.event_time = (unsigned long) hdr.timestamp;
-            first_event.event_type = hdr.event_type;
-            first_event.event_pos = pos;
-            fde_seen = 0;
-        }
-
         /* get event content */
-        ptr = data + BINLOG_EVENT_HDR_LEN;
-
-        /* set last event time, pos and type */
-        last_event.event_time = (unsigned long) hdr.timestamp;
-        last_event.event_type = hdr.event_type;
-        last_event.event_pos = pos;
+        ptr = GWBUF_DATA(result);
 
         /* check for FORMAT DESCRIPTION EVENT */
         if (hdr.event_type == FORMAT_DESCRIPTION_EVENT)
@@ -562,21 +541,6 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             int n_events;
             int check_alg;
             uint8_t *checksum;
-            char buf_t[40];
-            struct tm tm_t;
-
-            fde_seen = 1;
-            fde_event.event_time = (unsigned long) hdr.timestamp;
-            fde_event.event_type = hdr.event_type;
-            fde_event.event_pos = pos;
-
-            localtime_r(&fde_event.event_time, &tm_t);
-            asctime_r(&tm_t, buf_t);
-
-            if (buf_t[strlen(buf_t) - 1] == '\n')
-            {
-                buf_t[strlen(buf_t) - 1] = '\0';
-            }
 
             /** Extract the event header lengths */
             event_header_length = ptr[2 + 50 + 4];
@@ -584,23 +548,19 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             memcpy(router->event_type_hdr_lens, ptr + 2 + 50 + 5, event_header_ntypes);
             router->event_types = event_header_ntypes;
 
-            if (event_header_ntypes == 168)
+            switch (event_header_ntypes)
             {
-                /* mariadb 10 LOG_EVENT_TYPES*/
-                event_header_ntypes -= 163;
-            }
-            else
-            {
-                if (event_header_ntypes == 165)
-                {
-                    /* mariadb 5 LOG_EVENT_TYPES*/
+                case 168: /* mariadb 10 LOG_EVENT_TYPES*/
+                    event_header_ntypes -= 163;
+                    break;
+
+                case 165: /* mariadb 5 LOG_EVENT_TYPES*/
                     event_header_ntypes -= 160;
-                }
-                else
-                {
-                    /* mysql 5.6 LOG_EVENT_TYPES = 35 */
+                    break;
+
+                default: /* mysql 5.6 LOG_EVENT_TYPES = 35 */
                     event_header_ntypes -= 35;
-                }
+                    break;
             }
 
             n_events = hdr.event_size - event_header_length - (2 + 50 + 4 + 1);
@@ -608,15 +568,9 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             if (event_header_ntypes < n_events)
             {
                 checksum = ptr + hdr.event_size - event_header_length - event_header_ntypes;
-                check_alg = checksum[0];
-
-                if (check_alg == 1)
+                if (checksum[0] == 1)
                 {
-                    found_chksum = 1;
-                }
-                else
-                {
-                    found_chksum = 0;
+                    found_chksum = true;
                 }
             }
         }
@@ -630,37 +584,32 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
         }
         else if (hdr.event_type == TABLE_MAP_EVENT)
         {
-            // TODO: Replace blr instance with avro instance
             handle_table_map_event(router, &hdr, ptr);
         }
         else if ((hdr.event_type >= WRITE_ROWS_EVENTv0 && hdr.event_type <= DELETE_ROWS_EVENTv1) ||
                  (hdr.event_type >= WRITE_ROWS_EVENTv2 && hdr.event_type <= DELETE_ROWS_EVENTv2))
         {
-            // TODO: Replace blr instance with avro instance
             handle_row_event(router, &hdr, ptr);
         }
         /* Decode ROTATE EVENT */
         else if (hdr.event_type == ROTATE_EVENT)
         {
-            int len, slen;
-            uint64_t new_pos;
+            int len = hdr.event_size - BINLOG_EVENT_HDR_LEN - 8;
 
-            len = hdr.event_size - BINLOG_EVENT_HDR_LEN;
-            new_pos = extract_field(ptr + 4, 32);
-            new_pos <<= 32;
-            new_pos |= extract_field(ptr, 32);
-            slen = len - (8 + 4); // Allow for position and CRC
-            if (found_chksum == 0)
+            if (!found_chksum)
             {
-                slen += 4;
+                len -= 4;
             }
-            if (slen > BINLOG_FNAMELEN)
-            {
-                slen = BINLOG_FNAMELEN;
-            }
-            memcpy(next_binlog, ptr + 8, slen);
-            next_binlog[slen] = 0;
 
+            if (len > BINLOG_FNAMELEN)
+            {
+                MXS_WARNING("Truncated binlog name from %d to %d characters.",
+                            len, BINLOG_FNAMELEN);
+                len = BINLOG_FNAMELEN;
+            }
+
+            memcpy(next_binlog, ptr + 8, len);
+            next_binlog[len] = 0;
             rotate_seen = true;
 
         }
@@ -697,7 +646,8 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             db_name_len = ptr[4 + 4];
             var_block_len = ptr[4 + 4 + 1 + 2];
             const int post_header_len = 4 + 4 + 1 + 2 + 2;
-            statement_len = hdr.event_size - BINLOG_EVENT_HDR_LEN - (post_header_len + var_block_len + 1 + db_name_len);
+            int statement_len = hdr.event_size - BINLOG_EVENT_HDR_LEN - (post_header_len + var_block_len + 1 +
+                                                                         db_name_len);
             statement_sql = malloc(statement_len + 1);
             strncpy(statement_sql, (char *) ptr + 4 + 4 + 1 + 2 + 2 + var_block_len + 1 + db_name_len, statement_len);
             statement_sql[statement_len] = '\0';
@@ -815,7 +765,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             break;
         }
 
-        transaction_events++;
+        events++;
     }
 
     return AVRO_BINLOG_ERROR;

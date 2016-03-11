@@ -62,7 +62,7 @@
 #define BINLOG_NAMEFMT      "%s.%06d"
 #endif
 
-#define AVRO_TASK_DELAY_MAX 300
+#define AVRO_TASK_DELAY_MAX 15
 
 static char *version_str = "V1.0.0";
 static const char* avro_task_name = "binlog_to_avro";
@@ -1178,38 +1178,33 @@ void converter_func(void* data)
 {
     AVRO_INSTANCE* router = (AVRO_INSTANCE*) data;
     bool ok = true;
-
-    while (ok)
+    avro_binlog_end_t binlog_end = AVRO_OK;
+    while (ok && binlog_end == AVRO_OK)
     {
         uint64_t start_pos = router->current_pos;
         if (avro_open_binlog(router->binlogdir, router->binlog_name, &router->binlog_fd))
         {
-            avro_binlog_end_t binlog_end = avro_read_all_events(router);
-            if (binlog_end == AVRO_BINLOG_ERROR || binlog_end == AVRO_OPEN_TRANSACTION)
-            {
-                ok = false;
-            }
+            binlog_end = avro_read_all_events(router);
 
-            /** We processed some data, reset the conversion task delay */
             if (router->current_pos != start_pos)
             {
+                /** We processed some data, reset the conversion task delay */
                 router->task_delay = 1;
             }
 
             avro_close_binlog(router->binlog_fd);
         }
-
-        if (!binlog_next_file_exists(router->binlogdir, router->binlog_name))
+        else
         {
-            break;
+            binlog_end = AVRO_BINLOG_ERROR;
         }
     }
 
     avro_flush_all_tables(router);
 
-    if (ok)
+    if (binlog_end == AVRO_LAST_FILE)
     {
-        router->task_delay = MIN(router->task_delay + 5, AVRO_TASK_DELAY_MAX);
+        router->task_delay = MIN(router->task_delay + 1, AVRO_TASK_DELAY_MAX);
         hktask_oneshot(avro_task_name, converter_func, router, router->task_delay);
         MXS_NOTICE("Stopped processing file %s at position %lu. Waiting until"
                    " more data is written before continuing. Next check in %d seconds.",
