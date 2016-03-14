@@ -510,7 +510,7 @@ int gw_read_client_event(DCB* dcb)
                   GW_MYSQL_CAPABILITIES_COMPRESS & gw_mysql_get_byte4(
                   &protocol->client_capabilities);
                 */
-                auth_val = dcb->authfunc.authenticate(dcb, &read_buffer);
+                auth_val = dcb->authfunc.authenticate(dcb);
             }
 
             /**

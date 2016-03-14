@@ -48,7 +48,7 @@ static char *version_str = "V1.0.0";
 
 static int max_admin_auth_set_protocol_data(DCB *dcb, GWBUF *buf);
 static bool max_admin_auth_is_client_ssl_capable(DCB *dcb);
-static int max_admin_auth_authenticate(DCB *dcb, GWBUF **buffer);
+static int max_admin_auth_authenticate(DCB *dcb);
 static void max_admin_auth_free_client_data(DCB *dcb);
 
 /*
@@ -103,7 +103,7 @@ GWAUTHENTICATOR* GetModuleObject()
  * @return Authentication status - always 0 to denote success
  */
 static int
-max_admin_auth_authenticate(DCB *dcb, GWBUF **buffer)
+max_admin_auth_authenticate(DCB *dcb)
 {
     return (dcb->data != NULL && ((ADMIN_session *)dcb->data)->validated) ? 0 : 1;
 }

@@ -164,7 +164,7 @@ static int maxscaled_read_event(DCB* dcb)
 
                 case MAXSCALED_STATE_PASSWD:
                     if (0 == dcb->authfunc.extract(dcb, head) &&
-                        0 == dcb->authfunc.authenticate(dcb, &head))
+                        0 == dcb->authfunc.authenticate(dcb))
                     {
                         dcb_printf(dcb, "OK----");
                         maxscaled->state = MAXSCALED_STATE_DATA;
