@@ -143,10 +143,12 @@ extern int avro_client_handle_request(AVRO_INSTANCE *, AVRO_CLIENT *, GWBUF *);
 extern void avro_client_rotate(AVRO_INSTANCE *router, AVRO_CLIENT *client, uint8_t *ptr);
 extern bool avro_open_binlog(const char *binlogdir, const char *file, int *fd);
 extern void avro_close_binlog(int fd);
-avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router);
-AVRO_TABLE* avro_table_alloc(const char* filepath, const char* json_schema);
-void* avro_table_free(AVRO_TABLE *table);
-void avro_flush_all_tables(AVRO_INSTANCE *router);
+extern avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router);
+extern AVRO_TABLE* avro_table_alloc(const char* filepath, const char* json_schema);
+extern void* avro_table_free(AVRO_TABLE *table);
+extern void avro_flush_all_tables(AVRO_INSTANCE *router);
+extern char* json_new_schema_from_table(TABLE_MAP *map, TABLE_CREATE *create);
+extern void save_avro_schema(const char *path, const char* schema, TABLE_MAP *map);
 
 #define AVRO_CLIENT_UNREGISTERED 0x0000
 #define AVRO_CLIENT_REGISTERED   0x0001
