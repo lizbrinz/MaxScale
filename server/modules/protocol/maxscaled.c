@@ -130,7 +130,7 @@ GWPROTOCOL* GetModuleObject()
  */
 static char *mxsd_default_auth()
 {
-    return "NullAuth";
+    return "MaxAdminAuth";
 }
 
 /**
@@ -143,9 +143,7 @@ static int maxscaled_read_event(DCB* dcb)
 {
     int n;
     GWBUF *head = NULL;
-    SESSION *session = dcb->session;
     MAXSCALED *maxscaled = (MAXSCALED *)dcb->protocol;
-    char *password;
 
     if ((n = dcb_read(dcb, &head, 0)) != -1)
     {
@@ -156,14 +154,17 @@ static int maxscaled_read_event(DCB* dcb)
                 switch (maxscaled->state)
                 {
                 case MAXSCALED_STATE_LOGIN:
-                    maxscaled->username = strndup(GWBUF_DATA(head), GWBUF_LENGTH(head));
-                    maxscaled->state = MAXSCALED_STATE_PASSWD;
-                    dcb_printf(dcb, "PASSWORD");
-                    while ((head = gwbuf_consume(head, GWBUF_LENGTH(head))) != NULL);
+                    if (0 == dcb->authfunc.extract(dcb, head))
+                    {
+                        maxscaled->state = MAXSCALED_STATE_PASSWD;
+                        dcb_printf(dcb, "PASSWORD");
+                    }
+                    gwbuf_free(head);
                     break;
+
                 case MAXSCALED_STATE_PASSWD:
-                    password = strndup(GWBUF_DATA(head), GWBUF_LENGTH(head));
-                    if (admin_verify(maxscaled->username, password))
+                    if (0 == dcb->authfunc.extract(dcb, head) &&
+                        0 == dcb->authfunc.authenticate(dcb, &head))
                     {
                         dcb_printf(dcb, "OK----");
                         maxscaled->state = MAXSCALED_STATE_DATA;
@@ -173,14 +174,11 @@ static int maxscaled_read_event(DCB* dcb)
                         dcb_printf(dcb, "FAILED");
                         maxscaled->state = MAXSCALED_STATE_LOGIN;
                     }
-                    while ((head = gwbuf_consume(head, GWBUF_LENGTH(head))) != NULL)
-                    {
-                        ;
-                    }
-                    free(password);
+                    gwbuf_free(head);
                     break;
+
                 case MAXSCALED_STATE_DATA:
-                    SESSION_ROUTE_QUERY(session, head);
+                    SESSION_ROUTE_QUERY(dcb->session, head);
                     dcb_printf(dcb, "OK");
                     break;
                 }
@@ -188,10 +186,7 @@ static int maxscaled_read_event(DCB* dcb)
             else
             {
                 // Force the free of the buffer header
-                while ((head = gwbuf_consume(head, GWBUF_LENGTH(head))) != NULL)
-                {
-                    ;
-                }
+                gwbuf_free(head);
             }
         }
     }
