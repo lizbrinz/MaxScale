@@ -20,7 +20,6 @@
 #include <rbr.h>
 #include <mysql_utils.h>
 #include <jansson.h>
-#include <avro_schema.h>
 #include <dbusers.h>
 #include <mxs_avro.h>
 #include <strings.h>

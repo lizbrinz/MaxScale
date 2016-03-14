@@ -64,7 +64,6 @@
 #include <log_manager.h>
 #include <mysql_utils.h>
 #include <mysql_binlog.h>
-#include <avro_schema.h>
 #include <avro.h>
 #include <rbr.h>
 

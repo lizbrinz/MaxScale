@@ -176,6 +176,7 @@ include_directories(server/modules/include)
 include_directories(${CMAKE_BINARY_DIR}/server/include)
 include_directories(${CURL_INCLUDE_DIRS})
 
+add_subdirectory(avro)
 add_subdirectory(plugins)
 add_subdirectory(query_classifier)
 add_subdirectory(server)
