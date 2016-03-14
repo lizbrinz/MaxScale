@@ -23,36 +23,23 @@
 #include <stdbool.h>
 #include <errno.h>
 
+const char *testfile = "test.db";
+const char *testschema = "";
+
+void write_file()
+{
+    FILE *file = fopen(testfile, "wb");
+}
+
 int main(int argc, char** argv)
 {
-
-    if (argc < 2)
-    {
-        printf("Usage: %s FILE\n", argv[0]);
-        return 1;
-    }
-
-    bool verbose = false;
-    avro_file_t *file = avro_open_file(argv[1]);
+    avro_file_t *file = avro_open_file(testfile);
 
     if(!file)
     {
         return 1;
     }
-
-    printf("File sync marker: ");
-    for (int i = 0; i < sizeof(file->sync); i++)
-    {
-            printf("%hhx", file->sync[i]);
-    }
-    printf("\n");
-
-    uint64_t total_objects = 0, total_bytes = 0, data_blocks = 0;
-
-    /** After the header come the data blocks. Each data block has the number of objects
-     * in this block and the size of the compressed block encoded as Avro long values
-     * followed by the actual data. Each data block ends with an identical, 16 byte sync marker
-     * which can be checked to make sure the file is not corrupted. */
+ 
     do
     {
         uint64_t objects, data_size;
@@ -60,26 +47,14 @@ int main(int argc, char** argv)
         {
             /** Skip data block */
             fseek(file->file, data_size, SEEK_CUR);
-            data_blocks++;
-            total_objects += objects;
-            total_bytes += data_size;
-
-            if (verbose)
-            {
-                printf("Block %lu: %lu objects, %lu bytes\n", data_blocks, objects, data_size);
-            }
         }
         else
         {
-            avro_close_file(file);
             return 1;
         }
     }
     while (avro_verify_block(file));
-    
-
-    printf("%s: %lu blocks, %lu objects and %lu bytes\n", argv[1], data_blocks, total_objects, total_bytes);
-
+ 
     avro_close_file(file);
     return 0;
 }

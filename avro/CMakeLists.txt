@@ -1,5 +1,6 @@
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
-add_library(maxavro maxavro.c)
+add_library(maxavro maxavro.c maxavro_datablock.c)
 add_executable(maxavrocheck maxavro_file_check.c)
 target_link_libraries(maxavrocheck maxavro)
 install(TARGETS maxavrocheck DESTINATION ${MAXSCALE_BINDIR})
+add_subdirectory(test)
