@@ -69,7 +69,7 @@ MODULE_INFO info =
  * @endverbatim
  */
 
-static char *version_str = "V1.0.1";
+static char *version_str = "V1.1.1";
 
 static int telnetd_read_event(DCB* dcb);
 static int telnetd_write_event(DCB *dcb);
@@ -79,6 +79,7 @@ static int telnetd_hangup(DCB *dcb);
 static int telnetd_accept(DCB *dcb);
 static int telnetd_close(DCB *dcb);
 static int telnetd_listen(DCB *dcb, char *config);
+static char *telnetd_default_auth();
 
 /**
  * The "module object" for the telnetd protocol module.
@@ -95,7 +96,8 @@ static GWPROTOCOL MyObject =
     telnetd_close,                  /**< Close                         */
     telnetd_listen,                 /**< Create a listener             */
     NULL,                           /**< Authentication                */
-    NULL                            /**< Session                       */
+    NULL,                           /**< Session                       */
+    telnetd_default_auth            /**< Default authenticator         */
 };
 
 static void telnetd_command(DCB *, unsigned char *cmd);
@@ -131,6 +133,16 @@ void ModuleInit()
 GWPROTOCOL* GetModuleObject()
 {
     return &MyObject;
+}
+
+/**
+ * The default authenticator name for this protocol
+ *
+ * @return name of authenticator
+ */
+static char *telnetd_default_auth()
+{
+    return "NullAuth";
 }
 
 /**
@@ -274,11 +286,10 @@ static int telnetd_accept(DCB *listener)
     int n_connect = 0;
     DCB *client_dcb;
 
-    while ((client_dcb = dcb_accept(listener)) != NULL)
+    while ((client_dcb = dcb_accept(listener, &MyObject)) != NULL)
     {
         TELNETD* telnetd_protocol = NULL;
 
-        memcpy(&client_dcb->func, &MyObject, sizeof(GWPROTOCOL));
         if ((telnetd_protocol = (TELNETD *)calloc(1, sizeof(TELNETD))) == NULL)
         {
             dcb_close(client_dcb);

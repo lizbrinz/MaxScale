@@ -71,7 +71,7 @@ MODULE_INFO info =
     "The client to MaxScale MySQL protocol implementation"
 };
 
-static char *version_str = "V1.0.0";
+static char *version_str = "V1.1.0";
 
 static int gw_MySQLAccept(DCB *listener);
 static int gw_MySQLListener(DCB *listener, char *config_bind);
@@ -81,6 +81,7 @@ static int gw_MySQLWrite_client(DCB *dcb, GWBUF *queue);
 static int gw_error_client_event(DCB *dcb);
 static int gw_client_close(DCB *dcb);
 static int gw_client_hangup_event(DCB *dcb);
+static char *gw_default_auth();
 static int mysql_send_ok(DCB *dcb, int packet_number, int in_affected_rows, const char* mysql_message);
 static int MySQLSendHandshake(DCB* dcb);
 static int route_by_statement(SESSION *, GWBUF **);
@@ -102,7 +103,8 @@ static GWPROTOCOL MyObject =
     gw_client_close,                        /* Close                         */
     gw_MySQLListener,                       /* Listen                        */
     NULL,                                   /* Authentication                */
-    NULL                                    /* Session                       */
+    NULL,                                   /* Session                       */
+    gw_default_auth                         /**< Default authenticator         */
 };
 
 /**
@@ -136,6 +138,15 @@ GWPROTOCOL* GetModuleObject()
     return &MyObject;
 }
 
+/**
+ * The default authenticator name for this protocol
+ *
+ * @return name of authenticator
+ */
+static char *gw_default_auth()
+{
+    return "MySQLAuth";
+}
 /**
  * mysql_send_ok
  *
@@ -989,7 +1000,7 @@ int gw_MySQLAccept(DCB *listener)
 
     CHK_DCB(listener);
 
-    while ((client_dcb = dcb_accept(listener)) != NULL)
+    while ((client_dcb = dcb_accept(listener, &MyObject)) != NULL)
     {
         CHK_DCB(client_dcb);
         protocol = mysql_protocol_init(client_dcb, client_dcb->fd);
@@ -1005,8 +1016,6 @@ int gw_MySQLAccept(DCB *listener)
         }
         CHK_PROTOCOL(protocol);
         client_dcb->protocol = protocol;
-        // assign function pointers to "func" field
-        memcpy(&client_dcb->func, &MyObject, sizeof(GWPROTOCOL));
         //send handshake to the client_dcb
         MySQLSendHandshake(client_dcb);
 

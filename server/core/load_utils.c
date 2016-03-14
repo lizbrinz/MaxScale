@@ -121,6 +121,8 @@ load_module(const char *module, const char *type)
     MODULES *mod;
     MODULE_INFO *mod_info = NULL;
 
+    if (NULL == module || NULL == type) return NULL;
+
     if ((mod = find_module(module)) == NULL)
     {
         /*<
@@ -282,15 +284,18 @@ find_module(const char *module)
 {
     MODULES *mod = registered;
 
-    while (mod)
+    if (module)
     {
-        if (strcmp(mod->module, module) == 0)
+        while (mod)
         {
-            return mod;
-        }
-        else
-        {
-            mod = mod->next;
+            if (strcmp(mod->module, module) == 0)
+            {
+                return mod;
+            }
+            else
+            {
+                mod = mod->next;
+            }
         }
     }
     return NULL;

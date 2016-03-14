@@ -60,7 +60,7 @@ MODULE_INFO info =
  * @endverbatim
  */
 
-static char *version_str = "V1.0.0";
+static char *version_str = "V1.1.0";
 
 static int maxscaled_read_event(DCB* dcb);
 static int maxscaled_write_event(DCB *dcb);
@@ -70,6 +70,7 @@ static int maxscaled_hangup(DCB *dcb);
 static int maxscaled_accept(DCB *dcb);
 static int maxscaled_close(DCB *dcb);
 static int maxscaled_listen(DCB *dcb, char *config);
+static char *mxsd_default_auth();
 
 /**
  * The "module object" for the maxscaled protocol module.
@@ -86,7 +87,8 @@ static GWPROTOCOL MyObject =
     maxscaled_close,                /**< Close                         */
     maxscaled_listen,               /**< Create a listener             */
     NULL,                           /**< Authentication                */
-    NULL                            /**< Session                       */
+    NULL,                           /**< Session                       */
+    mxsd_default_auth               /**< Default authenticator         */
 };
 
 /**
@@ -119,6 +121,16 @@ void ModuleInit()
 GWPROTOCOL* GetModuleObject()
 {
     return &MyObject;
+}
+
+/**
+ * The default authenticator name for this protocol
+ *
+ * @return name of authenticator
+ */
+static char *mxsd_default_auth()
+{
+    return "NullAuth";
 }
 
 /**
@@ -246,11 +258,10 @@ static int maxscaled_accept(DCB *listener)
     int n_connect = 0;
     DCB *client_dcb;
 
-    while ((client_dcb = dcb_accept(listener)) != NULL)
+    while ((client_dcb = dcb_accept(listener, &MyObject)) != NULL)
     {
         MAXSCALED *maxscaled_protocol = NULL;
 
-        memcpy(&client_dcb->func, &MyObject, sizeof(GWPROTOCOL));
         if ((maxscaled_protocol = (MAXSCALED *)calloc(1, sizeof(MAXSCALED))) == NULL)
         {
             dcb_close(client_dcb);
