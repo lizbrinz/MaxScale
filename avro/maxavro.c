@@ -82,6 +82,21 @@ uint64_t avro_encode_integer(uint8_t* buffer, uint64_t val)
     return nbytes;
 }
 
+uint64_t avro_length_integer(uint64_t val)
+{
+    uint64_t encval = encode_long(val);
+    uint8_t nbytes = 0;
+
+    while (more_bytes(encval))
+    {
+        nbytes++;
+        encval >>= 7;
+    }
+
+    return nbytes;
+}
+
+
 bool avro_write_integer(FILE *file, uint64_t val)
 {
     uint8_t buffer[MAX_INTEGER_SIZE];
@@ -121,6 +136,13 @@ uint64_t avro_encode_string(uint8_t* dest, const char* str)
     return slen + ilen;
 }
 
+uint64_t avro_length_string(const char* str)
+{
+    uint64_t slen = strlen(str);
+    uint64_t ilen = avro_length_integer(slen);
+    return slen + ilen;
+}
+
 bool avro_write_string(FILE *file, const char* str)
 {
     uint64_t len = strlen(str);
@@ -135,6 +157,11 @@ bool avro_read_float(avro_file_t* file, float *dest)
 uint64_t avro_encode_float(uint8_t* dest, float val)
 {
     memcpy(dest, &val, sizeof(val));
+    return sizeof(val);
+}
+
+uint64_t avro_length_float(float val)
+{
     return sizeof(val);
 }
 
@@ -153,13 +180,17 @@ uint64_t avro_encode_double(uint8_t* dest, double val)
     memcpy(dest, &val, sizeof(val));
     return sizeof(val);
 }
+uint64_t avro_length_double(double val)
+{
+    return sizeof(val);
+}
 
 bool avro_write_double(FILE *file, double val)
 {
     return fwrite(&val, 1, sizeof(val), file) == sizeof(val);
 }
 
-avro_map_value_t* avro_read_map(avro_file_t *file)
+avro_map_value_t* avro_map_read(avro_file_t *file)
 {
 
     avro_map_value_t* rval = NULL;
@@ -182,14 +213,14 @@ avro_map_value_t* avro_read_map(avro_file_t *file)
             }
             else
             {
-                avro_free_map(val);
-                avro_free_map(rval);
+                avro_map_free(val);
+                avro_map_free(rval);
                 return NULL;
             }
         }
         if (!avro_read_integer(file, &blocks))
         {
-            avro_free_map(rval);
+            avro_map_free(rval);
             return NULL;
         }
     }
@@ -197,7 +228,7 @@ avro_map_value_t* avro_read_map(avro_file_t *file)
     return rval;
 }
 
-void avro_free_map(avro_map_value_t *value)
+void avro_map_free(avro_map_value_t *value)
 {
     while (value)
     {
@@ -207,6 +238,42 @@ void avro_free_map(avro_map_value_t *value)
         free(tmp->value);
         free(tmp);
     }
+}
+
+avro_map_value_t* avro_map_start()
+{
+    return (avro_map_value_t*)calloc(1, sizeof(avro_map_value_t));
+}
+
+uint64_t avro_map_encode(uint8_t *dest, avro_map_value_t* map)
+{
+    uint64_t len = avro_encode_integer(dest, map->blocks);
+
+    while (map)
+    {
+        len += avro_encode_string(dest, map->key);
+        len += avro_encode_string(dest, map->value);
+        map = map->next;
+    }
+
+    /** Maps end with an empty block i.e. a zero integer value */
+    len += avro_encode_integer(dest, 0);
+    return len;
+}
+
+uint64_t avro_map_length(avro_map_value_t* map)
+{
+    uint64_t len = avro_length_integer(map->blocks);
+
+    while (map)
+    {
+        len += avro_length_string(map->key);
+        len += avro_length_string(map->value);
+        map = map->next;
+    }
+
+    len += avro_length_integer(0);
+    return len;
 }
 
 bool avro_read_sync(FILE *file, char* sync)
@@ -242,7 +309,7 @@ bool avro_read_datablock_start(avro_file_t* file, uint64_t *records, uint64_t *b
 static char* read_schema(avro_file_t* file)
 {
     char *rval = NULL;
-    avro_map_value_t* head = avro_read_map(file);
+    avro_map_value_t* head = avro_map_read(file);
     avro_map_value_t* map = head;
 
     while (map)
@@ -255,7 +322,7 @@ static char* read_schema(avro_file_t* file)
         map = map->next;
     }
 
-    avro_free_map(head);
+    avro_map_free(head);
     return rval;
 }
 

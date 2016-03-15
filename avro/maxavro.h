@@ -52,6 +52,8 @@ typedef struct avro_map_value
     char* key;
     char* value;
     struct avro_map_value *next;
+    struct avro_map_value *tail;
+    int blocks; /*< Number of added key-value blocks */
 } avro_map_value_t;
 
 /** Data block generation */
@@ -83,8 +85,8 @@ bool avro_read_float(avro_file_t *file, float *dest);
 bool avro_read_double(avro_file_t *file, double *dest);
 
 /** Reading complex types */
-avro_map_value_t* avro_read_map(avro_file_t *file);
-void avro_free_map(avro_map_value_t *value);
+avro_map_value_t* avro_map_read(avro_file_t *file);
+void avro_map_free(avro_map_value_t *value);
 
 /** Utility functions */
 bool avro_read_datablock_start(avro_file_t *file, uint64_t *records, uint64_t *bytes);
