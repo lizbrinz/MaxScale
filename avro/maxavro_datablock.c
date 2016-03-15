@@ -80,7 +80,7 @@ static bool reallocate_datablock(avro_datablock_t *block)
     {
         return false;
     }
-    
+
     block->buffer = tmp;
     block->buffersize *= 2;
     return true;

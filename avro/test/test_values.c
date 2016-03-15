@@ -33,7 +33,7 @@ void write_file()
 
 int main(int argc, char** argv)
 {
-    avro_file_t *file = avro_open_file(testfile);
+    avro_file_t *file = avro_file_open(testfile);
 
     if(!file)
     {
@@ -55,6 +55,6 @@ int main(int argc, char** argv)
     }
     while (avro_verify_block(file));
  
-    avro_close_file(file);
+    avro_file_close(file);
     return 0;
 }

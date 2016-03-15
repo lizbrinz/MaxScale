@@ -46,14 +46,17 @@ bool avro_read_integer(avro_file_t* file, uint64_t *dest)
     uint64_t rval = 0;
     uint8_t nread = 0;
     uint8_t byte;
-
+    size_t rdsz;
     do
     {
-        if (fread(&byte, sizeof(byte), 1, file->file) != sizeof(byte))
+        if ((rdsz = fread(&byte, sizeof(byte), 1, file->file)) != sizeof(byte))
         {
             // TODO: Integrate log_manager
-            //char err[STRERROR_BUFSIZE];
-            //MXS_ERROR("Failed to read value: %d %s", errno, strerror_r(errno, err, sizeof(err)));
+            if (rdsz != 0)
+            {
+                char err[200];
+                printf("Failed to read value: %d %s\n", errno, strerror_r(errno, err, sizeof(err)));
+            }
             return false;
         }
         rval |= (byte & 0x7f) << (nread++ * 7);
@@ -256,7 +259,7 @@ static char* read_schema(avro_file_t* file)
     return rval;
 }
 
-avro_file_t* avro_open_file(const char* filename)
+avro_file_t* avro_file_open(const char* filename)
 {
     FILE *file = fopen(filename, "rb");
     if (!file)
@@ -304,7 +307,12 @@ avro_file_t* avro_open_file(const char* filename)
     return avrofile;
 }
 
-void avro_close_file(avro_file_t *file)
+bool avro_file_is_eof(avro_file_t *file)
+{
+    return feof(file->file);
+}
+
+void avro_file_close(avro_file_t *file)
 {
     fclose(file->file);
     free(file->schema);

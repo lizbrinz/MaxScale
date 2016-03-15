@@ -90,7 +90,8 @@ void avro_free_map(avro_map_value_t *value);
 bool avro_read_datablock_start(avro_file_t *file, uint64_t *records, uint64_t *bytes);
 bool avro_read_sync(FILE *file, char* sync);
 bool avro_verify_block(avro_file_t *file);
-avro_file_t* avro_open_file(const char* filename);
-void avro_close_file(avro_file_t *file);
+avro_file_t* avro_file_open(const char* filename);
+void avro_file_close(avro_file_t *file);
+bool avro_file_is_eof(avro_file_t *file);
 
 #endif
