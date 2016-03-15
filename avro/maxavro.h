@@ -62,6 +62,15 @@ typedef struct
 {
     FILE* file;
     maxavro_schema_t* schema;
+    uint64_t blocks_read;
+    uint64_t records_read;
+    uint64_t records_in_block;
+    uint64_t records_read_from_block;
+    uint64_t bytes_read_from_block;
+    uint64_t block_size;
+
+    /** The position @c ftell returns before the first record is read  */
+    long block_start_pos;
     char sync[SYNC_MARKER_SIZE];
 } maxavro_file_t;
 
@@ -126,13 +135,17 @@ bool avro_write_double(FILE *file, double val);
 /** Reading primitives */
 bool avro_read_integer(maxavro_file_t *file, uint64_t *val);
 char* avro_read_string(maxavro_file_t *file);
+bool avro_skip_string(maxavro_file_t* file);
 bool avro_read_float(maxavro_file_t *file, float *dest);
 bool avro_read_double(maxavro_file_t *file, double *dest);
 
 /** Reading complex types */
 maxavro_map_t* avro_map_read(maxavro_file_t *file);
 void avro_map_free(maxavro_map_t *value);
+
+/** Reading and seeking records */
 json_t* avro_record_read(maxavro_file_t *file);
+bool avro_record_seek(maxavro_file_t *file, uint64_t offset);
 
 /** Utility functions */
 bool avro_read_datablock_start(maxavro_file_t *file, uint64_t *records, uint64_t *bytes);

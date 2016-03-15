@@ -62,7 +62,6 @@ bool avro_read_integer(maxavro_file_t* file, uint64_t *dest)
     }
     while (more_bytes(byte) && nread < MAX_INTEGER_SIZE);
 
-    //uint64_t tmp = avro_decode(rval);
     *dest = avro_decode(rval);
     return true;
 }
@@ -126,6 +125,18 @@ char* avro_read_string(maxavro_file_t* file)
         }
     }
     return key;
+}
+
+bool avro_skip_string(maxavro_file_t* file)
+{
+    uint64_t len;
+
+    if (avro_read_integer(file, &len))
+    {
+        return fseek(file->file, len, SEEK_CUR) != -1;
+    }
+
+    return false;
 }
 
 uint64_t avro_encode_string(uint8_t* dest, const char* str)
@@ -284,8 +295,18 @@ bool avro_read_sync(FILE *file, char* sync)
 bool avro_verify_block(maxavro_file_t *file)
 {
     char sync[SYNC_MARKER_SIZE];
-    if (fread(sync, 1, SYNC_MARKER_SIZE, file->file) != SYNC_MARKER_SIZE)
+    int rc = fread(sync, 1, SYNC_MARKER_SIZE, file->file);
+    if (rc != SYNC_MARKER_SIZE)
     {
+        if (rc == -1)
+        {
+            printf("Failed to read file: %d %s\n", errno, strerror(errno));
+        }
+        else
+        {
+            printf("Short read when reading sync marker. Read %d bytes instead of %d\n",
+                   rc, SYNC_MARKER_SIZE);
+        }
         return false;
     }
 
@@ -294,94 +315,23 @@ bool avro_verify_block(maxavro_file_t *file)
         printf("Sync marker mismatch.\n");
         return false;
     }
+
+    /** Increment block count */
+    file->blocks_read++;
     return true;
 }
 
 bool avro_read_datablock_start(maxavro_file_t* file, uint64_t *records, uint64_t *bytes)
 {
-    return avro_read_integer(file, records) && avro_read_integer(file, bytes);
-}
+    bool rval = avro_read_integer(file, records) && avro_read_integer(file, bytes);
 
-/** The header metadata is encoded as an Avro map with @c bytes encoded
- * key-value pairs. A @c bytes value is written as a length encoded string
- * where the length of the value is stored as a @c long followed by the
- * actual data. */
-static char* read_schema(maxavro_file_t* file)
-{
-    char *rval = NULL;
-    maxavro_map_t* head = avro_map_read(file);
-    maxavro_map_t* map = head;
-
-    while (map)
+    if (rval)
     {
-        if (strcmp(map->key, "avro.schema") == 0)
-        {
-            rval = strdup(map->value);
-            break;
-        }
-        map = map->next;
+        file->block_size = *bytes;
+        file->records_in_block = *records;
+        file->records_read_from_block = 0;
+        file->block_start_pos = ftell(file->file);
     }
 
-    avro_map_free(head);
     return rval;
-}
-
-maxavro_file_t* avro_file_open(const char* filename)
-{
-    FILE *file = fopen(filename, "rb");
-    if (!file)
-    {
-        printf("Failed to open file '%s': %d, %s", filename, errno, strerror(errno));
-        return NULL;
-    }
-
-    char magic[AVRO_MAGIC_SIZE];
-
-    if (fread(magic, 1, AVRO_MAGIC_SIZE, file) != AVRO_MAGIC_SIZE)
-    {
-        fclose(file);
-        printf("Failed to read file magic marker from '%s'\n", filename);
-        return NULL;
-    }
-
-    if (memcmp(magic, avro_magic, AVRO_MAGIC_SIZE) != 0)
-    {
-        fclose(file);
-        printf("Error: Avro magic marker bytes are not correct.\n");
-        return NULL;
-    }
-
-    maxavro_file_t* avrofile = malloc(sizeof(maxavro_file_t));
-
-    if (avrofile)
-    {
-        avrofile->file = file;
-        avrofile->schema = maxavro_schema_from_json(read_schema(avrofile));
-        if (!avrofile->schema || !avro_read_sync(file, avrofile->sync))
-        {
-            free(avrofile->schema);
-            free(avrofile);
-            avrofile = NULL;
-        }
-    }
-    else
-    {
-        fclose(file);
-        free(avrofile);
-        avrofile = NULL;
-    }
-
-    return avrofile;
-}
-
-bool avro_file_is_eof(maxavro_file_t *file)
-{
-    return feof(file->file);
-}
-
-void avro_file_close(maxavro_file_t *file)
-{
-    fclose(file->file);
-    free(file->schema);
-    free(file);
 }

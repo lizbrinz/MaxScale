@@ -24,8 +24,11 @@
 #include <errno.h>
 #include <limits.h>
 #include <getopt.h>
+#include <skygw_debug.h>
 
 static int verbose = 0;
+static uint64_t seekto = 0;
+static int64_t num_rows = -1;
 static bool dump = false;
 
 int check_file(const char* filename)
@@ -38,7 +41,7 @@ int check_file(const char* filename)
     }
 
     int rval = 0;
-    
+
     if (!dump)
     {
         printf("File sync marker: ");
@@ -48,7 +51,7 @@ int check_file(const char* filename)
         }
         printf("\n");
     }
-    
+
     uint64_t total_records = 0, total_bytes = 0, data_blocks = 0;
 
     /** After the header come the data blocks. Each data block has the number of records
@@ -60,23 +63,27 @@ int check_file(const char* filename)
         uint64_t records, data_size;
         if (avro_read_datablock_start(file, &records, &data_size))
         {
+            if (seekto > 0)
+            {
+                avro_record_seek(file, seekto);
+                seekto = 0;
+            }
             total_records += records;
             total_bytes += data_size;
             data_blocks++;
 
             if (verbose > 1 || dump)
             {
-                for (int i = 0; i < records; i++)
+                json_t* row;
+                while (num_rows != 0 && (row = avro_record_read(file)))
                 {
-                    json_t* row = avro_record_read(file);
-
-                    if(row)
-                    {
-                        char *json = json_dumps(row, JSON_PRESERVE_ORDER);
-                        printf("%s\n", json);
-                        free(json);
-                    }
+                    char *json = json_dumps(row, JSON_PRESERVE_ORDER);
+                    printf("%s\n", json);
                     json_decref(row);
+                    if (num_rows > 0)
+                    {
+                        num_rows--;
+                    }
                 }
             }
             else
@@ -95,9 +102,9 @@ int check_file(const char* filename)
             break;
         }
     }
-    while (avro_verify_block(file));
+    while (num_rows != 0 && avro_verify_block(file));
 
-    if (!avro_file_is_eof(file))
+    if (!avro_file_is_eof(file) && num_rows != 0)
     {
         printf("Failed to read next data block after data block %lu. "
                "Read %lu records and %lu bytes before failure.\n",
@@ -114,10 +121,13 @@ int check_file(const char* filename)
     return rval;
 }
 
-static struct option long_options[] = {
-  {"verbose",	no_argument, 0,	'v'},
-  {"dump",	no_argument, 0,	'd'},
-  {0, 0, 0, 0}
+static struct option long_options[] =
+{
+    {"verbose",   no_argument, 0, 'v'},
+    {"dump",  no_argument, 0, 'd'},
+    {"from",  no_argument, 0, 'f'},
+    {"count", no_argument, 0, 'c'},
+    {0, 0, 0, 0}
 };
 
 int main(int argc, char** argv)
@@ -128,27 +138,34 @@ int main(int argc, char** argv)
         printf("Usage: %s FILE\n", argv[0]);
         return 1;
     }
-    
+
     char c;
     int option_index;
 
-	while ((c = getopt_long(argc, argv, "vd", long_options, &option_index)) >= 0)
-	{
-		switch (c) {
-			case 'v':
-				verbose++;
-				break;
+    while ((c = getopt_long(argc, argv, "vdf:c:", long_options, &option_index)) >= 0)
+    {
+        switch (c)
+        {
+            case 'v':
+                verbose++;
+                break;
             case 'd':
                 dump = true;
                 break;
-		}      
-	}
+            case 'f':
+                seekto = strtol(optarg, NULL, 10);
+                break;
+            case 'c':
+                num_rows = strtol(optarg, NULL, 10);
+                break;
+        }
+    }
 
     int rval = 0;
     char pathbuf[PATH_MAX + 1];
-    for (int i = 1; i < argc; i++)
+    for (int i = optind; i < argc; i++)
     {
-        if (check_file(realpath(argv[optind], pathbuf)))
+        if (check_file(realpath(argv[i], pathbuf)))
         {
             rval = 1;
         }

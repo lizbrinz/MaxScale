@@ -20,7 +20,8 @@
 #include <jansson.h>
 #include <string.h>
 
-static const maxavro_schema_field_t types[AVRO_TYPE_MAX] = {
+static const maxavro_schema_field_t types[AVRO_TYPE_MAX] =
+{
     {"int", AVRO_TYPE_INT},
     {"long", AVRO_TYPE_LONG},
     {"float", AVRO_TYPE_FLOAT},
@@ -66,7 +67,7 @@ static enum maxavro_value_type unpack_to_type(json_t *object)
         json_unpack(object, "{s:o}", "type", &tmp);
         object = tmp;
     }
-    
+
     if (json_is_array(object))
     {
         json_t *tmp = json_array_get(object, 0);
