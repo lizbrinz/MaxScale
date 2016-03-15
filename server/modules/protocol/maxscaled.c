@@ -154,16 +154,15 @@ static int maxscaled_read_event(DCB* dcb)
                 switch (maxscaled->state)
                 {
                 case MAXSCALED_STATE_LOGIN:
-                    if (0 == dcb->authfunc.extract(dcb, head))
-                    {
-                        maxscaled->state = MAXSCALED_STATE_PASSWD;
-                        dcb_printf(dcb, "PASSWORD");
-                    }
-                    gwbuf_free(head);
+                    gwbuf_free(dcb->dcb_readqueue);
+                    dcb->dcb_readqueue = head;
+                    maxscaled->state = MAXSCALED_STATE_PASSWD;
+                    dcb_printf(dcb, "PASSWORD");
                     break;
 
                 case MAXSCALED_STATE_PASSWD:
-                    if (0 == dcb->authfunc.extract(dcb, head) &&
+                    dcb->dcb_readqueue = gwbuf_append(dcb->dcb_readqueue, head);
+                    if (0 == dcb->authfunc.extract(dcb, dcb->dcb_readqueue) &&
                         0 == dcb->authfunc.authenticate(dcb))
                     {
                         dcb_printf(dcb, "OK----");
@@ -174,7 +173,8 @@ static int maxscaled_read_event(DCB* dcb)
                         dcb_printf(dcb, "FAILED");
                         maxscaled->state = MAXSCALED_STATE_LOGIN;
                     }
-                    gwbuf_free(head);
+                    gwbuf_free(dcb->dcb_readqueue);
+                    dcb->dcb_readqueue = NULL;
                     break;
 
                 case MAXSCALED_STATE_DATA:

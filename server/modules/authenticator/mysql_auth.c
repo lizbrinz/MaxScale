@@ -116,7 +116,6 @@ GWAUTHENTICATOR* GetModuleObject()
  * data if the first attempt fails.
  *
  * @param dcb Request handler DCB connected to the client
- * @param buffer Pointer to pointer to buffer containing data from client
  * @return Authentication status
  * @note Authentication status codes are defined in mysql_client_server_protocol.h
  */

@@ -94,12 +94,11 @@ GWAUTHENTICATOR* GetModuleObject()
 }
 
 /**
- * @brief Null authentication of a user.
+ * @brief Authentication of a user/password combination.
  *
- * Always returns success
+ * The validation is already done, the result is returned.
  *
  * @param dcb Request handler DCB connected to the client
- * @param buffer Pointer to pointer to buffer containing data from client
  * @return Authentication status - always 0 to denote success
  */
 static int
@@ -111,10 +110,11 @@ max_admin_auth_authenticate(DCB *dcb)
 /**
  * @brief Transfer data from the authentication request to the DCB.
  *
- * Does not actually transfer any data
+ * Expects a chain of two buffers as the second parameters, with the
+ * username in the first buffer and the password in the second buffer.
  *
  * @param dcb Request handler DCB connected to the client
- * @param buffer Pointer to pointer to buffer containing data from client
+ * @param buffer Pointer to pointer to buffers containing data from client
  * @return Authentication status - 0 for success, 1 for failure
  */
 static int
@@ -122,49 +122,43 @@ max_admin_auth_set_protocol_data(DCB *dcb, GWBUF *buf)
 {
     ADMIN_session *session_data;
 
-    if (NULL == dcb->data)
+    max_admin_auth_free_client_data(dcb);
+
+    /* Looking for username */
+    if (GWBUF_LENGTH(buf) <= ADMIN_USER_MAXLEN && GWBUF_LENGTH(buf) > 0)
     {
-        /* Looking for username */
-        if (GWBUF_LENGTH(buf) <= ADMIN_USER_MAXLEN && GWBUF_LENGTH(buf) > 0)
+        if ((session_data = (ADMIN_session *)calloc(1, sizeof(ADMIN_session))) != NULL)
         {
-            if ((session_data = (ADMIN_session *)calloc(1, sizeof(ADMIN_session))) != NULL)
-            {
+            char *password;
 #if defined(SS_DEBUG)
-                session_data->adminses_chk_top = CHK_NUM_ADMINSES;
-                session_data->adminses_chk_tail = CHK_NUM_ADMINSES;
+            session_data->adminses_chk_top = CHK_NUM_ADMINSES;
+            session_data->adminses_chk_tail = CHK_NUM_ADMINSES;
 #endif
-                memcpy(&session_data->user, GWBUF_DATA(buf), GWBUF_LENGTH(buf));
-                session_data->validated = false;
-                dcb->data = (void *)session_data;
+            memcpy(&session_data->user, GWBUF_DATA(buf), GWBUF_LENGTH(buf));
+            session_data->validated = false;
+            dcb->data = (void *)session_data;
+
+            buf = buf->next;
+            if (buf)
+            {
+                password = strndup(GWBUF_DATA(buf), GWBUF_LENGTH(buf));
+                if (password && admin_verify(session_data->user, password))
+                {
+                    session_data->validated = true;
+                }
+                free(password);
                 return 0;
             }
         }
-        return 1;
     }
-    else
-    {
-        /* Looking for password */
-        if (GWBUF_LENGTH(buf) < ADMIN_PASSWORD_MAXLEN)
-        {
-            char *password;
-            session_data = (ADMIN_session *)dcb->data;
-            password = strndup(GWBUF_DATA(buf), GWBUF_LENGTH(buf));
-            if (password && admin_verify(session_data->user, password))
-            {
-                session_data->validated = true;
-            }
-            free(password);
-            return 0;
-        }
-        return 1;
-    }
+    return 1;
 }
 
 /**
  * @brief Determine whether the client is SSL capable
  *
- * Always say that client is SSL capable.  The max_admin authenticator cannot be
- * used in a context where the client is not SSL capable.
+ * Always say that client is not SSL capable. Support for SSL is not yet
+ * available.
  *
  * @param dcb Request handler DCB connected to the client
  * @return Boolean indicating whether client is SSL capable - false
@@ -178,9 +172,13 @@ max_admin_auth_is_client_ssl_capable(DCB *dcb)
 /**
  * @brief Free the client data pointed to by the passed DCB.
  *
- * The max_admin authenticator does not allocate any data, so nothing to do.
+ * The max_admin authenticator uses a simple structure that can be freed with
+ * a single call to free().
  *
  * @param dcb Request handler DCB connected to the client
  */
 static void
-max_admin_auth_free_client_data(DCB *dcb) {}
+max_admin_auth_free_client_data(DCB *dcb)
+{
+    free(dcb->data);
+}
