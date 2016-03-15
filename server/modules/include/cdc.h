@@ -82,3 +82,5 @@ typedef struct  cdc_protocol {
     char type[CDC_TYPE_LEN + 1];    /*< Request Type		    */
 } CDC_protocol;
 
+/* routines */
+extern int gw_hex2bin(uint8_t *out, const char *in, unsigned int len);

@@ -248,14 +248,25 @@ cdc_auth_set_client_data(
     int client_auth_packet_size)
 {
     char username[CDC_USER_MAXLEN + 1] = "";
+    char auth_data[SHA_DIGEST_LENGTH] = "";
+    unsigned int flags[2];
+    int decoded_size = client_auth_packet_size / 2;
+    int user_len = (client_auth_packet_size <= CDC_USER_MAXLEN) ? client_auth_packet_size : CDC_USER_MAXLEN;
+    uint8_t *decoded_buffer = malloc(decoded_size);
+    uint8_t *tmp_ptr;
 
-    strncpy(username, (char *)client_auth_packet, (client_auth_packet_size <= CDC_USER_MAXLEN) ? client_auth_packet_size : CDC_USER_MAXLEN);
-
-    if (1)
-        strcpy(client_data->user, username);
+    /* decode input data */
+    gw_hex2bin(decoded_buffer, (const char *)client_auth_packet, decoded_size);
+    if ((tmp_ptr = (uint8_t *)strchr((char *)decoded_buffer, ':')) != NULL)
+    {
+        *tmp_ptr++ = '\0';
+    }
     else
-        return CDC_STATE_AUTH_FAILED;
-   
+        return CDC_STATE_AUTH_ERR;
+
+    strncpy(client_data->user, (char *)decoded_buffer, user_len);
+    client_data->user[user_len] = '\0';
+
     return CDC_STATE_AUTH_OK;
 }
 
