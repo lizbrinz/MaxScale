@@ -3034,9 +3034,7 @@ dcb_accept(DCB *listener, GWPROTOCOL *protocol_funcs)
                           INET_ADDRSTRLEN);
                 }
             }
-
             memcpy(&client_dcb->func, protocol_funcs, sizeof(GWPROTOCOL));
-
             if (listener->listener->authenticator)
             {
                 authenticator_name = listener->listener->authenticator;
@@ -3045,7 +3043,6 @@ dcb_accept(DCB *listener, GWPROTOCOL *protocol_funcs)
             {
                 authenticator_name = client_dcb->func.auth_default();
             }
-
             if ((authfuncs = (GWAUTHENTICATOR *)load_module(authenticator_name,
                 MODULE_AUTHENTICATOR)) == NULL)
             {
@@ -3059,7 +3056,7 @@ dcb_accept(DCB *listener, GWPROTOCOL *protocol_funcs)
                     return NULL;
                 }
             }
-
+            memcpy(&(client_dcb->authfunc), authfuncs, sizeof(GWAUTHENTICATOR));
         }
     }
     return client_dcb;
