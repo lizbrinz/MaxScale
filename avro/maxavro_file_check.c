@@ -23,11 +23,14 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <limits.h>
+#include <getopt.h>
+
+static int verbose = 0;
+static bool dump = false;
 
 int check_file(const char* filename)
 {
-    bool verbose = false;
-    avro_file_t *file = avro_file_open(filename);
+    maxavro_file_t *file = avro_file_open(filename);
 
     if (!file)
     {
@@ -35,13 +38,17 @@ int check_file(const char* filename)
     }
 
     int rval = 0;
-    printf("File sync marker: ");
-    for (int i = 0; i < sizeof(file->sync); i++)
+    
+    if (!dump)
     {
-        printf("%hhx", file->sync[i]);
+        printf("File sync marker: ");
+        for (int i = 0; i < sizeof(file->sync); i++)
+        {
+            printf("%hhx", file->sync[i]);
+        }
+        printf("\n");
     }
-    printf("\n");
-
+    
     uint64_t total_records = 0, total_bytes = 0, data_blocks = 0;
 
     /** After the header come the data blocks. Each data block has the number of records
@@ -53,13 +60,32 @@ int check_file(const char* filename)
         uint64_t records, data_size;
         if (avro_read_datablock_start(file, &records, &data_size))
         {
-            /** Skip data block */
-            fseek(file->file, data_size, SEEK_CUR);
-            data_blocks++;
             total_records += records;
             total_bytes += data_size;
+            data_blocks++;
 
-            if (verbose)
+            if (verbose > 1 || dump)
+            {
+                for (int i = 0; i < records; i++)
+                {
+                    json_t* row = avro_record_read(file);
+
+                    if(row)
+                    {
+                        char *json = json_dumps(row, JSON_PRESERVE_ORDER);
+                        printf("%s\n", json);
+                        free(json);
+                    }
+                    json_decref(row);
+                }
+            }
+            else
+            {
+                /** Skip the data */
+                fseek(file->file, data_size, SEEK_CUR);
+            }
+
+            if (verbose && !dump)
             {
                 printf("Block %lu: %lu records, %lu bytes\n", data_blocks, records, data_size);
             }
@@ -78,7 +104,7 @@ int check_file(const char* filename)
                data_blocks, total_records, total_bytes);
         rval = 1;
     }
-    else
+    else if (!dump)
     {
         printf("%s: %lu blocks, %lu records and %lu bytes\n", filename, data_blocks, total_records, total_bytes);
     }
@@ -88,6 +114,12 @@ int check_file(const char* filename)
     return rval;
 }
 
+static struct option long_options[] = {
+  {"verbose",	no_argument, 0,	'v'},
+  {"dump",	no_argument, 0,	'd'},
+  {0, 0, 0, 0}
+};
+
 int main(int argc, char** argv)
 {
 
@@ -96,12 +128,27 @@ int main(int argc, char** argv)
         printf("Usage: %s FILE\n", argv[0]);
         return 1;
     }
+    
+    char c;
+    int option_index;
+
+	while ((c = getopt_long(argc, argv, "vd", long_options, &option_index)) >= 0)
+	{
+		switch (c) {
+			case 'v':
+				verbose++;
+				break;
+            case 'd':
+                dump = true;
+                break;
+		}      
+	}
 
     int rval = 0;
     char pathbuf[PATH_MAX + 1];
     for (int i = 1; i < argc; i++)
     {
-        if (check_file(realpath(argv[i], pathbuf)))
+        if (check_file(realpath(argv[optind], pathbuf)))
         {
             rval = 1;
         }

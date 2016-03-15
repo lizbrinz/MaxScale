@@ -56,7 +56,7 @@ static int test_close(DCB *dcb){ return 1;}
 static int test_listen(DCB *dcb, char *config){ return 1;}
 static int test_auth(DCB* dcb, struct server *srv, struct session *ses, GWBUF *buf){ return 1;}
 static int test_session(DCB *dcb, void* data){ return 1;}
-static char *test_default_auth(){return "NullAuth";}
+static char *test_default_auth(){return "NullAuth";};
 /**
  * The "module object" for the httpd protocol module.
  */

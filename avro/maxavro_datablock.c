@@ -21,9 +21,9 @@
 #include <unistd.h>
 #include <sys/types.h>
 
-avro_datablock_t* avro_datablock_allocate(avro_file_t *file, size_t buffersize)
+maxavro_datablock_t* avro_datablock_allocate(maxavro_file_t *file, size_t buffersize)
 {
-    avro_datablock_t *datablock = malloc(sizeof(avro_datablock_t));
+    maxavro_datablock_t *datablock = malloc(sizeof(maxavro_datablock_t));
 
     if (datablock && (datablock->buffer = malloc(buffersize)))
     {
@@ -36,7 +36,7 @@ avro_datablock_t* avro_datablock_allocate(avro_file_t *file, size_t buffersize)
     return datablock;
 }
 
-void avro_datablock_free(avro_datablock_t* block)
+void avro_datablock_free(maxavro_datablock_t* block)
 {
     if (block)
     {
@@ -45,7 +45,7 @@ void avro_datablock_free(avro_datablock_t* block)
     }
 }
 
-bool avro_datablock_finalize(avro_datablock_t* block)
+bool avro_datablock_finalize(maxavro_datablock_t* block)
 {
     bool rval = true;
     FILE *file = block->avrofile->file;
@@ -73,7 +73,7 @@ bool avro_datablock_finalize(avro_datablock_t* block)
     return rval;
 }
 
-static bool reallocate_datablock(avro_datablock_t *block)
+static bool reallocate_datablock(maxavro_datablock_t *block)
 {
     void *tmp = realloc(block->buffer, block->buffersize * 2);
     if (tmp == NULL)
@@ -86,7 +86,7 @@ static bool reallocate_datablock(avro_datablock_t *block)
     return true;
 }
 
-bool avro_datablock_add_integer(avro_datablock_t *block, uint64_t val)
+bool avro_datablock_add_integer(maxavro_datablock_t *block, uint64_t val)
 {
     if (block->datasize + 9 >= block->buffersize && !reallocate_datablock(block))
     {
@@ -98,7 +98,7 @@ bool avro_datablock_add_integer(avro_datablock_t *block, uint64_t val)
     return true;
 }
 
-bool avro_datablock_add_string(avro_datablock_t *block, const char* str)
+bool avro_datablock_add_string(maxavro_datablock_t *block, const char* str)
 {
     if (block->datasize + 9 + strlen(str) >= block->buffersize && !reallocate_datablock(block))
     {
@@ -110,7 +110,7 @@ bool avro_datablock_add_string(avro_datablock_t *block, const char* str)
     return true;
 }
 
-bool avro_datablock_add_float(avro_datablock_t *block, float val)
+bool avro_datablock_add_float(maxavro_datablock_t *block, float val)
 {
     if (block->datasize + sizeof(val) >= block->buffersize && !reallocate_datablock(block))
     {
@@ -122,7 +122,7 @@ bool avro_datablock_add_float(avro_datablock_t *block, float val)
     return true;
 }
 
-bool avro_datablock_add_double(avro_datablock_t *block, double val)
+bool avro_datablock_add_double(maxavro_datablock_t *block, double val)
 {
     if (block->datasize + sizeof(val) >= block->buffersize && !reallocate_datablock(block))
     {
