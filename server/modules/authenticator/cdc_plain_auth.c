@@ -45,7 +45,7 @@ static char *version_str = "V1.0.0";
 
 static int  cdc_auth_set_protocol_data(DCB *dcb, GWBUF *buf);
 static bool cdc_auth_is_client_ssl_capable(DCB *dcb);
-static int  cdc_auth_authenticate(DCB *dcb, GWBUF **buffer);
+static int  cdc_auth_authenticate(DCB *dcb);
 static void cdc_auth_free_client_data(DCB *dcb);
 
 /*
@@ -127,12 +127,11 @@ static int cdc_auth_check(DCB *dcb, CDC_protocol *protocol, char *username, uint
  * @brief Authenticates a CDC user who is a client to MaxScale.
  *
  * @param dcb Request handler DCB connected to the client
- * @param buffer Pointer to pointer to buffer containing data from client
  * @return Authentication status
  * @note Authentication status codes are defined in cdc.h
  */
 static int
-cdc_auth_authenticate(DCB *dcb, GWBUF **buffer)
+cdc_auth_authenticate(DCB *dcb)
 {
     CDC_protocol *protocol = DCB_PROTOCOL(dcb, CDC_protocol);
     CDC_session *client_data = (CDC_session *)dcb->data;

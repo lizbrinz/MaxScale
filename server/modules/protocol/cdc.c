@@ -153,7 +153,7 @@ cdc_read_event(DCB* dcb)
                             auth_val = dcb->authfunc.extract(dcb, head)))
                         {
                             /* Call protocol authentication */
-                            auth_val = dcb->authfunc.authenticate(dcb, &head);
+                            auth_val = dcb->authfunc.authenticate(dcb);
                         }
 
                         /* Discard input buffer */
@@ -309,7 +309,7 @@ cdc_accept(DCB *listener)
 int n_connect = 0;
 DCB *client_dcb;
 
-    while ((client_dcb = dcb_accept(listener)) != NULL) 
+    while ((client_dcb = dcb_accept(listener, &MyObject)) != NULL) 
     {
         CDC_session *client_data = NULL;
         CDC_protocol *protocol = NULL;
@@ -324,9 +324,6 @@ DCB *client_dcb;
         }
 
         client_dcb->protocol = (CDC_protocol *)protocol;
-
-        /* copy protocol function pointers into new DCB */
-        memcpy(&client_dcb->func, &MyObject, sizeof(GWPROTOCOL));
 
         /* Dummy session */
         client_dcb->session = session_set_dummy(client_dcb);
