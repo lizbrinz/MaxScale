@@ -71,6 +71,7 @@ static int gw_backend_hangup(DCB *dcb);
 static int backend_write_delayqueue(DCB *dcb);
 static void backend_set_delayqueue(DCB *dcb, GWBUF *queue);
 static int gw_change_user(DCB *backend_dcb, SERVER *server, SESSION *in_session, GWBUF *queue);
+static char *gw_backend_default_auth();
 static GWBUF* process_response_data(DCB* dcb, GWBUF* readbuf, int nbytes_to_process);
 extern char* create_auth_failed_msg(GWBUF* readbuf, char* hostaddr, uint8_t* sha1);
 extern char* create_auth_fail_str(char *username, char *hostaddr, char *sha1, char *db, int errcode);
@@ -93,7 +94,8 @@ static GWPROTOCOL MyObject = {
                               gw_backend_close, /* Close                         */
                               NULL, /* Listen                        */
                               gw_change_user, /* Authentication                */
-                              NULL /* Session                       */
+                              NULL, /* Session                       */
+                              gw_backend_default_auth /* Default authenticator */
 };
 
 /*
@@ -125,6 +127,16 @@ void ModuleInit()
 GWPROTOCOL* GetModuleObject()
 {
     return &MyObject;
+}
+
+/**
+ * The default authenticator name for this protocol
+ *
+ * @return name of authenticator
+ */
+static char *gw_backend_default_auth()
+{
+    return "NullBackendAuth";
 }
 
 /**
@@ -347,9 +359,9 @@ static int gw_read_backend_event(DCB *dcb)
             {
                 GWBUF* errbuf;
                 bool succp;
-                /** 
-                 * protocol state won't change anymore, 
-                 * lock can be freed 
+                /**
+                 * protocol state won't change anymore,
+                 * lock can be freed
                  */
                 spinlock_release(&dcb->authlock);
                 spinlock_acquire(&dcb->delayqlock);
@@ -1249,7 +1261,7 @@ static int backend_write_delayqueue(DCB *dcb)
 
             gw_get_shared_session_auth_info(dcb, &mses);
             new_packet = gw_create_change_user_packet(&mses, dcb->protocol);
-            /** 
+            /**
              * Remove previous packet which lacks scramble
              * and append the new.
              */

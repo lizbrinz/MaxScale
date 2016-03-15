@@ -43,7 +43,7 @@ MODULE_INFO info =
     "Test protocol"
 };
 
-static char *version_str = "V1.0.0";
+static char *version_str = "V1.1.0";
 
 static int test_read(DCB* dcb){ return 1;}
 static int test_write(DCB *dcb, GWBUF* buf){ return 1;}
@@ -56,6 +56,7 @@ static int test_close(DCB *dcb){ return 1;}
 static int test_listen(DCB *dcb, char *config){ return 1;}
 static int test_auth(DCB* dcb, struct server *srv, struct session *ses, GWBUF *buf){ return 1;}
 static int test_session(DCB *dcb, void* data){ return 1;}
+static char *test_default_auth(){return "NullAuth"};
 /**
  * The "module object" for the httpd protocol module.
  */
@@ -71,7 +72,8 @@ static GWPROTOCOL MyObject =
     test_close,       /**< Close                         */
     test_listen,      /**< Create a listener             */
     test_auth,        /**< Authentication                */
-    test_session      /**< Session                       */
+    test_session,     /**< Session                       */
+    test_default_auth /**< Default authenticator         */
 };
 
 

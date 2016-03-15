@@ -60,7 +60,7 @@ MODULE_INFO info =
  * @endverbatim
  */
 
-static char *version_str = "V1.0.0";
+static char *version_str = "V1.1.0";
 
 static int maxscaled_read_event(DCB* dcb);
 static int maxscaled_write_event(DCB *dcb);
@@ -70,6 +70,7 @@ static int maxscaled_hangup(DCB *dcb);
 static int maxscaled_accept(DCB *dcb);
 static int maxscaled_close(DCB *dcb);
 static int maxscaled_listen(DCB *dcb, char *config);
+static char *mxsd_default_auth();
 
 /**
  * The "module object" for the maxscaled protocol module.
@@ -86,7 +87,8 @@ static GWPROTOCOL MyObject =
     maxscaled_close,                /**< Close                         */
     maxscaled_listen,               /**< Create a listener             */
     NULL,                           /**< Authentication                */
-    NULL                            /**< Session                       */
+    NULL,                           /**< Session                       */
+    mxsd_default_auth               /**< Default authenticator         */
 };
 
 /**
@@ -122,6 +124,16 @@ GWPROTOCOL* GetModuleObject()
 }
 
 /**
+ * The default authenticator name for this protocol
+ *
+ * @return name of authenticator
+ */
+static char *mxsd_default_auth()
+{
+    return "MaxAdminAuth";
+}
+
+/**
  * Read event for EPOLLIN on the maxscaled protocol module.
  *
  * @param dcb   The descriptor control block
@@ -131,9 +143,7 @@ static int maxscaled_read_event(DCB* dcb)
 {
     int n;
     GWBUF *head = NULL;
-    SESSION *session = dcb->session;
     MAXSCALED *maxscaled = (MAXSCALED *)dcb->protocol;
-    char *password;
 
     if ((n = dcb_read(dcb, &head, 0)) != -1)
     {
@@ -144,14 +154,17 @@ static int maxscaled_read_event(DCB* dcb)
                 switch (maxscaled->state)
                 {
                 case MAXSCALED_STATE_LOGIN:
-                    maxscaled->username = strndup(GWBUF_DATA(head), GWBUF_LENGTH(head));
-                    maxscaled->state = MAXSCALED_STATE_PASSWD;
-                    dcb_printf(dcb, "PASSWORD");
-                    while ((head = gwbuf_consume(head, GWBUF_LENGTH(head))) != NULL);
+                    if (0 == dcb->authfunc.extract(dcb, head))
+                    {
+                        maxscaled->state = MAXSCALED_STATE_PASSWD;
+                        dcb_printf(dcb, "PASSWORD");
+                    }
+                    gwbuf_free(head);
                     break;
+
                 case MAXSCALED_STATE_PASSWD:
-                    password = strndup(GWBUF_DATA(head), GWBUF_LENGTH(head));
-                    if (admin_verify(maxscaled->username, password))
+                    if (0 == dcb->authfunc.extract(dcb, head) &&
+                        0 == dcb->authfunc.authenticate(dcb))
                     {
                         dcb_printf(dcb, "OK----");
                         maxscaled->state = MAXSCALED_STATE_DATA;
@@ -161,14 +174,11 @@ static int maxscaled_read_event(DCB* dcb)
                         dcb_printf(dcb, "FAILED");
                         maxscaled->state = MAXSCALED_STATE_LOGIN;
                     }
-                    while ((head = gwbuf_consume(head, GWBUF_LENGTH(head))) != NULL)
-                    {
-                        ;
-                    }
-                    free(password);
+                    gwbuf_free(head);
                     break;
+
                 case MAXSCALED_STATE_DATA:
-                    SESSION_ROUTE_QUERY(session, head);
+                    SESSION_ROUTE_QUERY(dcb->session, head);
                     dcb_printf(dcb, "OK");
                     break;
                 }
@@ -176,10 +186,7 @@ static int maxscaled_read_event(DCB* dcb)
             else
             {
                 // Force the free of the buffer header
-                while ((head = gwbuf_consume(head, GWBUF_LENGTH(head))) != NULL)
-                {
-                    ;
-                }
+                gwbuf_free(head);
             }
         }
     }
@@ -246,11 +253,10 @@ static int maxscaled_accept(DCB *listener)
     int n_connect = 0;
     DCB *client_dcb;
 
-    while ((client_dcb = dcb_accept(listener)) != NULL)
+    while ((client_dcb = dcb_accept(listener, &MyObject)) != NULL)
     {
         MAXSCALED *maxscaled_protocol = NULL;
 
-        memcpy(&client_dcb->func, &MyObject, sizeof(GWPROTOCOL));
         if ((maxscaled_protocol = (MAXSCALED *)calloc(1, sizeof(MAXSCALED))) == NULL)
         {
             dcb_close(client_dcb);

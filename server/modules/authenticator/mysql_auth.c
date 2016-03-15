@@ -46,7 +46,7 @@ static char *version_str = "V1.0.0";
 
 static int mysql_auth_set_protocol_data(DCB *dcb, GWBUF *buf);
 static bool mysql_auth_is_client_ssl_capable(DCB *dcb);
-static int mysql_auth_authenticate(DCB *dcb, GWBUF **buffer);
+static int mysql_auth_authenticate(DCB *dcb);
 static void mysql_auth_free_client_data(DCB *dcb);
 
 /*
@@ -121,7 +121,7 @@ GWAUTHENTICATOR* GetModuleObject()
  * @note Authentication status codes are defined in mysql_client_server_protocol.h
  */
 static int
-mysql_auth_authenticate(DCB *dcb, GWBUF **buffer)
+mysql_auth_authenticate(DCB *dcb)
 {
     MySQLProtocol *protocol = DCB_PROTOCOL(dcb, MySQLProtocol);
     MYSQL_session *client_data = (MYSQL_session *)dcb->data;

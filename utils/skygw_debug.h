@@ -139,7 +139,8 @@ typedef enum skygw_chk_t
     CHK_NUM_BACKEND_REF,
     CHK_NUM_PREP_STMT,
     CHK_NUM_PINFO,
-    CHK_NUM_MYSQLSES
+    CHK_NUM_MYSQLSES,
+    CHK_NUM_ADMINSES
 } skygw_chk_t;
 
 # define STRBOOL(b) ((b) ? "true" : "false")
@@ -566,6 +567,12 @@ typedef enum skygw_chk_t
 	ss_info_dassert((s)->myses_chk_top == CHK_NUM_MYSQLSES &&	\
 	(s)->myses_chk_tail == CHK_NUM_MYSQLSES,			\
 	"MYSQL session struct has invalid check fields");		\
+}
+
+#define CHK_ADMIN_SESSION(s) {						\
+	ss_info_dassert((s)->adminses_chk_top == CHK_NUM_ADMINSES &&	\
+	(s)->adminses_chk_tail == CHK_NUM_ADMINSES,			\
+	"Admin session struct has invalid check fields");		\
 }
 
 

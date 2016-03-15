@@ -2955,7 +2955,7 @@ int dcb_connect_SSL(DCB* dcb)
  * @return DCB - The new client DCB for the new connection, or NULL if failed
  */
 DCB *
-dcb_accept(DCB *listener)
+dcb_accept(DCB *listener, GWPROTOCOL *protocol_funcs)
 {
     DCB *client_dcb = NULL;
     int c_sock;
@@ -3002,6 +3002,7 @@ dcb_accept(DCB *listener)
         }
         else
         {
+            const char *authenticator_name = "NullAuth";
             GWAUTHENTICATOR *authfuncs;
 
             client_dcb->service = listener->session->service;
@@ -3034,19 +3035,29 @@ dcb_accept(DCB *listener)
                 }
             }
 
-            /* Check whether an outhenticator module has been configured */
-            if (listener->listener->authenticator != NULL)
+            memcpy(&client_dcb->func, protocol_funcs, sizeof(GWPROTOCOL));
+
+            if (listener->listener->authenticator)
             {
-                if ((authfuncs = (GWAUTHENTICATOR *)load_module(listener->listener->authenticator,
+                authenticator_name = listener->listener->authenticator;
+            }
+            else if (client_dcb->func.auth_default != NULL)
+            {
+                authenticator_name = client_dcb->func.auth_default();
+            }
+
+            if ((authfuncs = (GWAUTHENTICATOR *)load_module(authenticator_name,
+                MODULE_AUTHENTICATOR)) == NULL)
+            {
+                if ((authfuncs = (GWAUTHENTICATOR *)load_module("NullAuth",
                     MODULE_AUTHENTICATOR)) == NULL)
                 {
                     MXS_ERROR("Failed to load authenticator module for %s, free dcb %p\n",
-                              listener->listener->authenticator,
-                              client_dcb);
+                      authenticator_name,
+                      client_dcb);
                     dcb_close(client_dcb);
                     return NULL;
                 }
-                memcpy(&(client_dcb->authfunc), authfuncs, sizeof(GWAUTHENTICATOR));
             }
 
         }

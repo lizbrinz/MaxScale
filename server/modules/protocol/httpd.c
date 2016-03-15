@@ -49,12 +49,12 @@ MODULE_INFO info =
     MODULE_API_PROTOCOL,
     MODULE_IN_DEVELOPMENT,
     GWPROTOCOL_VERSION,
-    "An experimental HTTPD implementation for use in admnistration"
+    "An experimental HTTPD implementation for use in administration"
 };
 
 #define ISspace(x) isspace((int)(x))
 #define HTTP_SERVER_STRING "MaxScale(c) v.1.0.0"
-static char *version_str = "V1.0.1";
+static char *version_str = "V1.1.1";
 
 static int httpd_read_event(DCB* dcb);
 static int httpd_write_event(DCB *dcb);
@@ -66,6 +66,7 @@ static int httpd_close(DCB *dcb);
 static int httpd_listen(DCB *dcb, char *config);
 static int httpd_get_line(int sock, char *buf, int size);
 static void httpd_send_headers(DCB *dcb, int final);
+static char *httpd_default_auth();
 
 /**
  * The "module object" for the httpd protocol module.
@@ -82,7 +83,8 @@ static GWPROTOCOL MyObject =
     httpd_close,        /**< Close                         */
     httpd_listen,       /**< Create a listener             */
     NULL,               /**< Authentication                */
-    NULL                /**< Session                       */
+    NULL,               /**< Session                       */
+    httpd_default_auth  /**< Default authenticator         */
 };
 
 /**
@@ -114,6 +116,16 @@ void ModuleInit()
 GWPROTOCOL* GetModuleObject()
 {
     return &MyObject;
+}
+
+/**
+ * The default authenticator name for this protocol
+ *
+ * @return name of authenticator
+ */
+static char *httpd_default_auth()
+{
+    return "NullAuth";
 }
 
 /**
@@ -340,11 +352,9 @@ static int httpd_accept(DCB *listener)
     int n_connect = 0;
     DCB *client_dcb;
 
-    while ((client_dcb = dcb_accept(listener)) != NULL)
+    while ((client_dcb = dcb_accept(listener, &MyObject)) != NULL)
     {
         HTTPD_session *client_data = NULL;
-
-        memcpy(&client_dcb->func, &MyObject, sizeof(GWPROTOCOL));
 
         /* create the session data for HTTPD */
         if ((client_data = (HTTPD_session *)calloc(1, sizeof(HTTPD_session))) == NULL)

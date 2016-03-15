@@ -296,7 +296,7 @@ int           fail_accept_errno;
 
 DCB *dcb_get_zombies(void);
 int dcb_write(DCB *, GWBUF *);
-DCB *dcb_accept(DCB *listener);
+DCB *dcb_accept(DCB *listener, GWPROTOCOL *protocol_funcs);
 DCB *dcb_alloc(dcb_role_t, struct servlistener *);
 void dcb_free(DCB *);
 void dcb_free_all_memory(DCB *dcb);
