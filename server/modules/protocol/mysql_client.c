@@ -430,7 +430,13 @@ int gw_read_client_event(DCB* dcb)
     int max_bytes = 0;
 
     CHK_DCB(dcb);
-    protocol = DCB_PROTOCOL(dcb, MySQLProtocol);
+    if (dcb->dcb_role != DCB_ROLE_CLIENT_HANDLER)
+    {
+        MXS_ERROR("DCB must be a client handler for MySQL client protocol.");
+        return 1;
+    }
+
+    protocol = (MySQLProtocol *)dcb->protocol;
     CHK_PROTOCOL(protocol);
 
 #ifdef SS_DEBUG
