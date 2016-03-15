@@ -99,7 +99,6 @@ GWAUTHENTICATOR* GetModuleObject()
  * Always returns success
  *
  * @param dcb Request handler DCB connected to the client
- * @param buffer Pointer to pointer to buffer containing data from client
  * @return Authentication status - always 0 to denote success
  */
 static int
