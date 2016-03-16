@@ -153,6 +153,7 @@ bool maxavro_next_block(maxavro_file_t *file);
 maxavro_file_t* maxavro_file_open(const char* filename);
 void maxavro_file_close(maxavro_file_t *file);
 enum maxavro_error maxavro_get_error(maxavro_file_t *file);
+const char* maxavro_get_error_string(maxavro_file_t *file);
 
 /** Schema creation */
 maxavro_schema_t* maxavro_schema_from_json(const char* json);

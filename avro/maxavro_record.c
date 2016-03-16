@@ -165,17 +165,21 @@ static void skip_record(maxavro_file_t *file)
  */
 bool maxavro_next_block(maxavro_file_t *file)
 {
-    uint64_t rec, size;
-
-    if (file->records_read_from_block < file->records_in_block)
+    if (file->last_error == MAXAVRO_ERR_NONE)
     {
-        file->records_read += file->records_in_block - file->records_read_from_block;
-        long curr_pos = ftell(file->file);
-        long offset = (long) file->block_size - (curr_pos - file->block_start_pos);
-        fseek(file->file, offset, SEEK_CUR);
-    }
+        uint64_t rec, size;
 
-    return maxavro_verify_block(file) && maxavro_read_datablock_start(file, &rec, &size);
+        if (file->records_read_from_block < file->records_in_block)
+        {
+            file->records_read += file->records_in_block - file->records_read_from_block;
+            long curr_pos = ftell(file->file);
+            long offset = (long) file->block_size - (curr_pos - file->block_start_pos);
+            fseek(file->file, offset, SEEK_CUR);
+        }
+
+        return maxavro_verify_block(file) && maxavro_read_datablock_start(file, &rec, &size);
+    }
+    return false;
 }
 
 /**

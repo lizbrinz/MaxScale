@@ -49,6 +49,7 @@
 
 /* AVRO */
 #include <mxs_avro.h>
+#include <maxavro.h>
 
 extern int load_mysql_users(SERVICE *service);
 extern int blr_save_dbusers(ROUTER_INSTANCE *router);
@@ -286,102 +287,52 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
 static void
 avro_client_avro_to_json_ouput(AVRO_INSTANCE *router, AVRO_CLIENT *client, char *avro_file)
 {
-    avro_file_reader_t  reader;
-    FILE *fp;
-    int  should_close;
-    char filename[PATH_MAX + 1];
+    ss_dassert(router && client && avro_file);
 
-    if (avro_file == NULL)
+    if (strnlen(avro_file, 1))
     {
-        fp = stdin;
-        avro_file = "<stdin>";
-        should_close = 0;
+        char filename[PATH_MAX + 1];
+        snprintf(filename, PATH_MAX, "%s/%s.avro", router->avrodir, avro_file);
+        fprintf(stderr, "Reading from [%s]\n", filename);
+
+        maxavro_file_t *file = maxavro_file_open(filename);
+
+        if (file)
+        {
+            do
+            {
+                json_t *row;
+
+                while ((row = maxavro_record_read(file)))
+                {
+                    char *json = json_dumps(row, JSON_PRESERVE_ORDER);
+
+                    if (json)
+                    {
+                        dcb_printf(client->dcb, "%s", json);
+                    }
+                    else
+                    {
+                        MXS_ERROR("Failed to dump JSON value.");
+                    }
+                    free(json);
+                }
+            }
+            while (maxavro_next_block(file));
+
+            if (maxavro_get_error(file) != MAXAVRO_ERR_NONE)
+            {
+                MXS_ERROR("Reading Avro file failed with error '%s'.",
+                          maxavro_get_error_string(file));
+            }
+
+            maxavro_file_close(file);
+        }
     }
     else
     {
-        if (strnlen(avro_file, 1))
-        {
-            snprintf(filename, PATH_MAX, "%s/%s.avro", router->avrodir, avro_file);
-            filename[PATH_MAX] = '\0';
-            fprintf(stderr, "Reading from [%s]\n", filename);
-        }
-        else
-        {
-            fprintf(stderr, "No file specified\n");
-            dcb_printf(client->dcb, "ERR avro file not specified");
-            return;
-        }
-
-        fp = fopen(filename, "rb");
-        should_close = 1;
-
-        if (fp == NULL)
-        {
-            fprintf(stderr, "Error opening %s:\n  %s\n",
-                    avro_file, strerror(errno));
-            dcb_printf(client->dcb, "ERR opening %s", avro_file);
-            return;
-        }
-    }
-
-    if (avro_file_reader_fp(fp, avro_file, 0, &reader))
-    {
-        fprintf(stderr, "Error opening %s:\n  %s\n",
-                avro_file, avro_strerror());
-        dcb_printf(client->dcb, "ERR first read in %s", avro_file);
-
-        if (should_close)
-        {
-            fclose(fp);
-        }
-        return;
-    }
-    avro_schema_t  wschema;
-    avro_value_iface_t  *iface;
-    avro_value_t  value;
-
-    wschema = avro_file_reader_get_writer_schema(reader);
-    iface = avro_generic_class_from_schema(wschema);
-    avro_generic_value_new(iface, &value);
-
-    int rval;
-
-    while ((rval = avro_file_reader_read_value(reader, &value)) == 0)
-    {
-        char  *json;
-
-        if (avro_value_to_json(&value, 1, &json))
-        {
-            fprintf(stderr, "Error converting value to JSON: %s\n",
-                    avro_strerror());
-            dcb_printf(client->dcb, "ERR converting to Json %s", avro_file);
-        }
-        else
-        {
-            dcb_printf(client->dcb, "%s\n", json);
-            free(json);
-        }
-
-        avro_value_reset(&value);
-    }
-
-    /* If it was not an EOF that caused it to fail,
-     * print the error.
-     */
-    if (rval != EOF)
-    {
-        fprintf(stderr, "Error: %s\n", avro_strerror());
-        dcb_printf(client->dcb, "ERR error while reading %s", avro_file);
-    }
-
-    avro_file_reader_close(reader);
-    avro_value_decref(&value);
-    avro_value_iface_decref(iface);
-    avro_schema_decref(wschema);
-
-    if (should_close)
-    {
-        fclose(fp);
+        fprintf(stderr, "No file specified\n");
+        dcb_printf(client->dcb, "ERR avro file not specified");
     }
 }
 

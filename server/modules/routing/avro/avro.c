@@ -351,24 +351,6 @@ createInstance(SERVICE *service, char **options)
         inst->create_table_re = re;
     }
 
-    /* Check binlogdir and avrodir */
-    // avro_check_dirs(inst);
-
-    /* Allocate dbusers for this router here instead of serviceStartPort() */
-    if (service->users == NULL)
-    {
-        //service->users = (void *)avro_users_alloc();
-        /*
-        if (service->users == NULL) {
-            MXS_ERROR("%s: Error allocating AVRO users in createInstance",
-                      inst->service->name);
-
-            free(inst);
-            return NULL;
-        }
-         */
-    }
-
     /* Set service user or load db users */
     //avro_set_service_CDC_user(inst->service);
 

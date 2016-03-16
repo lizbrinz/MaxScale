@@ -170,6 +170,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "")
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-ggdb")
 
 include_directories(utils)
+include_directories(avro)
 include_directories(server/include)
 include_directories(server/inih)
 include_directories(server/modules/include)

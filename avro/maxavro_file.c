@@ -169,13 +169,39 @@ maxavro_file_t* maxavro_file_open(const char* filename)
 }
 
 /**
- * @brief Check if the end of file has been reached
+ * @brief Return the last error from the file
  * @param file File to check
- * @return True if end of file has been reached
+ * @return The last error or MAXAVRO_ERR_NONE if no errors have occurred
  */
 enum maxavro_error maxavro_get_error(maxavro_file_t *file)
 {
     return file->last_error;
+}
+
+/**
+ * @brief Get the error string for this file
+ * @param file File to check
+ * @return Error in string form
+ */
+const char* maxavro_get_error_string(maxavro_file_t *file)
+{
+    switch (file->last_error)
+    {
+        case MAXAVRO_ERR_IO:
+            return "MAXAVRO_ERR_IO";
+
+        case MAXAVRO_ERR_MEMORY:
+            return "MAXAVRO_ERR_MEMORY";
+
+        case MAXAVRO_ERR_VALUE_OVERFLOW:
+            return "MAXAVRO_ERR_VALUE_OVERFLOW";
+
+        case MAXAVRO_ERR_NONE:
+            return "MAXAVRO_ERR_NONE";
+
+        default:
+            return "UNKNOWN ERROR";
+    }
 }
 
 /**
