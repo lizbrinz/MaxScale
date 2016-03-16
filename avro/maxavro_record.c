@@ -20,6 +20,10 @@
 #include <string.h>
 #include <skygw_debug.h>
 
+bool maxavro_read_datablock_start(maxavro_file_t *file, uint64_t *records,
+                                  uint64_t *bytes);
+bool maxavro_verify_block(maxavro_file_t *file);
+
 /**
  * @brief Read a single value from a file
  * @param file File to read from
@@ -51,6 +55,7 @@ static json_t* read_and_pack_value(maxavro_file_t *file, enum maxavro_value_type
         }
         break;
 
+        case MAXAVRO_TYPE_BYTES:
         case MAXAVRO_TYPE_STRING:
         {
             char *str = maxavro_read_string(file);
@@ -147,12 +152,13 @@ static void skip_record(maxavro_file_t *file)
  * @param file File to read from
  * @return True if reading the next block was successfully read
  */
-static bool read_next_block(maxavro_file_t *file)
+bool maxavro_next_block(maxavro_file_t *file)
 {
     uint64_t rec, size;
 
     if (file->records_read_from_block < file->records_in_block)
     {
+        file->records_read += file->records_in_block - file->records_read_from_block;
         long curr_pos = ftell(file->file);
         long offset = (long) file->block_size - (curr_pos - file->block_start_pos);
         fseek(file->file, offset, SEEK_CUR);
@@ -186,14 +192,14 @@ bool maxavro_record_seek(maxavro_file_t *file, uint64_t offset)
     {
         /** We're seeking past a block boundary */
         offset -= (file->records_in_block - file->records_read_from_block);
-        read_next_block(file);
+        maxavro_next_block(file);
 
         while (offset > file->records_in_block)
         {
             /** Skip full blocks that don't have the position we want */
             offset -= file->records_in_block;
             fseek(file->file, file->block_size, SEEK_CUR);
-            read_next_block(file);
+            maxavro_next_block(file);
         }
 
         ss_dassert(offset <= file->records_in_block);

@@ -60,60 +60,46 @@ int check_file(const char* filename)
      * which can be checked to make sure the file is not corrupted. */
     do
     {
-        uint64_t records, data_size;
-        if (maxavro_read_datablock_start(file, &records, &data_size))
+        if (seekto > 0)
         {
-            if (seekto > 0)
-            {
-                maxavro_record_seek(file, seekto);
-                seekto = 0;
-            }
-            total_records += records;
-            total_bytes += data_size;
-            data_blocks++;
+            maxavro_record_seek(file, seekto);
+            seekto = 0;
+        }
 
-            if (verbose > 1 || dump)
+        if (verbose > 1 || dump)
+        {
+            json_t* row;
+            while (num_rows != 0 && (row = maxavro_record_read(file)))
             {
-                json_t* row;
-                while (num_rows != 0 && (row = maxavro_record_read(file)))
+                char *json = json_dumps(row, JSON_PRESERVE_ORDER);
+                printf("%s\n", json);
+                json_decref(row);
+                if (num_rows > 0)
                 {
-                    char *json = json_dumps(row, JSON_PRESERVE_ORDER);
-                    printf("%s\n", json);
-                    json_decref(row);
-                    if (num_rows > 0)
-                    {
-                        num_rows--;
-                    }
+                    num_rows--;
                 }
             }
-            else
-            {
-                /** Skip the data */
-                fseek(file->file, data_size, SEEK_CUR);
-            }
-
-            if (verbose && !dump)
-            {
-                printf("Block %lu: %lu records, %lu bytes\n", data_blocks, records, data_size);
-            }
         }
-        else
+
+        if (verbose && !dump)
         {
-            break;
+            printf("Block %lu: %lu records, %lu bytes\n", file->blocks_read,
+                   file->records_in_block, file->block_size);
         }
     }
-    while (num_rows != 0 && maxavro_verify_block(file));
+    while (num_rows != 0 && maxavro_next_block(file));
 
     if (!maxavro_file_eof(file) && num_rows != 0)
     {
         printf("Failed to read next data block after data block %lu. "
                "Read %lu records and %lu bytes before failure.\n",
-               data_blocks, total_records, total_bytes);
+               file->blocks_read, file->records_read, file->bytes_read);
         rval = 1;
     }
     else if (!dump)
     {
-        printf("%s: %lu blocks, %lu records and %lu bytes\n", filename, data_blocks, total_records, total_bytes);
+        printf("%s: %lu blocks, %lu records and %lu bytes\n", filename,
+               file->blocks_read, file->records_read, file->bytes_read);
     }
 
 
@@ -167,6 +153,7 @@ int main(int argc, char** argv)
     {
         if (check_file(realpath(argv[i], pathbuf)))
         {
+            printf("Failed to process file: %s\n", argv[i]);
             rval = 1;
         }
     }

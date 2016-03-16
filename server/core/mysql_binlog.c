@@ -74,6 +74,7 @@ TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len)
     uint8_t *nullmap = ptr;
     size_t nullmap_size = (column_count + 7) / 8;
     TABLE_MAP *map = malloc(sizeof(TABLE_MAP));
+
     if (map)
     {
         map->id = table_id;

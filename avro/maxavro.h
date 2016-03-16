@@ -62,12 +62,13 @@ typedef struct
 {
     FILE* file;
     maxavro_schema_t* schema;
-    uint64_t blocks_read;
-    uint64_t records_read;
+    uint64_t blocks_read; /*< Total number of data blocks read */
+    uint64_t records_read; /*< Total number of records read */
+    uint64_t bytes_read; /*< Total number of bytes read */
     uint64_t records_in_block;
     uint64_t records_read_from_block;
     uint64_t bytes_read_from_block;
-    uint64_t block_size;
+    uint64_t block_size; /*< Size of the block in bytes */
 
     /** The position @c ftell returns before the first record is read  */
     long block_start_pos;
@@ -115,23 +116,13 @@ maxavro_datablock_t* maxavro_datablock_allocate(maxavro_file_t *file, size_t buf
 void maxavro_datablock_free(maxavro_datablock_t* block);
 bool maxavro_datablock_finalize(maxavro_datablock_t* block);
 
-/** Adding values to a datablock */
+/** Adding values to a datablock. The caller must ensure that the inserted
+ * values conform to the file schema and that the required amount of fields
+ * is added before finalizing the block. */
 bool maxavro_datablock_add_integer(maxavro_datablock_t *file, uint64_t val);
 bool maxavro_datablock_add_string(maxavro_datablock_t *file, const char* str);
 bool maxavro_datablock_add_float(maxavro_datablock_t *file, float val);
 bool maxavro_datablock_add_double(maxavro_datablock_t *file, double val);
-
-/** Encoding values in-memory */
-uint64_t maxavro_encode_integer(uint8_t* buffer, uint64_t val);
-uint64_t maxavro_encode_string(uint8_t* dest, const char* str);
-uint64_t maxavro_encode_float(uint8_t* dest, float val);
-uint64_t maxavro_encode_double(uint8_t* dest, double val);
-
-/** Writing values straight to disk*/
-bool maxavro_write_integer(FILE *file, uint64_t val);
-bool maxavro_write_string(FILE *file, const char* str);
-bool maxavro_write_float(FILE *file, float val);
-bool maxavro_write_double(FILE *file, double val);
 
 /** Reading primitives */
 bool maxavro_read_integer(maxavro_file_t *file, uint64_t *val);
@@ -147,11 +138,7 @@ void maxavro_map_free(maxavro_map_t *value);
 /** Reading and seeking records */
 json_t* maxavro_record_read(maxavro_file_t *file);
 bool maxavro_record_seek(maxavro_file_t *file, uint64_t offset);
-
-/** Utility functions */
-bool maxavro_read_datablock_start(maxavro_file_t *file, uint64_t *records, uint64_t *bytes);
-bool maxavro_read_sync(FILE *file, char* sync);
-bool maxavro_verify_block(maxavro_file_t *file);
+bool maxavro_next_block(maxavro_file_t *file);
 
 /** File operations */
 maxavro_file_t* maxavro_file_open(const char* filename);

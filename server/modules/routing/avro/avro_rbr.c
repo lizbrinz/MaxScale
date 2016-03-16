@@ -160,7 +160,6 @@ void handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
             }
             MXS_INFO("Processed %d rows", rows);
             avro_value_decref(&record);
-            avro_file_writer_flush(table->avro_file);
         }
         else if (table == NULL)
         {
@@ -249,8 +248,6 @@ int get_metadata_len(uint8_t type)
         case TABLE_COL_TYPE_BIT:
             return 2;
 
-        case TABLE_COL_TYPE_LONG:
-        case TABLE_COL_TYPE_LONGLONG:
         case TABLE_COL_TYPE_BLOB:
         case TABLE_COL_TYPE_FLOAT:
         case TABLE_COL_TYPE_DOUBLE:

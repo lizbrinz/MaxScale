@@ -20,6 +20,61 @@
 #include <errno.h>
 #include <string.h>
 
+
+static bool maxavro_read_sync(FILE *file, char* sync)
+{
+    return fread(sync, 1, SYNC_MARKER_SIZE, file) == SYNC_MARKER_SIZE;
+}
+
+bool maxavro_verify_block(maxavro_file_t *file)
+{
+    char sync[SYNC_MARKER_SIZE];
+    int rc = fread(sync, 1, SYNC_MARKER_SIZE, file->file);
+    if (rc != SYNC_MARKER_SIZE)
+    {
+        if (rc == -1)
+        {
+            printf("Failed to read file: %d %s\n", errno, strerror(errno));
+        }
+        else
+        {
+            printf("Short read when reading sync marker. Read %d bytes instead of %d\n",
+                   rc, SYNC_MARKER_SIZE);
+        }
+        return false;
+    }
+
+    if (memcmp(file->sync, sync, SYNC_MARKER_SIZE))
+    {
+        printf("Sync marker mismatch.\n");
+        return false;
+    }
+
+    /** Increment block count */
+    file->blocks_read++;
+    file->bytes_read += file->block_size;
+    return true;
+}
+
+bool maxavro_read_datablock_start(maxavro_file_t* file)
+{
+    uint64_t records, bytes;
+    bool rval = maxavro_read_integer(file, &records) && maxavro_read_integer(file, &bytes);
+
+    if (rval)
+    {
+        file->block_size = bytes;
+        file->records_in_block = records;
+        file->records_read_from_block = 0;
+        file->block_start_pos = ftell(file->file);
+    }
+    else if (!maxavro_file_eof(file))
+    {
+        printf("Failed to read data block start.\n");
+    }
+    return rval;
+}
+
 /** The header metadata is encoded as an Avro map with @c bytes encoded
  * key-value pairs. A @c bytes value is written as a length encoded string
  * where the length of the value is stored as a @c long followed by the
@@ -38,6 +93,11 @@ static char* read_schema(maxavro_file_t* file)
             break;
         }
         map = map->next;
+    }
+
+    if (rval == NULL)
+    {
+        printf("No schema found from Avro header.\n");
     }
 
     maxavro_map_free(head);
@@ -86,9 +146,11 @@ maxavro_file_t* maxavro_file_open(const char* filename)
         char *schema = read_schema(avrofile);
         avrofile->schema = schema ? maxavro_schema_from_json(schema) : NULL;
 
-        if (schema == NULL || avrofile->schema == NULL ||
-            !maxavro_read_sync(file, avrofile->sync))
+        if (!schema || !avrofile->schema ||
+            !maxavro_read_sync(file, avrofile->sync) ||
+            !maxavro_read_datablock_start(avrofile))
         {
+            printf("Failed to initialize avrofile.\n");
             free(schema);
             free(avrofile->schema);
             free(avrofile);

@@ -21,6 +21,19 @@
 #include <unistd.h>
 #include <sys/types.h>
 
+
+/** Encoding values in-memory */
+uint64_t maxavro_encode_integer(uint8_t* buffer, uint64_t val);
+uint64_t maxavro_encode_string(uint8_t* dest, const char* str);
+uint64_t maxavro_encode_float(uint8_t* dest, float val);
+uint64_t maxavro_encode_double(uint8_t* dest, double val);
+
+/** Writing values straight to disk*/
+bool maxavro_write_integer(FILE *file, uint64_t val);
+bool maxavro_write_string(FILE *file, const char* str);
+bool maxavro_write_float(FILE *file, float val);
+bool maxavro_write_double(FILE *file, double val);
+
 maxavro_datablock_t* maxavro_datablock_allocate(maxavro_file_t *file, size_t buffersize)
 {
     maxavro_datablock_t *datablock = malloc(sizeof(maxavro_datablock_t));

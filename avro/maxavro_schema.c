@@ -97,30 +97,41 @@ maxavro_schema_t* maxavro_schema_from_json(const char* json)
     {
         json_error_t err;
         json_t *schema = json_loads(json, 0, &err);
-        json_t *field_arr = NULL;
-        json_unpack(schema, "{s:o}", "fields", &field_arr);
-        char *dump = json_dumps(field_arr, JSON_PRESERVE_ORDER);
-        size_t arr_size = json_array_size(field_arr);
-        rval->fields = malloc(sizeof(maxavro_schema_field_t) * arr_size);
-        rval->num_fields = arr_size;
 
-        for (int i = 0; i < arr_size; i++)
+        if (schema)
         {
-            json_t *object = json_array_get(field_arr, i);
-            dump = json_dumps(object, JSON_PRESERVE_ORDER);
-            (void) dump;
-            char *key;
-            json_t *value_obj;
+            json_t *field_arr = NULL;
+            json_unpack(schema, "{s:o}", "fields", &field_arr);
+            char *dump = json_dumps(field_arr, JSON_PRESERVE_ORDER);
+            size_t arr_size = json_array_size(field_arr);
+            rval->fields = malloc(sizeof(maxavro_schema_field_t) * arr_size);
+            rval->num_fields = arr_size;
 
-            json_unpack(object, "{s:s s:o}", "name", &key, "type", &value_obj);
-            rval->fields[i].name = strdup(key);
-            rval->fields[i].type = unpack_to_type(value_obj);
+            for (int i = 0; i < arr_size; i++)
+            {
+                json_t *object = json_array_get(field_arr, i);
+                dump = json_dumps(object, JSON_PRESERVE_ORDER);
+                (void) dump;
+                char *key;
+                json_t *value_obj;
+
+                json_unpack(object, "{s:s s:o}", "name", &key, "type", &value_obj);
+                rval->fields[i].name = strdup(key);
+                rval->fields[i].type = unpack_to_type(value_obj);
+            }
+
+            json_decref(field_arr);
+            json_decref(schema);
         }
-
-        json_decref(field_arr);
-        json_decref(schema);
+        else
+        {
+            printf("Failed to read JSON schema: %s\n", json);
+        }
     }
-
+    else
+    {
+        printf("Memory allocation failed.\n");
+    }
     return rval;
 }
 

@@ -39,22 +39,15 @@ int main(int argc, char** argv)
     {
         return 1;
     }
- 
-    do
+
+    uint64_t blocks = 0;
+
+    while (maxavro_next_block(file))
     {
-        uint64_t objects, data_size;
-        if(maxavro_read_datablock_start(file, &objects, &data_size))
-        {
-            /** Skip data block */
-            fseek(file->file, data_size, SEEK_CUR);
-        }
-        else
-        {
-            return 1;
-        }
+        blocks++;
     }
-    while (maxavro_verify_block(file));
- 
+
+    uint64_t blocksread = file->blocks_read;
     maxavro_file_close(file);
-    return 0;
+    return blocks != blocksread;
 }
