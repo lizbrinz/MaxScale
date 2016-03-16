@@ -193,7 +193,7 @@ void set_numeric_field_value(avro_value_t *field, uint8_t type, uint8_t *metadat
             memcpy(&i, value, 2);
             avro_value_set_int(field, i);
             break;
-            
+
         case TABLE_COL_TYPE_INT24:
             memcpy(&i, value, 3);
             avro_value_set_int(field, i);
@@ -361,7 +361,7 @@ uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value
                 uint8_t lval[16];
                 memset(lval, 0, sizeof(lval));
                 ptr += unpack_numeric_field(ptr, map->column_types[i],
-                                           &metadata[metadata_offset], lval);
+                                            &metadata[metadata_offset], lval);
                 set_numeric_field_value(&field, map->column_types[i], &metadata[metadata_offset], lval);
             }
             ss_dassert(metadata_offset <= map->column_metadata_size);

@@ -86,9 +86,9 @@ avro_client_handle_request(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *qu
     switch (client->state)
     {
         case AVRO_CLIENT_ERRORED:
-                /* force disconnection */
-                return 1;
-                break;
+            /* force disconnection */
+            return 1;
+            break;
         case AVRO_CLIENT_UNREGISTERED:
             /* Cal registration routine */
             reg_ret = avro_client_do_registration(router, client, queue);
@@ -112,15 +112,17 @@ avro_client_handle_request(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *qu
 
                 client->state = AVRO_CLIENT_REGISTERED;
                 MXS_INFO("%s: Client [%s] has completd REGISTRATION action",
-                                         client->dcb->service->name,
-                                         client->dcb->remote != NULL ? client->dcb->remote : "");
+                         client->dcb->service->name,
+                         client->dcb->remote != NULL ? client->dcb->remote : "");
 
                 break;
             }
         case AVRO_CLIENT_REGISTERED:
         case AVRO_CLIENT_REQUEST_DATA:
             if (client->state == AVRO_CLIENT_REGISTERED)
+            {
                 client->state = AVRO_CLIENT_REQUEST_DATA;
+            }
 
             /* Process command from client */
             avro_client_process_command(router, client, queue);
@@ -137,7 +139,7 @@ avro_client_handle_request(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *qu
 
 /**
  * Handle the REGISTRATION command
- * 
+ *
  * @param dcb    DCB with allocateid protocol
  * @param data   GWBUF with registration message
  * @return       1 for successful registration 0 otherwise
@@ -163,19 +165,21 @@ avro_client_do_registration(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *d
 
         if ((sep_ptr = strchr(uuid, ',')) != NULL)
         {
-            *sep_ptr='\0';
+            *sep_ptr = '\0';
         }
-        if ((sep_ptr = strchr(uuid+strlen(uuid), ' ')) != NULL)
+        if ((sep_ptr = strchr(uuid + strlen(uuid), ' ')) != NULL)
         {
-            *sep_ptr='\0';
+            *sep_ptr = '\0';
         }
         if ((sep_ptr = strchr(uuid, ' ')) != NULL)
         {
-            *sep_ptr='\0';
+            *sep_ptr = '\0';
         }
 
         if (strlen(uuid) < uuid_len)
-          data_len -= (uuid_len - strlen(uuid));
+        {
+            data_len -= (uuid_len - strlen(uuid));
+        }
 
         uuid_len = strlen(uuid);
 
@@ -189,12 +193,14 @@ avro_client_do_registration(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *d
             {
                 int cdc_type_len = (data_len > CDC_TYPE_LEN) ? CDC_TYPE_LEN : data_len;
                 if (strlen(tmp_ptr) < data_len)
+                {
                     cdc_type_len -= (data_len - strlen(tmp_ptr));
+                }
 
                 cdc_type_len -= strlen("TYPE=");
 
                 if (memcmp(tmp_ptr + 5, "AVRO", 4) == 0)
-                { 
+                {
                     ret = 1;
                     client->state = AVRO_CLIENT_REGISTERED;
                 }
@@ -236,7 +242,7 @@ avro_encode_value(unsigned char *data, unsigned int value, int len)
 
 /**
  * Process commmand from client
- * 
+ *
  * @param router     The router instance
  * @param client     The specific client data
  * @param data       GWBUF with command
@@ -246,8 +252,8 @@ static void
 avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *queue)
 {
     uint8_t *data = GWBUF_DATA(queue);
-    uint8_t *ptr; 
-    char *command_ptr; 
+    uint8_t *ptr;
+    char *command_ptr;
 
     command_ptr = strstr((char *)data, "REQUEST-DATA");
 
@@ -265,7 +271,9 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
             avro_file[data_len - 1] = '\0';
             cmd_sep = strchr(avro_file, ' ');
             if (cmd_sep)
-               *cmd_sep = '\0'; 
+            {
+                *cmd_sep = '\0';
+            }
 
             strcpy(client->avrofile, avro_file);
 
@@ -288,7 +296,7 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
 
 /**
  * Print JSON output from selected AVRO file
- * 
+ *
  * @param router     The router instance
  * @param client     The specific client data
  * @param avro_file  The requested AVRO file
@@ -297,90 +305,102 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
 static void
 avro_client_avro_to_json_ouput(AVRO_INSTANCE *router, AVRO_CLIENT *client, char *avro_file)
 {
-        avro_file_reader_t  reader;
-        FILE *fp;
-        int  should_close;
-        char filename[PATH_MAX +1];
+    avro_file_reader_t  reader;
+    FILE *fp;
+    int  should_close;
+    char filename[PATH_MAX + 1];
 
-        if (avro_file == NULL) {
-                fp = stdin;
-                avro_file = "<stdin>";
-                should_close = 0;
-        } else {
-                if (strlen(avro_file))
-                {
-                    snprintf(filename, PATH_MAX, "%s/%s.avro", router->avrodir, avro_file);
-                    filename[PATH_MAX] = '\0';
-                    fprintf(stderr, "Reading from [%s]\n", filename);
-                }
-                else
-                {
-                    fprintf(stderr, "No file specified\n");
-                    dcb_printf(client->dcb, "ERR avro file not specified");
-                    return;
-                }
-
-                fp = fopen(filename, "rb");
-                should_close = 1;
-
-                if (fp == NULL) {
-                        fprintf(stderr, "Error opening %s:\n  %s\n",
-                                avro_file, strerror(errno));
-                        dcb_printf(client->dcb, "ERR opening %s", avro_file);
-                        return;
-                }
+    if (avro_file == NULL)
+    {
+        fp = stdin;
+        avro_file = "<stdin>";
+        should_close = 0;
+    }
+    else
+    {
+        if (strlen(avro_file))
+        {
+            snprintf(filename, PATH_MAX, "%s/%s.avro", router->avrodir, avro_file);
+            filename[PATH_MAX] = '\0';
+            fprintf(stderr, "Reading from [%s]\n", filename);
+        }
+        else
+        {
+            fprintf(stderr, "No file specified\n");
+            dcb_printf(client->dcb, "ERR avro file not specified");
+            return;
         }
 
-        if (avro_file_reader_fp(fp, avro_file, 0, &reader)) {
-                fprintf(stderr, "Error opening %s:\n  %s\n",
-                        avro_file, avro_strerror());
-                dcb_printf(client->dcb, "ERR first read in %s", avro_file);
+        fp = fopen(filename, "rb");
+        should_close = 1;
 
-                if (should_close) {
-                        fclose(fp);
-                }
-                return;
+        if (fp == NULL)
+        {
+            fprintf(stderr, "Error opening %s:\n  %s\n",
+                    avro_file, strerror(errno));
+            dcb_printf(client->dcb, "ERR opening %s", avro_file);
+            return;
         }
-        avro_schema_t  wschema;
-        avro_value_iface_t  *iface;
-        avro_value_t  value;
+    }
 
-        wschema = avro_file_reader_get_writer_schema(reader);
-        iface = avro_generic_class_from_schema(wschema);
-        avro_generic_value_new(iface, &value);
+    if (avro_file_reader_fp(fp, avro_file, 0, &reader))
+    {
+        fprintf(stderr, "Error opening %s:\n  %s\n",
+                avro_file, avro_strerror());
+        dcb_printf(client->dcb, "ERR first read in %s", avro_file);
 
-        int rval;
+        if (should_close)
+        {
+            fclose(fp);
+        }
+        return;
+    }
+    avro_schema_t  wschema;
+    avro_value_iface_t  *iface;
+    avro_value_t  value;
 
-        while ((rval = avro_file_reader_read_value(reader, &value)) == 0) {
-                char  *json;
+    wschema = avro_file_reader_get_writer_schema(reader);
+    iface = avro_generic_class_from_schema(wschema);
+    avro_generic_value_new(iface, &value);
 
-                if (avro_value_to_json(&value, 1, &json)) {
-                        fprintf(stderr, "Error converting value to JSON: %s\n",
-                                avro_strerror());
-                        dcb_printf(client->dcb, "ERR converting to Json %s", avro_file);
-                } else {
-                        dcb_printf(client->dcb, "%s\n", json);
-                        free(json);
-                }
+    int rval;
 
-                avro_value_reset(&value);
+    while ((rval = avro_file_reader_read_value(reader, &value)) == 0)
+    {
+        char  *json;
+
+        if (avro_value_to_json(&value, 1, &json))
+        {
+            fprintf(stderr, "Error converting value to JSON: %s\n",
+                    avro_strerror());
+            dcb_printf(client->dcb, "ERR converting to Json %s", avro_file);
+        }
+        else
+        {
+            dcb_printf(client->dcb, "%s\n", json);
+            free(json);
         }
 
-        /* If it was not an EOF that caused it to fail,
-         * print the error.
-         */
-        if (rval != EOF) {
-                fprintf(stderr, "Error: %s\n", avro_strerror());
-                dcb_printf(client->dcb, "ERR error while reading %s", avro_file);
-        }
+        avro_value_reset(&value);
+    }
 
-        avro_file_reader_close(reader);
-        avro_value_decref(&value);
-        avro_value_iface_decref(iface);
-        avro_schema_decref(wschema);
+    /* If it was not an EOF that caused it to fail,
+     * print the error.
+     */
+    if (rval != EOF)
+    {
+        fprintf(stderr, "Error: %s\n", avro_strerror());
+        dcb_printf(client->dcb, "ERR error while reading %s", avro_file);
+    }
 
-        if (should_close) {
-                fclose(fp);
-        }
+    avro_file_reader_close(reader);
+    avro_value_decref(&value);
+    avro_value_iface_decref(iface);
+    avro_schema_decref(wschema);
+
+    if (should_close)
+    {
+        fclose(fp);
+    }
 }
 

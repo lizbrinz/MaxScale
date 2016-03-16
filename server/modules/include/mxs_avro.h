@@ -14,6 +14,7 @@
 #include <dbusers.h>
 #include <avro.h>
 #include <cdc.h>
+#include <maxscale_pcre2.h>
 
 /**
  * How often to call the router status function (seconds)
@@ -125,6 +126,7 @@ typedef struct avro_instance {
     uint64_t                current_pos;
                                             /*< Current binlog position */
     int                     binlog_fd;      /*< File descriptor of the binlog file being read */
+    pcre2_code              *create_table_re;
     uint8_t event_types;
     uint8_t event_type_hdr_lens[MAX_EVENT_TYPE_END];
     char    current_gtid[GTID_MAX_LEN + 1];

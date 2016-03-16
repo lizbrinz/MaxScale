@@ -44,9 +44,11 @@
 #include <rbr.h>
 #include <ini.h>
 
-static const char* create_table_regex =
-    "(?i)^create[a-z0-9[:space:]_]+table";
 static const char *statefile_section = "avro-conversion";
+
+void handle_query_event(AVRO_INSTANCE *router, REP_HEADER *hdr,
+                        int *pending_transaction, uint8_t *ptr);
+bool is_create_table_statement(AVRO_INSTANCE *router, char* ptr, size_t len);
 
 void avro_flush_all_tables(AVRO_INSTANCE *router);
 
@@ -82,15 +84,21 @@ bool avro_open_binlog(const char *binlogdir, const char *file, int *dest)
     return true;
 }
 
+/**
+ * Close a binlog file
+ * @param fd Binlog file descriptor
+ */
 void avro_close_binlog(int fd)
 {
     close(fd);
 }
 
 /**
+ * @brief Allocate an Avro table
  *
- * @param table
- * @param filepath
+ * Create an Aro table and prepare it for writing.
+ * @param filepath Path to the created file
+ * @param json_schema The schema of the table in JSON format
  */
 AVRO_TABLE* avro_table_alloc(const char* filepath, const char* json_schema)
 {
@@ -181,6 +189,15 @@ static bool avro_save_conversion_state(AVRO_INSTANCE *router)
     return true;
 }
 
+/**
+ * @brief Callback for the @c ini_parse of the stored conversion position
+ *
+ * @param data User provided data
+ * @param section Section name
+ * @param key Parameter name
+ * @param value Parameter value
+ * @return 1 if the parsing should continue, 0 if an error was detected
+ */
 static int conv_state_handler(void* data, const char* section, const char* key, const char* value)
 {
     AVRO_INSTANCE *router = (AVRO_INSTANCE*) data;
@@ -210,6 +227,7 @@ static int conv_state_handler(void* data, const char* section, const char* key, 
 
 /**
  * @brief Load a stored conversion state from file
+ *
  * @param router Avro router instance
  * @return True if the stored state was loaded successfully
  */
@@ -254,7 +272,8 @@ bool avro_load_conversion_state(AVRO_INSTANCE *router)
 }
 
 /**
- * Free an AVRO_TABLE
+ * @brief Free an AVRO_TABLE
+ *
  * @param table Table to free
  * @return Always NULL
  */
@@ -339,6 +358,14 @@ static void rotate_to_file(AVRO_INSTANCE* router, uint64_t pos, const char *next
     router->current_pos = 4;
 }
 
+/**
+ * @brief Read the replication event payload
+ *
+ * @param router Avro router instance
+ * @param hdr Replication header
+ * @param pos Starting position of the event header
+ * @return The event data or NULL if an error occurred
+ */
 static GWBUF* read_event_data(AVRO_INSTANCE *router, REP_HEADER* hdr, uint64_t pos)
 {
     GWBUF* result;
@@ -381,7 +408,7 @@ static GWBUF* read_event_data(AVRO_INSTANCE *router, REP_HEADER* hdr, uint64_t p
 }
 
 /**
- * Read all replication events from a binlog file.
+ * @brief Read all replication events from a binlog file.
  *
  * Routine detects errors and pending transactions
  *
@@ -401,9 +428,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
     REP_HEADER hdr;
     int pending_transaction = 0;
     int n;
-    int db_name_len;
     uint8_t *ptr;
-    int var_block_len;
     bool found_chksum = false;
 
     /** For statistics */
@@ -636,68 +661,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
          */
         else if (hdr.event_type == QUERY_EVENT)
         {
-            char *statement_sql;
-            db_name_len = ptr[4 + 4];
-            var_block_len = ptr[4 + 4 + 1 + 2];
-            const int post_header_len = 4 + 4 + 1 + 2 + 2;
-            int statement_len = hdr.event_size - BINLOG_EVENT_HDR_LEN - (post_header_len + var_block_len + 1 +
-                                                                         db_name_len);
-            statement_sql = malloc(statement_len + 1);
-            strncpy(statement_sql, (char *) ptr + 4 + 4 + 1 + 2 + 2 + var_block_len + 1 + db_name_len, statement_len);
-            statement_sql[statement_len] = '\0';
-
-            /** Very simple detection of CREATE TABLE statements */
-            int reg_err = 0;
-
-            if (mxs_pcre2_simple_match(create_table_regex, statement_sql, 0, &reg_err) == MXS_PCRE2_MATCH)
-            {
-                char db[db_name_len + 1];
-                strncpy(db, (char*) ptr + post_header_len + var_block_len, sizeof(db));
-                TABLE_CREATE *created = table_create_alloc(statement_sql, db, router->current_gtid);
-
-                if (created)
-                {
-                    char createlist[PATH_MAX + 1];
-                    snprintf(createlist, sizeof(createlist), "%s/table-ddl.list", router->avrodir);
-                    if (!table_create_save(created, createlist))
-                    {
-                        MXS_ERROR("Failed to store CREATE TABLE statement to disk: %s",
-                                  statement_sql);
-                    }
-
-                    char table_ident[MYSQL_TABLE_MAXLEN + MYSQL_DATABASE_MAXLEN + 2];
-                    snprintf(table_ident, sizeof(table_ident), "%s.%s", created->database, created->table);
-
-                    spinlock_acquire(&router->lock);
-                    TABLE_CREATE *old = hashtable_fetch(router->created_tables, table_ident);
-                    if (old)
-                    {
-                        hashtable_delete(router->created_tables, table_ident);
-                    }
-                    hashtable_add(router->created_tables, table_ident, created);
-                    spinlock_release(&router->lock);
-                }
-            }
-            /* A transaction starts with this event */
-            if (strncmp(statement_sql, "BEGIN", 5) == 0)
-            {
-                // TODO: Handle BEGIN
-                if (pending_transaction > 0)
-                {
-                    MXS_ERROR("In binlog file '%s' at position %llu: Missing COMMIT before BEGIN.",
-                              router->binlog_name, pos);
-                }
-                pending_transaction = 1;
-            }
-
-            /* Commit received for non transactional tables, i.e. MyISAM */
-            if (strncmp(statement_sql, "COMMIT", 6) == 0)
-            {
-                // TODO: Handle COMMIT
-                pending_transaction = 0;
-            }
-            free(statement_sql);
-
+            handle_query_event(router, &hdr, &pending_transaction, ptr);
         }
         else if (hdr.event_type == XID_EVENT)
         {
@@ -794,8 +758,7 @@ bool avro_load_created_tables(AVRO_INSTANCE *router)
 
                 while (tok)
                 {
-                    int reg_err;
-                    if (mxs_pcre2_simple_match(create_table_regex, tok, 0, &reg_err) == MXS_PCRE2_MATCH)
+                    if (is_create_table_statement(router, tok, strlen(tok)))
                     {
                         TABLE_CREATE *created = table_create_alloc(tok, "", router->current_gtid);
 
@@ -847,5 +810,95 @@ void avro_flush_all_tables(AVRO_INSTANCE *router)
             }
         }
         hashtable_iterator_free(iter);
+    }
+}
+
+/**
+ *
+ * @param router
+ * @param ptr
+ * @param len
+ * @return
+ */
+bool is_create_table_statement(AVRO_INSTANCE *router, char* ptr, size_t len)
+{
+    int rc = 0;
+    pcre2_match_data *mdata = pcre2_match_data_create_from_pattern(router->create_table_re, NULL);
+
+    if (mdata)
+    {
+        rc = pcre2_match(router->create_table_re, (PCRE2_SPTR) ptr, len, 0, 0, mdata, NULL);
+        pcre2_match_data_free(mdata);
+    }
+
+    return rc > 0;
+}
+
+/** Database name offset */
+#define DBNM_OFF 8
+
+/** Varblock offset */
+#define VBLK_OFF 4 + 4 + 1 + 2
+
+/** Post-header offset */
+#define PHDR_OFF 4 + 4 + 1 + 2 + 2
+
+/**
+ * @brief Simple detection of CREATE TABLE statements
+ *
+ * @param router Avro router instance
+ * @param hdr Replication header
+ * @param pending_transaction Pointer where status of pending transaction is stored
+ * @param ptr Pointer to the start of the event payload
+ */
+void handle_query_event(AVRO_INSTANCE *router, REP_HEADER *hdr, int *pending_transaction, uint8_t *ptr)
+{
+    int dblen = ptr[DBNM_OFF];
+    int vblklen = ptr[VBLK_OFF];
+    int len = hdr->event_size - BINLOG_EVENT_HDR_LEN - (PHDR_OFF + vblklen + 1 + dblen);
+    char *sql = (char *) ptr + PHDR_OFF + vblklen + 1 + dblen;
+
+    /** Very   */
+    if (is_create_table_statement(router, sql, len))
+    {
+        char db[dblen + 1];
+        strncpy(db, (char*) ptr + PHDR_OFF + vblklen, sizeof(db));
+        TABLE_CREATE *created = table_create_alloc(sql, db, router->current_gtid);
+
+        if (created)
+        {
+            char createlist[PATH_MAX + 1];
+            snprintf(createlist, sizeof(createlist), "%s/table-ddl.list", router->avrodir);
+
+            if (!table_create_save(created, createlist))
+            {
+                MXS_ERROR("Failed to store CREATE TABLE statement to disk: %s", sql);
+            }
+
+            char table_ident[MYSQL_TABLE_MAXLEN + MYSQL_DATABASE_MAXLEN + 2];
+            snprintf(table_ident, sizeof(table_ident), "%s.%s", created->database, created->table);
+
+            spinlock_acquire(&router->lock);
+            TABLE_CREATE *old = hashtable_fetch(router->created_tables, table_ident);
+
+            if (old)
+            {
+                hashtable_delete(router->created_tables, table_ident);
+            }
+
+            hashtable_add(router->created_tables, table_ident, created);
+            spinlock_release(&router->lock);
+        }
+    }
+    /* A transaction starts with this event */
+    else if (strncmp(sql, "BEGIN", 5) == 0)
+    {
+        *pending_transaction = 1;
+    }
+    /* Commit received for non transactional tables, i.e. MyISAM */
+    else if (strncmp(sql, "COMMIT", 6) == 0)
+    {
+        // TODO: Handle COMMIT
+        *pending_transaction = 0;
     }
 }

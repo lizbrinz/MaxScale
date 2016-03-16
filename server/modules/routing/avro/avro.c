@@ -67,6 +67,10 @@
 static char *version_str = "V1.0.0";
 static const char* avro_task_name = "binlog_to_avro";
 
+/** For detection of CREATE TABLE */
+static const char* create_table_regex =
+    "(?i)^create[a-z0-9[:space:]_]+table";
+
 /* The router entry points */
 static ROUTER *createInstance(SERVICE *service, char **options);
 static void *newSession(ROUTER *instance, SESSION *session);
@@ -334,6 +338,17 @@ createInstance(SERVICE *service, char **options)
                   "by a lack of available memory.");
         free(inst);
         return NULL;
+    }
+
+    int err;
+    size_t erroff;
+
+    pcre2_code *re = pcre2_compile((PCRE2_SPTR) create_table_regex,
+                                   PCRE2_ZERO_TERMINATED, 0, &err, &erroff, NULL);
+
+    if (re)
+    {
+        inst->create_table_re = re;
     }
 
     /* Check binlogdir and avrodir */
