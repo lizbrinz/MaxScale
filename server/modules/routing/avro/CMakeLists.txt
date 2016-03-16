@@ -1,4 +1,4 @@
-add_library(avrorouter SHARED avro.c ../binlog/binlog_common.c avro_client.c avro_schema.c rbr.c avro_file.c)
+add_library(avrorouter SHARED avro.c ../binlog/binlog_common.c avro_client.c avro_schema.c avro_rbr.c avro_file.c)
 set_target_properties(avrorouter PROPERTIES VERSION "1.0.0")
 set_target_properties(avrorouter PROPERTIES LINK_FLAGS -Wl,-z,defs)
 target_link_libraries(avrorouter maxscale-common jansson avro)
