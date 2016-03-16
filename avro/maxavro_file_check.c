@@ -89,7 +89,7 @@ int check_file(const char* filename)
     }
     while (num_rows != 0 && maxavro_next_block(file));
 
-    if (!maxavro_file_eof(file) && num_rows != 0)
+    if (maxavro_get_error(file) != MAXAVRO_ERR_NONE)
     {
         printf("Failed to read next data block after data block %lu. "
                "Read %lu records and %lu bytes before failure.\n",

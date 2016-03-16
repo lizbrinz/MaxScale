@@ -48,21 +48,28 @@ bool maxavro_read_integer(maxavro_file_t* file, uint64_t *dest)
     size_t rdsz;
     do
     {
+        if (nread >= MAX_INTEGER_SIZE)
+        {
+            file->last_error = MAXAVRO_ERR_VALUE_OVERFLOW;
+            return false;
+        }
         if ((rdsz = fread(&byte, sizeof(byte), 1, file->file)) != sizeof(byte))
         {
             // TODO: Integrate log_manager
             if (rdsz != 0)
             {
-                char err[200];
-                printf("Failed to read value: %d %s\n", errno, strerror_r(errno, err, sizeof(err)));
+                file->last_error = MAXAVRO_ERR_IO;
             }
             return false;
         }
         rval |= (uint64_t)(byte & 0x7f) << (nread++ * 7);
     }
-    while (more_bytes(byte) && nread < MAX_INTEGER_SIZE);
+    while (more_bytes(byte));
 
-    *dest = avro_decode(rval);
+    if (dest)
+    {
+        *dest = avro_decode(rval);
+    }
     return true;
 }
 
@@ -113,15 +120,24 @@ char* maxavro_read_string(maxavro_file_t* file)
         key = malloc(len + 1);
         if (key)
         {
-            if (fread(key, 1, len, file->file) == len)
+            size_t nread = fread(key, 1, len, file->file);
+            if (nread == len)
             {
                 key[len] = '\0';
             }
             else
             {
+                if (nread != 0)
+                {
+                    file->last_error = MAXAVRO_ERR_IO;
+                }
                 free(key);
                 key = NULL;
             }
+        }
+        else
+        {
+            file->last_error = MAXAVRO_ERR_MEMORY;
         }
     }
     return key;
@@ -133,7 +149,14 @@ bool maxavro_skip_string(maxavro_file_t* file)
 
     if (maxavro_read_integer(file, &len))
     {
-        return fseek(file->file, len, SEEK_CUR) != -1;
+        if (fseek(file->file, len, SEEK_CUR) != 0)
+        {
+            file->last_error = MAXAVRO_ERR_IO;
+        }
+        else
+        {
+            return true;
+        }
     }
 
     return false;
@@ -162,7 +185,13 @@ bool maxavro_write_string(FILE *file, const char* str)
 
 bool maxavro_read_float(maxavro_file_t* file, float *dest)
 {
-    return fread(dest, 1, sizeof(*dest), file->file) == sizeof(*dest);
+    size_t nread = fread(dest, 1, sizeof(*dest), file->file);
+    if (nread != sizeof(*dest) && nread != 0)
+    {
+        file->last_error = MAXAVRO_ERR_IO;
+        return false;
+    }
+    return nread == sizeof(*dest);
 }
 
 uint64_t maxavro_encode_float(uint8_t* dest, float val)
@@ -183,7 +212,13 @@ bool maxavro_write_float(FILE *file, float val)
 
 bool maxavro_read_double(maxavro_file_t* file, double *dest)
 {
-    return fread(dest, 1, sizeof(*dest), file->file) == sizeof(*dest);
+    size_t nread = fread(dest, 1, sizeof(*dest), file->file);
+    if (nread != sizeof(*dest) && nread != 0)
+    {
+        file->last_error = MAXAVRO_ERR_IO;
+        return false;
+    }
+    return nread == sizeof(*dest);
 }
 
 uint64_t maxavro_encode_double(uint8_t* dest, double val)
@@ -224,6 +259,10 @@ maxavro_map_t* maxavro_map_read(maxavro_file_t *file)
             }
             else
             {
+                if (val == NULL)
+                {
+                    file->last_error = MAXAVRO_ERR_MEMORY;
+                }
                 maxavro_map_free(val);
                 maxavro_map_free(rval);
                 return NULL;

@@ -44,7 +44,7 @@ static json_t* read_and_pack_value(maxavro_file_t *file, enum maxavro_value_type
                 value = json_pack("b", i);
             }
         }
-            break;
+        break;
 
         case MAXAVRO_TYPE_INT:
         case MAXAVRO_TYPE_LONG:
@@ -100,6 +100,7 @@ static void skip_value(maxavro_file_t *file, enum maxavro_value_type type)
         }
         break;
 
+        case MAXAVRO_TYPE_BYTES:
         case MAXAVRO_TYPE_STRING:
         {
             maxavro_skip_string(file);

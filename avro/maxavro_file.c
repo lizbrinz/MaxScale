@@ -68,7 +68,7 @@ bool maxavro_read_datablock_start(maxavro_file_t* file)
         file->records_read_from_block = 0;
         file->block_start_pos = ftell(file->file);
     }
-    else if (!maxavro_file_eof(file))
+    else if (maxavro_get_error(file) != MAXAVRO_ERR_NONE)
     {
         printf("Failed to read data block start.\n");
     }
@@ -145,6 +145,7 @@ maxavro_file_t* maxavro_file_open(const char* filename)
         avrofile->file = file;
         char *schema = read_schema(avrofile);
         avrofile->schema = schema ? maxavro_schema_from_json(schema) : NULL;
+        avrofile->last_error = MAXAVRO_ERR_NONE;
 
         if (!schema || !avrofile->schema ||
             !maxavro_read_sync(file, avrofile->sync) ||
@@ -172,9 +173,9 @@ maxavro_file_t* maxavro_file_open(const char* filename)
  * @param file File to check
  * @return True if end of file has been reached
  */
-bool maxavro_file_eof(maxavro_file_t *file)
+enum maxavro_error maxavro_get_error(maxavro_file_t *file)
 {
-    return feof(file->file);
+    return file->last_error;
 }
 
 /**

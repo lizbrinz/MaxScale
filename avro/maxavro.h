@@ -58,6 +58,14 @@ typedef struct
     size_t num_fields;
 } maxavro_schema_t;
 
+enum maxavro_error
+{
+    MAXAVRO_ERR_NONE,
+    MAXAVRO_ERR_IO,
+    MAXAVRO_ERR_MEMORY,
+    MAXAVRO_ERR_VALUE_OVERFLOW
+};
+
 typedef struct
 {
     FILE* file;
@@ -72,6 +80,7 @@ typedef struct
 
     /** The position @c ftell returns before the first record is read  */
     long block_start_pos;
+    enum maxavro_error last_error; /*< Last error */
     char sync[SYNC_MARKER_SIZE];
 } maxavro_file_t;
 
@@ -143,7 +152,7 @@ bool maxavro_next_block(maxavro_file_t *file);
 /** File operations */
 maxavro_file_t* maxavro_file_open(const char* filename);
 void maxavro_file_close(maxavro_file_t *file);
-bool maxavro_file_eof(maxavro_file_t *file);
+enum maxavro_error maxavro_get_error(maxavro_file_t *file);
 
 /** Schema creation */
 maxavro_schema_t* maxavro_schema_from_json(const char* json);
