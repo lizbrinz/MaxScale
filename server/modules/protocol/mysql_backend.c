@@ -74,7 +74,6 @@ static int gw_change_user(DCB *backend_dcb, SERVER *server, SESSION *in_session,
 static char *gw_backend_default_auth();
 static GWBUF* process_response_data(DCB* dcb, GWBUF* readbuf, int nbytes_to_process);
 extern char* create_auth_failed_msg(GWBUF* readbuf, char* hostaddr, uint8_t* sha1);
-extern char* create_auth_fail_str(char *username, char *hostaddr, char *sha1, char *db, int errcode);
 static bool sescmd_response_complete(DCB* dcb);
 
 

@@ -86,7 +86,9 @@ static int mysql_send_ok(DCB *dcb, int packet_number, int in_affected_rows, cons
 static int MySQLSendHandshake(DCB* dcb);
 static int route_by_statement(SESSION *, GWBUF **);
 static void mysql_client_auth_error_handling(DCB *dcb, int auth_val);
-extern char* create_auth_fail_str(char *username, char *hostaddr, char *sha1, char *db,int);
+static int gw_read_do_authentication(DCB *dcb, GWBUF *read_buffer, int nbytes_read);
+static int gw_read_normal_data(DCB *dcb, GWBUF *read_buffer, int nbytes_read);
+static int gw_read_finish_processing(DCB *dcb, GWBUF *read_buffer, uint8_t capabilities);
 
 /*
  * The "module object" for the mysqld client protocol module.
@@ -169,7 +171,7 @@ int mysql_send_ok(DCB *dcb, int packet_number, int in_affected_rows, const char*
     uint8_t affected_rows = 0;
     uint8_t insert_id = 0;
     uint8_t mysql_server_status[2];
-    uint8_t mysql_warning_count[2];
+    uint8_t mysql_warning_counter[2];
     GWBUF *buf;
 
     affected_rows = in_affected_rows;
@@ -179,7 +181,7 @@ int mysql_send_ok(DCB *dcb, int packet_number, int in_affected_rows, const char*
         sizeof(affected_rows) +
         sizeof(insert_id) +
         sizeof(mysql_server_status) +
-        sizeof(mysql_warning_count);
+        sizeof(mysql_warning_counter);
 
     if (mysql_message != NULL)
     {
@@ -204,8 +206,8 @@ int mysql_send_ok(DCB *dcb, int packet_number, int in_affected_rows, const char*
 
     mysql_server_status[0] = 2;
     mysql_server_status[1] = 0;
-    mysql_warning_count[0] = 0;
-    mysql_warning_count[1] = 0;
+    mysql_warning_counter[0] = 0;
+    mysql_warning_counter[1] = 0;
 
     // write data
     memcpy(mysql_payload, &field_count, sizeof(field_count));
@@ -220,8 +222,8 @@ int mysql_send_ok(DCB *dcb, int packet_number, int in_affected_rows, const char*
     memcpy(mysql_payload, mysql_server_status, sizeof(mysql_server_status));
     mysql_payload = mysql_payload + sizeof(mysql_server_status);
 
-    memcpy(mysql_payload, mysql_warning_count, sizeof(mysql_warning_count));
-    mysql_payload = mysql_payload + sizeof(mysql_warning_count);
+    memcpy(mysql_payload, mysql_warning_counter, sizeof(mysql_warning_counter));
+    mysql_payload = mysql_payload + sizeof(mysql_warning_counter);
 
     if (mysql_message != NULL)
     {
@@ -249,7 +251,7 @@ int MySQLSendHandshake(DCB* dcb)
     uint8_t mysql_filler = GW_MYSQL_HANDSHAKE_FILLER;
     uint8_t mysql_protocol_version = GW_MYSQL_PROTOCOL_VERSION;
     uint8_t *mysql_handshake_payload = NULL;
-    uint8_t mysql_thread_id[4];
+    uint8_t mysql_thread_id_num[4];
     uint8_t mysql_scramble_buf[9] = "";
     uint8_t mysql_plugin_data[13] = "";
     uint8_t mysql_server_capabilities_one[2];
@@ -262,6 +264,7 @@ int MySQLSendHandshake(DCB* dcb)
     char server_scramble[GW_MYSQL_SCRAMBLE_SIZE + 1]="";
     char *version_string;
     int len_version_string = 0;
+    int id_num;
 
     MySQLProtocol *protocol = DCB_PROTOCOL(dcb, MySQLProtocol);
     GWBUF *buf;
@@ -285,17 +288,18 @@ int MySQLSendHandshake(DCB* dcb)
 
     // fill the handshake packet
 
-    memset(&mysql_filler_ten, 0x00, sizeof(mysql_filler_ten));
+    memset(mysql_filler_ten, 0x00, sizeof(mysql_filler_ten));
 
     // thread id, now put thePID
-    gw_mysql_set_byte4(mysql_thread_id, getpid() + dcb->fd);
+    id_num = getpid() + dcb->fd;
+    gw_mysql_set_byte4(mysql_thread_id_num, id_num);
 
     memcpy(mysql_scramble_buf, server_scramble, 8);
 
     memcpy(mysql_plugin_data, server_scramble + 8, 12);
 
     mysql_payload_size =
-        sizeof(mysql_protocol_version) + (len_version_string + 1) + sizeof(mysql_thread_id) + 8 +
+        sizeof(mysql_protocol_version) + (len_version_string + 1) + sizeof(mysql_thread_id_num) + 8 +
         sizeof(mysql_filler) + sizeof(mysql_server_capabilities_one) + sizeof(mysql_server_language) +
         sizeof(mysql_server_status) + sizeof(mysql_server_capabilities_two) + sizeof(mysql_scramble_len) +
         sizeof(mysql_filler_ten) + 12 + sizeof(mysql_last_byte) + strlen("mysql_native_password") +
@@ -332,8 +336,8 @@ int MySQLSendHandshake(DCB* dcb)
     mysql_handshake_payload++;
 
     // write thread id
-    memcpy(mysql_handshake_payload, mysql_thread_id, sizeof(mysql_thread_id));
-    mysql_handshake_payload = mysql_handshake_payload + sizeof(mysql_thread_id);
+    memcpy(mysql_handshake_payload, mysql_thread_id_num, sizeof(mysql_thread_id_num));
+    mysql_handshake_payload = mysql_handshake_payload + sizeof(mysql_thread_id_num);
 
     // write scramble buf
     memcpy(mysql_handshake_payload, mysql_scramble_buf, 8);
@@ -346,11 +350,11 @@ int MySQLSendHandshake(DCB* dcb)
     mysql_server_capabilities_one[1] = GW_MYSQL_SERVER_CAPABILITIES_BYTE2;
 
 
-    mysql_server_capabilities_one[0] &= ~GW_MYSQL_CAPABILITIES_COMPRESS;
+    mysql_server_capabilities_one[0] &= ~(int)GW_MYSQL_CAPABILITIES_COMPRESS;
 
     if (ssl_required_by_dcb(dcb))
     {
-        mysql_server_capabilities_one[1] |= GW_MYSQL_CAPABILITIES_SSL >> 8;
+        mysql_server_capabilities_one[1] |= (int)GW_MYSQL_CAPABILITIES_SSL >> 8;
     }
 
     memcpy(mysql_handshake_payload, mysql_server_capabilities_one, sizeof(mysql_server_capabilities_one));
@@ -423,9 +427,9 @@ int gw_MySQLWrite_client(DCB *dcb, GWBUF *queue)
  */
 int gw_read_client_event(DCB* dcb)
 {
-    MySQLProtocol *protocol = NULL;
+    MySQLProtocol *protocol;
     GWBUF *read_buffer = NULL;
-    int rc = 0;
+    int return_code = 0;
     int nbytes_read = 0;
     int max_bytes = 0;
 
@@ -467,15 +471,17 @@ int gw_read_client_event(DCB* dcb)
     {
         max_bytes = 36;
     }
-    rc = dcb_read(dcb, &read_buffer, max_bytes);
-    if (rc < 0)
+    return_code = dcb_read(dcb, &read_buffer, max_bytes);
+    if (return_code < 0)
     {
         dcb_close(dcb);
     }
     if (0 == (nbytes_read = gwbuf_length(read_buffer)))
     {
-        goto return_rc;
+        return return_code;
     }
+
+    return_code = 0;
 
     switch (protocol->protocol_auth_state)
     {
@@ -492,84 +498,8 @@ int gw_read_client_event(DCB* dcb)
          *
          */
     case MYSQL_AUTH_SENT:
-        {
-            /* int compress = -1; */
-            int auth_val, packet_number;
-            MySQLProtocol *protocol = DCB_PROTOCOL(dcb, MySQLProtocol);
-
-            packet_number = ssl_required_by_dcb(dcb) ? 3 : 2;
-
-            /**
-             * The first step in the authentication process is to extract the
-             * relevant information from the buffer supplied and place it
-             * into a data structure pointed to by the DCB.  The "success"
-             * result is not final, it implies only that the process is so
-             * far successful, not that authentication has completed.  If the
-             * data extraction succeeds, then a call is made to
-             * mysql_auth_authenticate to carry out the actual user checks.
-             */
-            if (MYSQL_AUTH_SUCCEEDED == (
-                auth_val = dcb->authfunc.extract(dcb, read_buffer)))
-            {
-                /*
-                  compress =
-                  GW_MYSQL_CAPABILITIES_COMPRESS & gw_mysql_get_byte4(
-                  &protocol->client_capabilities);
-                */
-                auth_val = dcb->authfunc.authenticate(dcb);
-            }
-
-            /**
-             * At this point, if the auth_val return code indicates success
-             * the user authentication has been successfully completed.
-             * But in order to have a working connection, a session has to
-             * be created.  Provided that is successful (indicated by a
-             * non-null session) then the whole process has succeeded. In all
-             * other cases an error return is made.
-             */
-            if (MYSQL_AUTH_SUCCEEDED == auth_val)
-            {
-                SESSION *session;
-
-                protocol->protocol_auth_state = MYSQL_AUTH_RECV;
-                /**
-                 * Create session, and a router session for it.
-                 * If successful, there will be backend connection(s)
-                 * after this point.
-                 */
-                session = session_alloc(dcb->service, dcb);
-
-                if (session != NULL)
-                {
-                    CHK_SESSION(session);
-                    ss_dassert(session->state != SESSION_STATE_ALLOC &&
-                               session->state != SESSION_STATE_DUMMY);
-
-                    protocol->protocol_auth_state = MYSQL_IDLE;
-                    /**
-                     * Send an AUTH_OK packet to the client,
-                     * packet sequence is # packet_number
-                     */
-                    mysql_send_ok(dcb, packet_number, 0, NULL);
-                }
-                else
-                {
-                    auth_val = MYSQL_AUTH_NO_SESSION;
-                }
-            }
-            if (MYSQL_AUTH_SUCCEEDED != auth_val && MYSQL_AUTH_SSL_INCOMPLETE != auth_val)
-            {
-                protocol->protocol_auth_state = MYSQL_AUTH_FAILED;
-                mysql_client_auth_error_handling(dcb, auth_val);
-                /**
-                 * Close DCB and which will release MYSQL_session
-                 */
-                dcb_close(dcb);
-            }
-            /* One way or another, the buffer is now fully processed */
-            gwbuf_free(read_buffer);
-            read_buffer = NULL;
-        }
+        /* After this call read_buffer will point to freed data */
+        return_code = gw_read_do_authentication(dcb, read_buffer, nbytes_read);
         break;
 
         /**
@@ -580,240 +510,296 @@ int gw_read_client_event(DCB* dcb)
          *
          */
     case MYSQL_IDLE:
-        {
-    ROUTER_OBJECT *router = NULL;
-    ROUTER *router_instance = NULL;
-    void *rsession = NULL;
-    uint8_t cap = 0;
-    bool stmt_input = false; /*< router input type */
-    SESSION *session = dcb->session;
-    if (session != NULL && SESSION_STATE_DUMMY != session->state)
-    {
-        CHK_SESSION(session);
-        router = session->service->router;
-        router_instance = session->service->router_instance;
-        rsession = session->router_session;
-
-        if (NULL == router_instance || NULL == rsession)
-        {
-            /** Send ERR 1045 to client */
-            mysql_send_auth_error(dcb,
-                                  2,
-                                  0,
-                                  "failed to create new session");
-            gwbuf_free(read_buffer);
-            read_buffer = NULL;
-            return 0;
-        }
-
-        /** Ask what type of input the router expects */
-        cap = router->getCapabilities(router_instance, rsession);
-
-        if (cap & RCAP_TYPE_STMT_INPUT)
-        {
-            stmt_input = true;
-            /** Mark buffer to as MySQL type */
-            gwbuf_set_type(read_buffer, GWBUF_TYPE_MYSQL);
-        }
-    }
-
-    /** If the router requires statement input or we are still authenticating
-     * we need to make sure that a complete SQL packet is read before continuing */
-    if (stmt_input || protocol->protocol_auth_state == MYSQL_AUTH_SENT)
-    {
-
-        /**
-         * if read queue existed appent read to it.
-         * if length of read buffer is less than 3 or less than mysql packet
-         *  then return.
-         * else copy mysql packets to separate buffers from read buffer and
-         * continue.
-         * else
-         * if read queue didn't exist, length of read is less than 3 or less
-         * than mysql packet then
-         * create read queue and append to it and return.
-         * if length read is less than mysql packet length append to read queue
-         * append to it and return.
-         * else (complete packet was read) continue.
-         */
-        if (dcb->dcb_readqueue)
-        {
-            uint8_t* data;
-
-            dcb->dcb_readqueue = gwbuf_append(dcb->dcb_readqueue, read_buffer);
-            nbytes_read = gwbuf_length(dcb->dcb_readqueue);
-            data = (uint8_t *)GWBUF_DATA(dcb->dcb_readqueue);
-            int plen = MYSQL_GET_PACKET_LEN(data);
-            if (nbytes_read < 3 || nbytes_read < MYSQL_GET_PACKET_LEN(data) + 4)
-            {
-                rc = 0;
-                goto return_rc;
-            }
-            else
-            {
-                /**
-                 * There is at least one complete mysql packet in
-                 * read_buffer.
-                 */
-                read_buffer = dcb->dcb_readqueue;
-                dcb->dcb_readqueue = NULL;
-            }
-        }
-        else
-        {
-            uint8_t* data = (uint8_t *)GWBUF_DATA(read_buffer);
-
-            if (nbytes_read < 3 || nbytes_read < MYSQL_GET_PACKET_LEN(data) + 4)
-            {
-                dcb->dcb_readqueue = gwbuf_append(dcb->dcb_readqueue, read_buffer);
-                rc = 0;
-                goto return_rc;
-            }
-        }
-
-    }
-
-    /**
-     * Now there should be at least one complete mysql packet in read_buffer.
-     */
-            uint8_t* payload = NULL;
-            session_state_t ses_state;
-
-            session = dcb->session;
-            ss_dassert(session!= NULL && SESSION_STATE_DUMMY != session->state);
-
-            if (session != NULL)
-            {
-                CHK_SESSION(session);
-            }
-            spinlock_acquire(&session->ses_lock);
-            ses_state = session->state;
-            spinlock_release(&session->ses_lock);
-            /* Now, we are assuming in the first buffer there is
-             * the information form mysql command */
-            payload = GWBUF_DATA(read_buffer);
-
-            if (ses_state == SESSION_STATE_ROUTER_READY)
-            {
-                /** Route COM_QUIT to backend */
-                if (MYSQL_IS_COM_QUIT(payload))
-                {
-                    /**
-                     * Sends COM_QUIT packets since buffer is already
-                     * created. A BREF_CLOSED flag is set so dcb_close won't
-                     * send redundant COM_QUIT.
-                     */
-                    /* Temporarily suppressed: SESSION_ROUTE_QUERY(session, read_buffer); */
-                    /* Replaced with freeing the read buffer. */
-                    gwbuf_free(read_buffer);
-                    read_buffer = NULL;
-                    /**
-                     * Close router session which causes closing of backends.
-                     */
-                    dcb_close(dcb);
-                }
-                else
-                {
-                    /** Reset error handler when routing of the new query begins */
-                    dcb->dcb_errhandle_called = false;
-
-                    if (stmt_input)
-                    {
-                        /**
-                         * Feed each statement completely and separately
-                         * to router.
-                         */
-                        rc = route_by_statement(session, &read_buffer);
-
-                        if (read_buffer != NULL)
-                        {
-                            /** add incomplete mysql packet to read queue */
-                            dcb->dcb_readqueue = gwbuf_append(dcb->dcb_readqueue, read_buffer);
-                            read_buffer = NULL;
-                        }
-                    }
-                    else if (NULL != session->router_session || cap & RCAP_TYPE_NO_RSESSION)
-                    {
-                        /** Feed whole packet to router */
-                        rc = SESSION_ROUTE_QUERY(session, read_buffer);
-                        read_buffer = NULL;
-                    }
-                    else
-                    {
-                        rc = 0;
-                    }
-
-                    /** Routing succeed */
-                    if (rc)
-                    {
-                        rc = 0; /**< here '0' means success */
-                    }
-                    else
-                    {
-                        bool succp;
-                        GWBUF* errbuf;
-                        /**
-                         * Create error to be sent to client if session
-                         * can't be continued.
-                         */
-                        errbuf = mysql_create_custom_error(1,
-                                                           0,
-                                                           "Routing failed. Session is closed.");
-                        /**
-                         * Ensure that there are enough backends
-                         * available.
-                         */
-                        router->handleError(router_instance,
-                                            session->router_session,
-                                            errbuf,
-                                            dcb,
-                                            ERRACT_NEW_CONNECTION,
-                                            &succp);
-                        gwbuf_free(errbuf);
-                        /**
-                         * If there are not enough backends close
-                         * session
-                         */
-                        if (!succp)
-                        {
-                            MXS_ERROR("Routing the query failed. "
-                                      "Session will be closed.");
-
-                        }
-                        gwbuf_free(read_buffer);
-                        read_buffer = NULL;
-                    }
-                }
-            }
-            else
-            {
-                MXS_INFO("Session received a query in state %s",
-                         STRSESSIONSTATE(ses_state));
-                while ((read_buffer = GWBUF_CONSUME_ALL(read_buffer)) != NULL)
-                {
-                    ;
-                }
-                goto return_rc;
-            }
-            goto return_rc;
-        } /*  MYSQL_IDLE */
+        /* After this call read_buffer will point to freed data */
+        return_code = gw_read_normal_data(dcb, read_buffer, nbytes_read);
         break;
 
     default:
         break;
     }
-    rc = 0;
 
-return_rc:
-#if defined(SS_DEBUG)
-    if (dcb->state == DCB_STATE_POLLING ||
-        dcb->state == DCB_STATE_NOPOLLING ||
-        dcb->state == DCB_STATE_ZOMBIE)
+    return return_code;
+}
+
+/**
+ * @brief Client read event, process when client not yet authenticated
+ *
+ * @param dcb           Descriptor control block
+ * @param read_buffer   A buffer containing the data read from client
+ * @param nbytes_read   The number of bytes of data read
+ * @return 0 if succeed, 1 otherwise
+ */
+static int
+gw_read_do_authentication(DCB *dcb, GWBUF *read_buffer, int nbytes_read)
+{
+    MySQLProtocol *protocol;
+    int auth_val;
+
+    protocol = (MySQLProtocol *)dcb->protocol;
+    /* int compress = -1; */
+
+    /**
+     * The first step in the authentication process is to extract the
+     * relevant information from the buffer supplied and place it
+     * into a data structure pointed to by the DCB.  The "success"
+     * result is not final, it implies only that the process is so
+     * far successful, not that authentication has completed.  If the
+     * data extraction succeeds, then a call is made to the actual
+     * authenticate function to carry out the user checks.
+     */
+    if (MYSQL_AUTH_SUCCEEDED == (
+        auth_val = dcb->authfunc.extract(dcb, read_buffer)))
     {
-        CHK_PROTOCOL(protocol);
+        /*
+         * Maybe this comment will be useful some day:
+          compress =
+          GW_MYSQL_CAPABILITIES_COMPRESS & gw_mysql_get_byte4(
+          &protocol->client_capabilities);
+        */
+        auth_val = dcb->authfunc.authenticate(dcb);
     }
-#endif
-    return rc;
+
+    /**
+     * At this point, if the auth_val return code indicates success
+     * the user authentication has been successfully completed.
+     * But in order to have a working connection, a session has to
+     * be created.  Provided that is also successful (indicated by a
+     * non-null session) then the whole process has succeeded. In all
+     * other cases an error return is made.
+     */
+    if (MYSQL_AUTH_SUCCEEDED == auth_val)
+    {
+        SESSION *session;
+
+        protocol->protocol_auth_state = MYSQL_AUTH_RECV;
+        /**
+         * Create session, and a router session for it.
+         * If successful, there will be backend connection(s)
+         * after this point. The protocol authentication state
+         * is changed so that future data will go through the
+         * normal data handling function instead of this one.
+         */
+        session = session_alloc(dcb->service, dcb);
+
+        if (session != NULL)
+        {
+            int packet_number = ssl_required_by_dcb(dcb) ? 3 : 2;
+
+            CHK_SESSION(session);
+            ss_dassert(session->state != SESSION_STATE_ALLOC &&
+                session->state != SESSION_STATE_DUMMY);
+
+            protocol->protocol_auth_state = MYSQL_IDLE;
+            /**
+             * Send an AUTH_OK packet to the client,
+             * packet sequence is # packet_number
+             */
+            mysql_send_ok(dcb, packet_number, 0, NULL);
+        }
+        else
+        {
+            auth_val = MYSQL_AUTH_NO_SESSION;
+        }
+    }
+    /**
+     * If we did not get success throughout, then the protocol state is updated,
+     * the client is notified of the failure and the DCB is closed.
+     */
+    if (MYSQL_AUTH_SUCCEEDED != auth_val && MYSQL_AUTH_SSL_INCOMPLETE != auth_val)
+    {
+        protocol->protocol_auth_state = MYSQL_AUTH_FAILED;
+        mysql_client_auth_error_handling(dcb, auth_val);
+        /**
+         * Close DCB and which will release MYSQL_session
+         */
+        dcb_close(dcb);
+    }
+    /* One way or another, the buffer is now fully processed */
+    gwbuf_free(read_buffer);
+    return 0;
+}
+
+/**
+ * @brief Client read event, process data, client already authenticated
+ *
+ * First do some checks and get the router capabilities.  If the router
+ * wants to process each individual statement, then the data must be split
+ * into individual SQL statements. Any data that is left over is held in the
+ * DCB read queue.
+ *
+ * Finally, the general client data processing function is called.
+ *
+ * @param dcb           Descriptor control block
+ * @param read_buffer   A buffer containing the data read from client
+ * @param nbytes_read   The number of bytes of data read
+ * @return 0 if succeed, 1 otherwise
+ */
+static int
+gw_read_normal_data(DCB *dcb, GWBUF *read_buffer, int nbytes_read)
+{
+    SESSION *session;
+    session_state_t session_state_value;
+    uint8_t capabilities = 0;
+
+    session = dcb->session;
+    CHK_SESSION(session);
+    session_state_value = session->state;
+    if (session_state_value != SESSION_STATE_ROUTER_READY)
+    {
+        MXS_ERROR("Session received a query in incorrect state %s",
+            STRSESSIONSTATE(session_state_value));
+        return 1;
+    }
+
+    /** Ask what type of input the router expects */
+    capabilities = session->service->router->getCapabilities(
+        session->service->router_instance, session->router_session);
+
+    /** If the router requires statement input or we are still authenticating
+     * we need to make sure that a complete SQL packet is read before continuing */
+    if (capabilities & (int)RCAP_TYPE_STMT_INPUT)
+    {
+        uint8_t* data;
+        int packet_size;
+
+        /** Mark buffer to as MySQL type */
+        gwbuf_set_type(read_buffer, GWBUF_TYPE_MYSQL);
+        /**
+         * if read queue existed append the new read to it and
+         * recalculate the total number of bytes available, nbytes_read.
+         * If length of read buffer is less than 3 or less than
+         * mysql packet size, then put all available data into the
+         * read queue and return.
+         *
+         * Otherwise we know that at least one complete packet has
+         * been read, so empty the read queue and continue.
+         */
+        if (dcb->dcb_readqueue)
+        {
+            read_buffer = gwbuf_append(dcb->dcb_readqueue, read_buffer);
+            nbytes_read = gwbuf_length(dcb->dcb_readqueue);
+        }
+        data = (uint8_t *)GWBUF_DATA(read_buffer);
+        packet_size = MYSQL_GET_PACKET_LEN(data) + 4;
+        if (nbytes_read < 3 || nbytes_read < packet_size)
+        {
+            /* All the data goes into the read queue */
+            dcb->dcb_readqueue = read_buffer;
+            return 0;
+        }
+        else
+        {
+            /**
+             * There is at least one complete mysql packet in
+             * read_buffer. Ensure the read queue is empty, any
+             * data that was there is now in read_buffer.
+             */
+            dcb->dcb_readqueue = NULL;
+        }
+        /**
+         * Now there should be at least one complete mysql packet in read_buffer.
+         */
+    }
+    return gw_read_finish_processing(dcb, read_buffer, capabilities);
+}
+
+/**
+ * @brief Client read event, common processing after single statement handling
+ *
+ * @param dcb           Descriptor control block
+ * @param read_buffer   A buffer containing the data read from client
+ * @param capabilities  The router capabilities flags
+ * @return 0 if succeed, 1 otherwise
+ */
+static int
+gw_read_finish_processing(DCB *dcb, GWBUF *read_buffer, uint8_t capabilities)
+{
+    SESSION *session = dcb->session;
+    uint8_t *payload = GWBUF_DATA(read_buffer);
+    int return_code = 0;
+
+    /* Now, we are assuming in the first buffer there is
+     * the information for mysql command */
+    /* Route COM_QUIT to backend */
+    if (MYSQL_IS_COM_QUIT(payload))
+    {
+        /**
+         * Sends COM_QUIT packets since buffer is already
+         * created. A BREF_CLOSED flag is set so dcb_close won't
+         * send redundant COM_QUIT.
+         */
+        /* Temporarily suppressed: SESSION_ROUTE_QUERY(session, read_buffer); */
+        /* Replaced with freeing the read buffer. */
+        gwbuf_free(read_buffer);
+        /**
+         * Close router session which causes closing of backends.
+         */
+        dcb_close(dcb);
+    }
+    else
+    {
+        /** Reset error handler when routing of the new query begins */
+        dcb->dcb_errhandle_called = false;
+
+        if (capabilities & (int)RCAP_TYPE_STMT_INPUT)
+        {
+            /**
+             * Feed each statement completely and separately
+             * to router. The routing functions return 1 for
+             * success or 0 for failure.
+             */
+            return_code = route_by_statement(session, &read_buffer) ? 0 : 1;
+
+            if (read_buffer != NULL)
+            {
+                /* Must have been data left over */
+                /* Add incomplete mysql packet to read queue */
+                dcb->dcb_readqueue = gwbuf_append(dcb->dcb_readqueue, read_buffer);
+            }
+        }
+        else if (NULL != session->router_session || (capabilities & (int)RCAP_TYPE_NO_RSESSION))
+        {
+            /** Feed whole packet to router, which will free it
+             *  and return 1 for success, 0 for failure
+             */
+            return_code = SESSION_ROUTE_QUERY(session, read_buffer) ? 0 : 1;
+        }
+        /* else return_code is still 0 from when it was originally set */
+        /* Note that read_buffer has been freed or transferred by this point */
+
+        /** Routing failed */
+        if (return_code != 0)
+        {
+            bool router_can_continue;
+            GWBUF* errbuf;
+            /**
+             * Create error to be sent to client if session
+             * can't be continued.
+             */
+            errbuf = mysql_create_custom_error(1, 0,
+                "Routing failed. Session is closed.");
+            /**
+             * Ensure that there are enough backends
+             * available for router to continue operation.
+             */
+            session->service->router->handleError(session->service->router_instance,
+                session->router_session,
+                errbuf,
+                dcb,
+                ERRACT_NEW_CONNECTION,
+                &router_can_continue);
+            gwbuf_free(errbuf);
+            /**
+             * If the router cannot continue, close session
+             */
+            if (!router_can_continue)
+            {
+                MXS_ERROR("Routing the query failed. "
+                    "Session will be closed.");
+            }
+        }
+    }
+    return return_code;
 }
 
 /**
@@ -845,6 +831,7 @@ mysql_client_auth_error_handling(DCB *dcb, int auth_val)
             packet_number,
             0,
             "failed to create new session");
+        break;
     case MYSQL_FAILED_AUTH_DB:
         MXS_DEBUG("%lu [gw_read_client_event] database "
             "specified was not valid. fd %d, "
@@ -859,6 +846,7 @@ mysql_client_auth_error_handling(DCB *dcb, int auth_val)
         (char*)((MYSQL_session *)dcb->data)->db);
 
         modutil_send_mysql_err_packet(dcb, packet_number, 0, 1049, "42000", fail_str);
+        break;
     case MYSQL_FAILED_AUTH_SSL:
         MXS_DEBUG("%lu [gw_read_client_event] client is "
             "not SSL capable for SSL listener. fd %d, "
@@ -871,6 +859,7 @@ mysql_client_auth_error_handling(DCB *dcb, int auth_val)
             packet_number,
             0,
             "failed to complete SSL authentication");
+        break;
     case MYSQL_AUTH_SSL_INCOMPLETE:
         MXS_DEBUG("%lu [gw_read_client_event] unable to "
             "complete SSL authentication. fd %d, "
@@ -883,6 +872,7 @@ mysql_client_auth_error_handling(DCB *dcb, int auth_val)
             packet_number,
             0,
             "failed to complete SSL authentication");
+        break;
     case MYSQL_FAILED_AUTH:
         MXS_DEBUG("%lu [gw_read_client_event] authentication failed. fd %d, "
             "state = MYSQL_FAILED_AUTH.",
@@ -894,6 +884,7 @@ mysql_client_auth_error_handling(DCB *dcb, int auth_val)
             (char*)((MYSQL_session *)dcb->data)->client_sha1,
             (char*)((MYSQL_session *)dcb->data)->db, auth_val);
         modutil_send_mysql_err_packet(dcb, packet_number, 0, 1045, "28000", fail_str);
+        break;
     default:
         MXS_DEBUG("%lu [gw_read_client_event] authentication failed. fd %d, "
             "state unrecognized.",
