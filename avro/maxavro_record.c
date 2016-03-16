@@ -36,6 +36,16 @@ static json_t* read_and_pack_value(maxavro_file_t *file, enum maxavro_value_type
     json_t* value = NULL;
     switch (type)
     {
+        case MAXAVRO_TYPE_BOOL:
+        {
+            int i = 0;
+            if (fread(&i, 1, 1, file->file) == 1)
+            {
+                value = json_pack("b", i);
+            }
+        }
+            break;
+
         case MAXAVRO_TYPE_INT:
         case MAXAVRO_TYPE_LONG:
         {
