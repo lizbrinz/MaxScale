@@ -33,7 +33,7 @@ static bool dump = false;
 
 int check_file(const char* filename)
 {
-    maxavro_file_t *file = avro_file_open(filename);
+    maxavro_file_t *file = maxavro_file_open(filename);
 
     if (!file)
     {
@@ -61,11 +61,11 @@ int check_file(const char* filename)
     do
     {
         uint64_t records, data_size;
-        if (avro_read_datablock_start(file, &records, &data_size))
+        if (maxavro_read_datablock_start(file, &records, &data_size))
         {
             if (seekto > 0)
             {
-                avro_record_seek(file, seekto);
+                maxavro_record_seek(file, seekto);
                 seekto = 0;
             }
             total_records += records;
@@ -75,7 +75,7 @@ int check_file(const char* filename)
             if (verbose > 1 || dump)
             {
                 json_t* row;
-                while (num_rows != 0 && (row = avro_record_read(file)))
+                while (num_rows != 0 && (row = maxavro_record_read(file)))
                 {
                     char *json = json_dumps(row, JSON_PRESERVE_ORDER);
                     printf("%s\n", json);
@@ -102,9 +102,9 @@ int check_file(const char* filename)
             break;
         }
     }
-    while (num_rows != 0 && avro_verify_block(file));
+    while (num_rows != 0 && maxavro_verify_block(file));
 
-    if (!avro_file_is_eof(file) && num_rows != 0)
+    if (!maxavro_file_eof(file) && num_rows != 0)
     {
         printf("Failed to read next data block after data block %lu. "
                "Read %lu records and %lu bytes before failure.\n",
@@ -117,7 +117,7 @@ int check_file(const char* filename)
     }
 
 
-    avro_file_close(file);
+    maxavro_file_close(file);
     return rval;
 }
 

@@ -27,7 +27,7 @@
 static char* read_schema(maxavro_file_t* file)
 {
     char *rval = NULL;
-    maxavro_map_t* head = avro_map_read(file);
+    maxavro_map_t* head = maxavro_map_read(file);
     maxavro_map_t* map = head;
 
     while (map)
@@ -40,7 +40,7 @@ static char* read_schema(maxavro_file_t* file)
         map = map->next;
     }
 
-    avro_map_free(head);
+    maxavro_map_free(head);
     return rval;
 }
 
@@ -53,7 +53,7 @@ static char* read_schema(maxavro_file_t* file)
  * @param filename File to open
  * @return Pointer to opened file or NULL if an error occurred
  */
-maxavro_file_t* avro_file_open(const char* filename)
+maxavro_file_t* maxavro_file_open(const char* filename)
 {
     FILE *file = fopen(filename, "rb");
     if (!file)
@@ -87,7 +87,7 @@ maxavro_file_t* avro_file_open(const char* filename)
         avrofile->schema = schema ? maxavro_schema_from_json(schema) : NULL;
 
         if (schema == NULL || avrofile->schema == NULL ||
-            !avro_read_sync(file, avrofile->sync))
+            !maxavro_read_sync(file, avrofile->sync))
         {
             free(schema);
             free(avrofile->schema);
@@ -110,7 +110,7 @@ maxavro_file_t* avro_file_open(const char* filename)
  * @param file File to check
  * @return True if end of file has been reached
  */
-bool avro_file_is_eof(maxavro_file_t *file)
+bool maxavro_file_eof(maxavro_file_t *file)
 {
     return feof(file->file);
 }
@@ -119,7 +119,7 @@ bool avro_file_is_eof(maxavro_file_t *file)
  * @brief Close an avro file
  * @param file File to close
  */
-void avro_file_close(maxavro_file_t *file)
+void maxavro_file_close(maxavro_file_t *file)
 {
     fclose(file->file);
     free(file->schema);

@@ -32,28 +32,28 @@ static json_t* read_and_pack_value(maxavro_file_t *file, enum maxavro_value_type
     json_t* value = NULL;
     switch (type)
     {
-        case AVRO_TYPE_INT:
-        case AVRO_TYPE_LONG:
+        case MAXAVRO_TYPE_INT:
+        case MAXAVRO_TYPE_LONG:
         {
             uint64_t val = 0;
-            avro_read_integer(file, &val);
+            maxavro_read_integer(file, &val);
             json_int_t jsonint = val;
             value = json_pack("I", jsonint);
         }
         break;
 
-        case AVRO_TYPE_FLOAT:
-        case AVRO_TYPE_DOUBLE:
+        case MAXAVRO_TYPE_FLOAT:
+        case MAXAVRO_TYPE_DOUBLE:
         {
             double d = 0;
-            avro_read_double(file, &d);
+            maxavro_read_double(file, &d);
             value = json_pack("f",  d);
         }
         break;
 
-        case AVRO_TYPE_STRING:
+        case MAXAVRO_TYPE_STRING:
         {
-            char *str = avro_read_string(file);
+            char *str = maxavro_read_string(file);
             value = json_pack("s", str);
         }
         break;
@@ -69,25 +69,25 @@ static void skip_value(maxavro_file_t *file, enum maxavro_value_type type)
 {
     switch (type)
     {
-        case AVRO_TYPE_INT:
-        case AVRO_TYPE_LONG:
+        case MAXAVRO_TYPE_INT:
+        case MAXAVRO_TYPE_LONG:
         {
             uint64_t val = 0;
-            avro_read_integer(file, &val);
+            maxavro_read_integer(file, &val);
         }
         break;
 
-        case AVRO_TYPE_FLOAT:
-        case AVRO_TYPE_DOUBLE:
+        case MAXAVRO_TYPE_FLOAT:
+        case MAXAVRO_TYPE_DOUBLE:
         {
             double d = 0;
-            avro_read_double(file, &d);
+            maxavro_read_double(file, &d);
         }
         break;
 
-        case AVRO_TYPE_STRING:
+        case MAXAVRO_TYPE_STRING:
         {
-            avro_skip_string(file);
+            maxavro_skip_string(file);
         }
         break;
 
@@ -103,7 +103,7 @@ static void skip_value(maxavro_file_t *file, enum maxavro_value_type type)
  * @param file File to read from
  * @return JSON value or NULL if an error occurred
  */
-json_t* avro_record_read(maxavro_file_t *file)
+json_t* maxavro_record_read(maxavro_file_t *file)
 {
     json_t* object = NULL;
 
@@ -113,7 +113,7 @@ json_t* avro_record_read(maxavro_file_t *file)
 
         if (object)
         {
-            for (size_t i = 0; i < file->schema->size; i++)
+            for (size_t i = 0; i < file->schema->num_fields; i++)
             {
                 json_t* value = read_and_pack_value(file, file->schema->fields[i].type);
                 if (value)
@@ -132,7 +132,7 @@ json_t* avro_record_read(maxavro_file_t *file)
 
 static void skip_record(maxavro_file_t *file)
 {
-    for (size_t i = 0; i < file->schema->size; i++)
+    for (size_t i = 0; i < file->schema->num_fields; i++)
     {
         skip_value(file, file->schema->fields[i].type);
     }
@@ -158,7 +158,7 @@ static bool read_next_block(maxavro_file_t *file)
         fseek(file->file, offset, SEEK_CUR);
     }
 
-    return avro_verify_block(file) && avro_read_datablock_start(file, &rec, &size);
+    return maxavro_verify_block(file) && maxavro_read_datablock_start(file, &rec, &size);
 }
 
 /**
@@ -169,7 +169,7 @@ static bool read_next_block(maxavro_file_t *file)
  * @param position
  * @return
  */
-bool avro_record_seek(maxavro_file_t *file, uint64_t offset)
+bool maxavro_record_seek(maxavro_file_t *file, uint64_t offset)
 {
     bool rval = true;
 

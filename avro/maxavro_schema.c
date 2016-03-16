@@ -20,17 +20,17 @@
 #include <jansson.h>
 #include <string.h>
 
-static const maxavro_schema_field_t types[AVRO_TYPE_MAX] =
+static const maxavro_schema_field_t types[MAXAVRO_TYPE_MAX] =
 {
-    {"int", AVRO_TYPE_INT},
-    {"long", AVRO_TYPE_LONG},
-    {"float", AVRO_TYPE_FLOAT},
-    {"double", AVRO_TYPE_DOUBLE},
-    {"bool", AVRO_TYPE_BOOL},
-    {"bytes", AVRO_TYPE_BYTES},
-    {"string", AVRO_TYPE_STRING},
-    {"null", AVRO_TYPE_NULL},
-    {NULL, AVRO_TYPE_UNKNOWN}
+    {"int", MAXAVRO_TYPE_INT},
+    {"long", MAXAVRO_TYPE_LONG},
+    {"float", MAXAVRO_TYPE_FLOAT},
+    {"double", MAXAVRO_TYPE_DOUBLE},
+    {"bool", MAXAVRO_TYPE_BOOL},
+    {"bytes", MAXAVRO_TYPE_BYTES},
+    {"string", MAXAVRO_TYPE_STRING},
+    {"null", MAXAVRO_TYPE_NULL},
+    {NULL, MAXAVRO_TYPE_UNKNOWN}
 };
 
 static enum maxavro_value_type string_to_type(const char *str)
@@ -42,7 +42,7 @@ static enum maxavro_value_type string_to_type(const char *str)
             return types[i].type;
         }
     }
-    return AVRO_TYPE_UNKNOWN;
+    return MAXAVRO_TYPE_UNKNOWN;
 }
 
 static const char* type_to_string(enum maxavro_value_type type)
@@ -59,7 +59,7 @@ static const char* type_to_string(enum maxavro_value_type type)
 
 static enum maxavro_value_type unpack_to_type(json_t *object)
 {
-    enum maxavro_value_type rval = AVRO_TYPE_UNKNOWN;
+    enum maxavro_value_type rval = MAXAVRO_TYPE_UNKNOWN;
 
     if (json_is_object(object))
     {
@@ -102,7 +102,7 @@ maxavro_schema_t* maxavro_schema_from_json(const char* json)
         char *dump = json_dumps(field_arr, JSON_PRESERVE_ORDER);
         size_t arr_size = json_array_size(field_arr);
         rval->fields = malloc(sizeof(maxavro_schema_field_t) * arr_size);
-        rval->size = arr_size;
+        rval->num_fields = arr_size;
 
         for (int i = 0; i < arr_size; i++)
         {
@@ -128,7 +128,7 @@ void maxavro_schema_free(maxavro_schema_t* schema)
 {
     if (schema)
     {
-        for (int i = 0; i < schema->size; i++)
+        for (int i = 0; i < schema->num_fields; i++)
         {
             free(schema->fields[i].name);
         }

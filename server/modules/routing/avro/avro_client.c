@@ -79,8 +79,6 @@ void poll_fake_write_event(DCB *dcb);
 int
 avro_client_handle_request(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *queue)
 {
-    GWBUF *reply = gwbuf_alloc(5);
-    uint8_t *ptr = GWBUF_DATA(reply);
     int reg_ret;
 
     switch (client->state)
@@ -94,7 +92,7 @@ avro_client_handle_request(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *qu
             reg_ret = avro_client_do_registration(router, client, queue);
 
             /* discard data in incoming buffer */
-            while ((queue = gwbuf_consume(queue, GWBUF_LENGTH(queue))) != NULL);
+            gwbuf_free(queue);
 
             if (reg_ret == 0)
             {
@@ -148,19 +146,19 @@ avro_client_handle_request(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *qu
 static int
 avro_client_do_registration(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *data)
 {
-    int reg_rc = 0;
-    int data_len = GWBUF_LENGTH(data) - strlen("REGISTER UUID=");
+    const char reg_uuid[] = "REGISTER UUID=";
+    int data_len = GWBUF_LENGTH(data) - sizeof(reg_uuid);
     char *request = GWBUF_DATA(data);
     /* 36 +1 */
     char uuid[CDC_UUID_LEN + 1];
     int ret = 0;
 
-    if (strstr(request, "REGISTER UUID=") != NULL)
+    if (strstr(request, reg_uuid) != NULL)
     {
         char *tmp_ptr;
         char *sep_ptr;
         int uuid_len = (data_len > CDC_UUID_LEN) ? CDC_UUID_LEN : data_len;
-        strncpy(uuid, request + strlen("REGISTER UUID="), uuid_len);
+        strncpy(uuid, request + sizeof(reg_uuid), uuid_len);
         uuid[uuid_len] = '\0';
 
         if ((sep_ptr = strchr(uuid, ',')) != NULL)
@@ -188,7 +186,7 @@ avro_client_do_registration(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *d
         if (data_len > 0)
         {
             /* Check for CDC request type */
-            tmp_ptr = strstr(request + strlen("REGISTER UUID=") + uuid_len, "TYPE=");
+            tmp_ptr = strstr(request + sizeof(reg_uuid) + uuid_len, "TYPE=");
             if (tmp_ptr)
             {
                 int cdc_type_len = (data_len > CDC_TYPE_LEN) ? CDC_TYPE_LEN : data_len;
@@ -223,25 +221,7 @@ avro_client_do_registration(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *d
 }
 
 /**
- * Encode a value into a number of bits in a AVRO format
- *
- * @param   data    Pointer to location in target packet
- * @param   value   The value to encode into the buffer
- * @param   len Number of bits to encode value into
- */
-static void
-avro_encode_value(unsigned char *data, unsigned int value, int len)
-{
-    while (len > 0)
-    {
-        *data++ = value & 0xff;
-        value >>= 8;
-        len -= 8;
-    }
-}
-
-/**
- * Process commmand from client
+ * Process command from client
  *
  * @param router     The router instance
  * @param client     The specific client data
@@ -251,17 +231,18 @@ avro_encode_value(unsigned char *data, unsigned int value, int len)
 static void
 avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *queue)
 {
+    const char req_data[] = "REQUEST-DATA";
     uint8_t *data = GWBUF_DATA(queue);
     uint8_t *ptr;
     char *command_ptr;
 
-    command_ptr = strstr((char *)data, "REQUEST-DATA");
+    command_ptr = strstr((char *)data, req_data);
 
     if (command_ptr != NULL)
     {
         char avro_file[AVRO_MAX_FILENAME_LEN + 1];
-        char *file_ptr = command_ptr + strlen("REQUEST-DATA");
-        int data_len = GWBUF_LENGTH(queue) - strlen("REQUEST-DATA");
+        char *file_ptr = command_ptr + sizeof(req_data);
+        int data_len = GWBUF_LENGTH(queue) - sizeof(req_data);
 
         if (data_len > 1)
         {
@@ -275,7 +256,7 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
                 *cmd_sep = '\0';
             }
 
-            strcpy(client->avrofile, avro_file);
+            strncpy(client->avrofile, avro_file, sizeof(client->avrofile));
 
             avro_client_avro_to_json_ouput(router, client, avro_file);
         }
@@ -318,7 +299,7 @@ avro_client_avro_to_json_ouput(AVRO_INSTANCE *router, AVRO_CLIENT *client, char 
     }
     else
     {
-        if (strlen(avro_file))
+        if (strnlen(avro_file, 1))
         {
             snprintf(filename, PATH_MAX, "%s/%s.avro", router->avrodir, avro_file);
             filename[PATH_MAX] = '\0';

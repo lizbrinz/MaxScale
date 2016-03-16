@@ -21,7 +21,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 
-maxavro_datablock_t* avro_datablock_allocate(maxavro_file_t *file, size_t buffersize)
+maxavro_datablock_t* maxavro_datablock_allocate(maxavro_file_t *file, size_t buffersize)
 {
     maxavro_datablock_t *datablock = malloc(sizeof(maxavro_datablock_t));
 
@@ -36,7 +36,7 @@ maxavro_datablock_t* avro_datablock_allocate(maxavro_file_t *file, size_t buffer
     return datablock;
 }
 
-void avro_datablock_free(maxavro_datablock_t* block)
+void maxavro_datablock_free(maxavro_datablock_t* block)
 {
     if (block)
     {
@@ -45,7 +45,7 @@ void avro_datablock_free(maxavro_datablock_t* block)
     }
 }
 
-bool avro_datablock_finalize(maxavro_datablock_t* block)
+bool maxavro_datablock_finalize(maxavro_datablock_t* block)
 {
     bool rval = true;
     FILE *file = block->avrofile->file;
@@ -53,8 +53,8 @@ bool avro_datablock_finalize(maxavro_datablock_t* block)
     /** Store the current position so we can truncate the file if a write fails */
     long pos = ftell(file);
 
-    if (!avro_write_integer(file, block->records) ||
-        !avro_write_integer(file, block->datasize) ||
+    if (!maxavro_write_integer(file, block->records) ||
+        !maxavro_write_integer(file, block->datasize) ||
         fwrite(block->buffer, 1, block->datasize, file) != block->datasize ||
         fwrite(block->avrofile->sync, 1, SYNC_MARKER_SIZE, file) != SYNC_MARKER_SIZE)
     {
@@ -86,50 +86,50 @@ static bool reallocate_datablock(maxavro_datablock_t *block)
     return true;
 }
 
-bool avro_datablock_add_integer(maxavro_datablock_t *block, uint64_t val)
+bool maxavro_datablock_add_integer(maxavro_datablock_t *block, uint64_t val)
 {
     if (block->datasize + 9 >= block->buffersize && !reallocate_datablock(block))
     {
         return false;
     }
 
-    uint64_t added = avro_encode_integer(block->buffer + block->datasize, val);
+    uint64_t added = maxavro_encode_integer(block->buffer + block->datasize, val);
     block->datasize += added;
     return true;
 }
 
-bool avro_datablock_add_string(maxavro_datablock_t *block, const char* str)
+bool maxavro_datablock_add_string(maxavro_datablock_t *block, const char* str)
 {
     if (block->datasize + 9 + strlen(str) >= block->buffersize && !reallocate_datablock(block))
     {
         return false;
     }
 
-    uint64_t added = avro_encode_string(block->buffer + block->datasize, str);
+    uint64_t added = maxavro_encode_string(block->buffer + block->datasize, str);
     block->datasize += added;
     return true;
 }
 
-bool avro_datablock_add_float(maxavro_datablock_t *block, float val)
+bool maxavro_datablock_add_float(maxavro_datablock_t *block, float val)
 {
     if (block->datasize + sizeof(val) >= block->buffersize && !reallocate_datablock(block))
     {
         return false;
     }
 
-    uint64_t added = avro_encode_float(block->buffer + block->datasize, val);
+    uint64_t added = maxavro_encode_float(block->buffer + block->datasize, val);
     block->datasize += added;
     return true;
 }
 
-bool avro_datablock_add_double(maxavro_datablock_t *block, double val)
+bool maxavro_datablock_add_double(maxavro_datablock_t *block, double val)
 {
     if (block->datasize + sizeof(val) >= block->buffersize && !reallocate_datablock(block))
     {
         return false;
     }
 
-    uint64_t added = avro_encode_double(block->buffer + block->datasize, val);
+    uint64_t added = maxavro_encode_double(block->buffer + block->datasize, val);
     block->datasize += added;
     return true;
 }

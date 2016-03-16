@@ -40,7 +40,7 @@
  * @param dest Destination where the read value is written
  * @return True if value was read successfully
  */
-bool avro_read_integer(maxavro_file_t* file, uint64_t *dest)
+bool maxavro_read_integer(maxavro_file_t* file, uint64_t *dest)
 {
     uint64_t rval = 0;
     uint8_t nread = 0;
@@ -66,7 +66,7 @@ bool avro_read_integer(maxavro_file_t* file, uint64_t *dest)
     return true;
 }
 
-uint64_t avro_encode_integer(uint8_t* buffer, uint64_t val)
+uint64_t maxavro_encode_integer(uint8_t* buffer, uint64_t val)
 {
     uint64_t encval = encode_long(val);
     uint8_t nbytes = 0;
@@ -96,19 +96,19 @@ uint64_t avro_length_integer(uint64_t val)
 }
 
 
-bool avro_write_integer(FILE *file, uint64_t val)
+bool maxavro_write_integer(FILE *file, uint64_t val)
 {
     uint8_t buffer[MAX_INTEGER_SIZE];
-    uint8_t nbytes = avro_encode_integer(buffer, val);
+    uint8_t nbytes = maxavro_encode_integer(buffer, val);
     return fwrite(buffer, 1, nbytes, file) == nbytes;
 }
 
-char* avro_read_string(maxavro_file_t* file)
+char* maxavro_read_string(maxavro_file_t* file)
 {
     char *key = NULL;
     uint64_t len;
 
-    if (avro_read_integer(file, &len))
+    if (maxavro_read_integer(file, &len))
     {
         key = malloc(len + 1);
         if (key)
@@ -127,11 +127,11 @@ char* avro_read_string(maxavro_file_t* file)
     return key;
 }
 
-bool avro_skip_string(maxavro_file_t* file)
+bool maxavro_skip_string(maxavro_file_t* file)
 {
     uint64_t len;
 
-    if (avro_read_integer(file, &len))
+    if (maxavro_read_integer(file, &len))
     {
         return fseek(file->file, len, SEEK_CUR) != -1;
     }
@@ -139,10 +139,10 @@ bool avro_skip_string(maxavro_file_t* file)
     return false;
 }
 
-uint64_t avro_encode_string(uint8_t* dest, const char* str)
+uint64_t maxavro_encode_string(uint8_t* dest, const char* str)
 {
     uint64_t slen = strlen(str);
-    uint64_t ilen = avro_encode_integer(dest, slen);
+    uint64_t ilen = maxavro_encode_integer(dest, slen);
     memcpy(dest, str, slen);
     return slen + ilen;
 }
@@ -154,18 +154,18 @@ uint64_t avro_length_string(const char* str)
     return slen + ilen;
 }
 
-bool avro_write_string(FILE *file, const char* str)
+bool maxavro_write_string(FILE *file, const char* str)
 {
     uint64_t len = strlen(str);
-    return avro_write_integer(file, len) && fwrite(str, 1, len, file) == len;
+    return maxavro_write_integer(file, len) && fwrite(str, 1, len, file) == len;
 }
 
-bool avro_read_float(maxavro_file_t* file, float *dest)
+bool maxavro_read_float(maxavro_file_t* file, float *dest)
 {
     return fread(dest, 1, sizeof(*dest), file->file) == sizeof(*dest);
 }
 
-uint64_t avro_encode_float(uint8_t* dest, float val)
+uint64_t maxavro_encode_float(uint8_t* dest, float val)
 {
     memcpy(dest, &val, sizeof(val));
     return sizeof(val);
@@ -176,17 +176,17 @@ uint64_t avro_length_float(float val)
     return sizeof(val);
 }
 
-bool avro_write_float(FILE *file, float val)
+bool maxavro_write_float(FILE *file, float val)
 {
     return fwrite(&val, 1, sizeof(val), file) == sizeof(val);
 }
 
-bool avro_read_double(maxavro_file_t* file, double *dest)
+bool maxavro_read_double(maxavro_file_t* file, double *dest)
 {
     return fread(dest, 1, sizeof(*dest), file->file) == sizeof(*dest);
 }
 
-uint64_t avro_encode_double(uint8_t* dest, double val)
+uint64_t maxavro_encode_double(uint8_t* dest, double val)
 {
     memcpy(dest, &val, sizeof(val));
     return sizeof(val);
@@ -196,18 +196,18 @@ uint64_t avro_length_double(double val)
     return sizeof(val);
 }
 
-bool avro_write_double(FILE *file, double val)
+bool maxavro_write_double(FILE *file, double val)
 {
     return fwrite(&val, 1, sizeof(val), file) == sizeof(val);
 }
 
-maxavro_map_t* avro_map_read(maxavro_file_t *file)
+maxavro_map_t* maxavro_map_read(maxavro_file_t *file)
 {
 
     maxavro_map_t* rval = NULL;
     uint64_t blocks;
 
-    if (!avro_read_integer(file, &blocks))
+    if (!maxavro_read_integer(file, &blocks))
     {
         return NULL;
     }
@@ -217,21 +217,21 @@ maxavro_map_t* avro_map_read(maxavro_file_t *file)
         for (long i = 0; i < blocks; i++)
         {
             maxavro_map_t* val = calloc(1, sizeof(maxavro_map_t));
-            if (val && (val->key = avro_read_string(file)) && (val->value = avro_read_string(file)))
+            if (val && (val->key = maxavro_read_string(file)) && (val->value = maxavro_read_string(file)))
             {
                 val->next = rval;
                 rval = val;
             }
             else
             {
-                avro_map_free(val);
-                avro_map_free(rval);
+                maxavro_map_free(val);
+                maxavro_map_free(rval);
                 return NULL;
             }
         }
-        if (!avro_read_integer(file, &blocks))
+        if (!maxavro_read_integer(file, &blocks))
         {
-            avro_map_free(rval);
+            maxavro_map_free(rval);
             return NULL;
         }
     }
@@ -239,7 +239,7 @@ maxavro_map_t* avro_map_read(maxavro_file_t *file)
     return rval;
 }
 
-void avro_map_free(maxavro_map_t *value)
+void maxavro_map_free(maxavro_map_t *value)
 {
     while (value)
     {
@@ -258,17 +258,17 @@ maxavro_map_t* avro_map_start()
 
 uint64_t avro_map_encode(uint8_t *dest, maxavro_map_t* map)
 {
-    uint64_t len = avro_encode_integer(dest, map->blocks);
+    uint64_t len = maxavro_encode_integer(dest, map->blocks);
 
     while (map)
     {
-        len += avro_encode_string(dest, map->key);
-        len += avro_encode_string(dest, map->value);
+        len += maxavro_encode_string(dest, map->key);
+        len += maxavro_encode_string(dest, map->value);
         map = map->next;
     }
 
     /** Maps end with an empty block i.e. a zero integer value */
-    len += avro_encode_integer(dest, 0);
+    len += maxavro_encode_integer(dest, 0);
     return len;
 }
 
@@ -287,12 +287,12 @@ uint64_t avro_map_length(maxavro_map_t* map)
     return len;
 }
 
-bool avro_read_sync(FILE *file, char* sync)
+bool maxavro_read_sync(FILE *file, char* sync)
 {
     return fread(sync, 1, SYNC_MARKER_SIZE, file) == SYNC_MARKER_SIZE;
 }
 
-bool avro_verify_block(maxavro_file_t *file)
+bool maxavro_verify_block(maxavro_file_t *file)
 {
     char sync[SYNC_MARKER_SIZE];
     int rc = fread(sync, 1, SYNC_MARKER_SIZE, file->file);
@@ -321,9 +321,9 @@ bool avro_verify_block(maxavro_file_t *file)
     return true;
 }
 
-bool avro_read_datablock_start(maxavro_file_t* file, uint64_t *records, uint64_t *bytes)
+bool maxavro_read_datablock_start(maxavro_file_t* file, uint64_t *records, uint64_t *bytes)
 {
-    bool rval = avro_read_integer(file, records) && avro_read_integer(file, bytes);
+    bool rval = maxavro_read_integer(file, records) && maxavro_read_integer(file, bytes);
 
     if (rval)
     {

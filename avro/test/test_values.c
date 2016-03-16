@@ -33,7 +33,7 @@ void write_file()
 
 int main(int argc, char** argv)
 {
-    maxavro_file_t *file = avro_file_open(testfile);
+    maxavro_file_t *file = maxavro_file_open(testfile);
 
     if(!file)
     {
@@ -43,7 +43,7 @@ int main(int argc, char** argv)
     do
     {
         uint64_t objects, data_size;
-        if(avro_read_datablock_start(file, &objects, &data_size))
+        if(maxavro_read_datablock_start(file, &objects, &data_size))
         {
             /** Skip data block */
             fseek(file->file, data_size, SEEK_CUR);
@@ -53,8 +53,8 @@ int main(int argc, char** argv)
             return 1;
         }
     }
-    while (avro_verify_block(file));
+    while (maxavro_verify_block(file));
  
-    avro_file_close(file);
+    maxavro_file_close(file);
     return 0;
 }
