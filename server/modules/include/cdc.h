@@ -19,8 +19,8 @@
 /*
  * Revision History
  *
- * Date		Who			Description
- * 11-01-2016	Massimiliano Pinto	First Implementation
+ * Date     Who         Description
+ * 11-01-2016   Massimiliano Pinto  First Implementation
  */
 
 #include <stdio.h>
@@ -64,7 +64,8 @@
 /**
  * CDC session specific data
  */
-typedef struct cdc_session {
+typedef struct cdc_session
+{
     char user[CDC_USER_MAXLEN + 1];            /*< username for authentication */
     char uuid[CDC_UUID_LEN + 1];               /*< client uuid in registration */
     unsigned int flags[2];                     /*< Received flags              */
@@ -75,11 +76,18 @@ typedef struct cdc_session {
 /**
  * CDC protocol
  */
-typedef struct  cdc_protocol {
+typedef struct  cdc_protocol
+{
+#ifdef SS_DEBUG
+    skygw_chk_t protocol_chk_top;
+#endif
     int state;                      /*< CDC protocol state          */
     char user[CDC_USER_MAXLEN + 1]; /*< username for authentication */
     SPINLOCK lock;                  /*< Protocol structure lock     */
-    char type[CDC_TYPE_LEN + 1];    /*< Request Type		    */
+    char type[CDC_TYPE_LEN + 1];    /*< Request Type            */
+#ifdef SS_DEBUG
+    skygw_chk_t protocol_chk_tail;
+#endif
 } CDC_protocol;
 
 /* routines */
