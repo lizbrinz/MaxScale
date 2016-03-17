@@ -451,6 +451,8 @@ newSession(ROUTER *instance, SESSION *session)
     client->file = NULL;
 #endif
 
+    client->cstate = 0;
+
     if ((client->avro_file = (MAXAVRO_FILE *) calloc(1, sizeof(MAXAVRO_FILE))) == NULL)
 
     {
@@ -466,7 +468,6 @@ newSession(ROUTER *instance, SESSION *session)
 
     /* Set initial state of the slave */
     client->state = AVRO_CLIENT_UNREGISTERED;
-    dcb_add_callback(client->dcb, DCB_REASON_DRAINED, avro_client_callback, client);
 
     /**
      * Add this session to the list of active sessions.

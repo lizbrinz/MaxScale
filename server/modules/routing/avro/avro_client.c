@@ -66,7 +66,7 @@ static int avro_client_do_registration(AVRO_INSTANCE *, AVRO_CLIENT *, GWBUF *);
 static int avro_client_binlog_dump(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, GWBUF *queue);
 int avro_client_callback(DCB *dcb, DCB_REASON reason, void *data);
 static void avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *queue);
-static void avro_client_avro_to_json_ouput(AVRO_INSTANCE *router, AVRO_CLIENT *client,
+static void avro_client_avro_to_json_output(AVRO_INSTANCE *router, AVRO_CLIENT *client,
                                            char *avro_file, uint64_t offset);
 
 void poll_fake_write_event(DCB *dcb);
@@ -269,7 +269,12 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
             strncpy(client->avro_file->avro_binfile, avro_file, AVRO_MAX_FILENAME_LEN);
             client->avro_file->avro_binfile[AVRO_MAX_FILENAME_LEN] = '\0';
 
-            avro_client_avro_to_json_ouput(router, client, avro_file, position);
+
+            /* set callback routine for data sending */
+            dcb_add_callback(client->dcb, DCB_REASON_DRAINED, avro_client_callback, client);
+
+            /* Add fake event that will call the avro_client_callback() routine */
+            poll_fake_write_event(client->dcb);
         }
         else
         {
@@ -295,9 +300,10 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
  *
  */
 static void
-avro_client_avro_to_json_ouput(AVRO_INSTANCE *router, AVRO_CLIENT *client,
-                               char *avro_file, uint64_t offset)
+avro_client_avro_to_json_output(AVRO_INSTANCE *router, AVRO_CLIENT *client,
+                               char *avro_file, uint64_t start_record)
 {
+    uint64_t offset = start_record;
     ss_dassert(router && client && avro_file);
 
     if (strnlen(avro_file, 1))
@@ -346,6 +352,9 @@ avro_client_avro_to_json_ouput(AVRO_INSTANCE *router, AVRO_CLIENT *client,
             client->avro_file->blocks_read = file->blocks_read;
             client->avro_file->records_read = file->records_read;
 
+            /* may be just use client->avro_file->records_read and remove this var */
+            client->last_sent_pos = client->avro_file->records_read;
+
             maxavro_file_close(file);
         }
     }
@@ -358,10 +367,41 @@ avro_client_avro_to_json_ouput(AVRO_INSTANCE *router, AVRO_CLIENT *client,
 
 int avro_client_callback(DCB *dcb, DCB_REASON reason, void *userdata)
 {
-    if (false && reason == DCB_REASON_DRAINED)
+    /* Notes:
+     * 1 - Currently not following next file, aka kind of rotate.
+     * 2 - As there is no live distribution to clients, for new events,
+     * the routine is continuosly checking last record in AVRO file.
+     * Kind of last event time check could be done in order to avoid file
+     * reading.
+     * Or we could add in avro.c the current avro file being written, with last record.
+     * The routine could also check this.
+     */
+    if (reason == DCB_REASON_DRAINED)
     {
         AVRO_CLIENT *client = (AVRO_CLIENT*)userdata;
-        avro_client_avro_to_json_ouput(client->router, client, client->avro_file->avro_binfile, client->last_sent_pos);
+        unsigned int cstate;
+
+        spinlock_acquire(&client->catch_lock);
+        if (client->cstate & AVRO_CS_BUSY)
+        {
+            spinlock_release(&client->catch_lock);
+            return 0;
+        }
+
+        cstate = client->cstate;
+        client->cstate |= AVRO_CS_BUSY;
+
+        spinlock_release(&client->catch_lock);
+
+        /* send current file content */
+        avro_client_avro_to_json_output(client->router, client, client->avro_file->avro_binfile, client->last_sent_pos);
+
+        spinlock_acquire(&client->catch_lock);
+        client->cstate &= ~AVRO_CS_BUSY;
+        spinlock_release(&client->catch_lock);
+
+        /* prepare for next transmission */
+        poll_fake_write_event(client->dcb);
     }
 
     return 0;

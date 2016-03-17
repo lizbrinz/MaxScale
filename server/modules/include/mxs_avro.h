@@ -103,6 +103,7 @@ typedef struct avro_client
     AVRO_CLIENT_STATS  stats;       /*< Slave statistics */
     time_t          connect_time;   /*< Connect time of slave */
     MAXAVRO_FILE    *avro_file;     /*< Avro file struct */
+    unsigned int    cstate;         /*< Catch up state */
 #if defined(SS_DEBUG)
     skygw_chk_t     rses_chk_tail;
 #endif
@@ -161,5 +162,10 @@ extern void save_avro_schema(const char *path, const char* schema, TABLE_MAP *ma
 #define AVRO_CLIENT_REQUEST_DATA 0x0002
 #define AVRO_CLIENT_ERRORED      0x0003
 #define AVRO_CLIENT_MAXSTATE     0x0003
+
+/**
+ * Client catch-up status
+ */
+#define AVRO_CS_BUSY             0x0001
 
 #endif
