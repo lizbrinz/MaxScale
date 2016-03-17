@@ -94,6 +94,7 @@ bool binlog_next_file_exists(const char* binlogdir, const char* binlog);
 int blr_file_get_next_binlogname(const char *router);
 bool avro_load_conversion_state(AVRO_INSTANCE *router);
 bool avro_load_created_tables(AVRO_INSTANCE *router);
+int avro_client_callback(DCB *dcb, DCB_REASON reason, void *userdata);
 
 /** The module object definition */
 static ROUTER_OBJECT MyObject =
@@ -450,12 +451,13 @@ newSession(ROUTER *instance, SESSION *session)
 #ifdef BLFILE_IN_SLAVE
     client->file = NULL;
 #endif
-    strcpy(client->avrofile, "unassigned");
+    strncpy(client->avrofile, "unassigned", sizeof(client->avrofile));
     client->connect_time = time(0);
-    client->lastEventTimestamp = 0;
-    client->lastEventReceived = 0;
+    client->requested_pos = 0;
+    client->last_sent_pos = 0;
 
     client->state = AVRO_CLIENT_UNREGISTERED;
+    dcb_add_callback(client->dcb, DCB_REASON_DRAINED, avro_client_callback, client);
 
     /**
      * Add this session to the list of active sessions.
@@ -840,26 +842,6 @@ diagnostics(ROUTER *router, DCB *dcb)
             dcb_printf(dcb, "\t\tNo. of distribute action 2			%u\n", session->stats.n_actions[1]);
             dcb_printf(dcb, "\t\tNo. of distribute action 3			%u\n", session->stats.n_actions[2]);
 #endif
-            if (session->lastEventTimestamp
-                && router_inst->lastEventTimestamp && session->lastEventReceived != HEARTBEAT_EVENT)
-            {
-                unsigned long seconds_behind;
-                time_t session_last_event = (time_t) session->lastEventTimestamp;
-
-                if (router_inst->lastEventTimestamp > session->lastEventTimestamp)
-                {
-                    seconds_behind = router_inst->lastEventTimestamp - session->lastEventTimestamp;
-                }
-                else
-                {
-                    seconds_behind = 0;
-                }
-
-                localtime_r(&session_last_event, &tm);
-                asctime_r(&tm, buf);
-                dcb_printf(dcb, "\t\tLast binlog event timestamp			%u, %s", session->lastEventTimestamp, buf);
-                dcb_printf(dcb, "\t\tSeconds behind master				%lu\n", seconds_behind);
-            }
 
             if (session->state == 0)
             {

@@ -33,7 +33,7 @@ static bool dump = false;
 
 int check_file(const char* filename)
 {
-    maxavro_file_t *file = maxavro_file_open(filename);
+    MAXAVRO_FILE *file = maxavro_file_open(filename);
 
     if (!file)
     {

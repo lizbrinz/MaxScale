@@ -33,7 +33,7 @@ void write_file()
 
 int main(int argc, char** argv)
 {
-    maxavro_file_t *file = maxavro_file_open(testfile);
+    MAXAVRO_FILE *file = maxavro_file_open(testfile);
 
     if(!file)
     {

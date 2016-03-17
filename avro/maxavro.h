@@ -50,13 +50,13 @@ typedef struct
 {
     char *name;
     enum maxavro_value_type type;
-} maxavro_schema_field_t;
+} MAXAVRO_SCHEMA_FIELD;
 
 typedef struct
 {
-    maxavro_schema_field_t *fields;
+    MAXAVRO_SCHEMA_FIELD *fields;
     size_t num_fields;
-} maxavro_schema_t;
+} MAXAVRO_SCHEMA;
 
 enum maxavro_error
 {
@@ -69,7 +69,8 @@ enum maxavro_error
 typedef struct
 {
     FILE* file;
-    maxavro_schema_t* schema;
+    char* filename; /*< The filename */
+    MAXAVRO_SCHEMA* schema;
     uint64_t blocks_read; /*< Total number of data blocks read */
     uint64_t records_read; /*< Total number of records read */
     uint64_t bytes_read; /*< Total number of bytes read */
@@ -82,7 +83,7 @@ typedef struct
     long block_start_pos;
     enum maxavro_error last_error; /*< Last error */
     char sync[SYNC_MARKER_SIZE];
-} maxavro_file_t;
+} MAXAVRO_FILE;
 
 /** A record field value */
 typedef union
@@ -92,15 +93,15 @@ typedef union
     char *string;
     bool boolean;
     void *bytes;
-} maxavro_record_value_t;
+} MAXAVRO_RECORD_VALUE;
 
 /** A record value */
 typedef struct
 {
-    maxavro_schema_field_t *field;
-    maxavro_record_value_t *value;
+    MAXAVRO_SCHEMA_FIELD *field;
+    MAXAVRO_RECORD_VALUE *value;
     size_t size;
-} maxavro_record_t;
+} MAXAVRO_RECORD;
 
 typedef struct
 {
@@ -108,8 +109,8 @@ typedef struct
     size_t buffersize; /*< Size of the buffer */
     size_t datasize; /*< size of written data */
     uint64_t records; /*< Number of successfully written records */
-    maxavro_file_t *avrofile; /*< The current open file */
-} maxavro_datablock_t;
+    MAXAVRO_FILE *avrofile; /*< The current open file */
+} MAXAVRO_DATABLOCK;
 
 typedef struct avro_map_value
 {
@@ -118,45 +119,45 @@ typedef struct avro_map_value
     struct avro_map_value *next;
     struct avro_map_value *tail;
     int blocks; /*< Number of added key-value blocks */
-} maxavro_map_t;
+} MAXAVRO_MAP;
 
 /** Data block generation */
-maxavro_datablock_t* maxavro_datablock_allocate(maxavro_file_t *file, size_t buffersize);
-void maxavro_datablock_free(maxavro_datablock_t* block);
-bool maxavro_datablock_finalize(maxavro_datablock_t* block);
+MAXAVRO_DATABLOCK* maxavro_datablock_allocate(MAXAVRO_FILE *file, size_t buffersize);
+void maxavro_datablock_free(MAXAVRO_DATABLOCK* block);
+bool maxavro_datablock_finalize(MAXAVRO_DATABLOCK* block);
 
 /** Adding values to a datablock. The caller must ensure that the inserted
  * values conform to the file schema and that the required amount of fields
  * is added before finalizing the block. */
-bool maxavro_datablock_add_integer(maxavro_datablock_t *file, uint64_t val);
-bool maxavro_datablock_add_string(maxavro_datablock_t *file, const char* str);
-bool maxavro_datablock_add_float(maxavro_datablock_t *file, float val);
-bool maxavro_datablock_add_double(maxavro_datablock_t *file, double val);
+bool maxavro_datablock_add_integer(MAXAVRO_DATABLOCK *file, uint64_t val);
+bool maxavro_datablock_add_string(MAXAVRO_DATABLOCK *file, const char* str);
+bool maxavro_datablock_add_float(MAXAVRO_DATABLOCK *file, float val);
+bool maxavro_datablock_add_double(MAXAVRO_DATABLOCK *file, double val);
 
 /** Reading primitives */
-bool maxavro_read_integer(maxavro_file_t *file, uint64_t *val);
-char* maxavro_read_string(maxavro_file_t *file);
-bool maxavro_skip_string(maxavro_file_t* file);
-bool maxavro_read_float(maxavro_file_t *file, float *dest);
-bool maxavro_read_double(maxavro_file_t *file, double *dest);
+bool maxavro_read_integer(MAXAVRO_FILE *file, uint64_t *val);
+char* maxavro_read_string(MAXAVRO_FILE *file);
+bool maxavro_skip_string(MAXAVRO_FILE* file);
+bool maxavro_read_float(MAXAVRO_FILE *file, float *dest);
+bool maxavro_read_double(MAXAVRO_FILE *file, double *dest);
 
 /** Reading complex types */
-maxavro_map_t* maxavro_map_read(maxavro_file_t *file);
-void maxavro_map_free(maxavro_map_t *value);
+MAXAVRO_MAP* maxavro_map_read(MAXAVRO_FILE *file);
+void maxavro_map_free(MAXAVRO_MAP *value);
 
 /** Reading and seeking records */
-json_t* maxavro_record_read(maxavro_file_t *file);
-bool maxavro_record_seek(maxavro_file_t *file, uint64_t offset);
-bool maxavro_next_block(maxavro_file_t *file);
+json_t* maxavro_record_read(MAXAVRO_FILE *file);
+bool maxavro_record_seek(MAXAVRO_FILE *file, uint64_t offset);
+bool maxavro_next_block(MAXAVRO_FILE *file);
 
 /** File operations */
-maxavro_file_t* maxavro_file_open(const char* filename);
-void maxavro_file_close(maxavro_file_t *file);
-enum maxavro_error maxavro_get_error(maxavro_file_t *file);
-const char* maxavro_get_error_string(maxavro_file_t *file);
+MAXAVRO_FILE* maxavro_file_open(const char* filename);
+void maxavro_file_close(MAXAVRO_FILE *file);
+enum maxavro_error maxavro_get_error(MAXAVRO_FILE *file);
+const char* maxavro_get_error_string(MAXAVRO_FILE *file);
 
 /** Schema creation */
-maxavro_schema_t* maxavro_schema_from_json(const char* json);
-void maxavro_schema_free(maxavro_schema_t* schema);
+MAXAVRO_SCHEMA* maxavro_schema_from_json(const char* json);
+void maxavro_schema_free(MAXAVRO_SCHEMA* schema);
 
 #endif

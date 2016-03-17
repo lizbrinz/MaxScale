@@ -116,12 +116,17 @@ GWAUTHENTICATOR* GetModuleObject()
  * @return Authentication status
  * @note Authentication status codes are defined in cdc.h
  */
-static int cdc_auth_check(DCB *dcb, CDC_protocol *protocol, char *username, uint8_t *auth_data, unsigned int *flags)
+static int cdc_auth_check(DCB *dcb, CDC_protocol *protocol, char *username, uint8_t *auth_data,
+                          unsigned int *flags)
 {
     if (strcmp(username, "massi") == 0)
+    {
         return CDC_STATE_AUTH_OK;
-    else  
+    }
+    else
+    {
         return CDC_STATE_AUTH_FAILED;
+    }
 }
 
 /**
@@ -145,7 +150,7 @@ cdc_auth_authenticate(DCB *dcb)
     else
     {
         MXS_DEBUG("Receiving connection from '%s'",
-                   client_data->user);
+                  client_data->user);
 
         auth_ret = cdc_auth_check(dcb, protocol, client_data->user, client_data->auth_data, client_data->flags);
 
@@ -168,14 +173,14 @@ cdc_auth_authenticate(DCB *dcb)
         else if (dcb->service->log_auth_warnings)
         {
             MXS_NOTICE("%s: login attempt for user '%s', authentication failed.",
-                   dcb->service->name, client_data->user);
+                       dcb->service->name, client_data->user);
             if (dcb->ipv4.sin_addr.s_addr == 0x0100007F &&
                 !dcb->service->localhost_match_wildcard_host)
             {
                 MXS_NOTICE("If you have a wildcard grant that covers"
-                       " this address, try adding "
-                       "'localhost_match_wildcard_host=true' for "
-                       "service '%s'. ", dcb->service->name);
+                           " this address, try adding "
+                           "'localhost_match_wildcard_host=true' for "
+                           "service '%s'. ", dcb->service->name);
             }
         }
     }
@@ -187,7 +192,7 @@ cdc_auth_authenticate(DCB *dcb)
  * @brief Transfer data from the authentication request to the DCB.
  *
  * The request handler DCB has a field called data that contains protocol
- * specific information. This function examines a buffer containing CDC 
+ * specific information. This function examines a buffer containing CDC
  * authentication data and puts it into a structure that is referred to
  * by the DCB. If the information in the buffer is invalid, then a failure
  * code is returned. A call to cdc_auth_set_client_data does the
@@ -224,7 +229,7 @@ cdc_auth_set_protocol_data(DCB *dcb, GWBUF *buf)
     client_auth_packet_size = gwbuf_length(buf);
 
     return cdc_auth_set_client_data(client_data, protocol, client_auth_packet,
-        client_auth_packet_size);
+                                    client_auth_packet_size);
 }
 
 /**
@@ -264,7 +269,9 @@ cdc_auth_set_client_data(
         *tmp_ptr++ = '\0';
     }
     else
+    {
         return CDC_STATE_AUTH_ERR;
+    }
     strncpy(client_data->user, (char *)decoded_buffer, user_len);
     client_data->user[user_len] = '\0';
 #else
@@ -276,7 +283,9 @@ cdc_auth_set_client_data(
         auth_ptr = tmp_ptr;
     }
     else
+    {
         return CDC_STATE_AUTH_ERR;
+    }
 
     strncpy(client_data->user, (char *)client_auth_packet, user_len);
     memcpy(client_data->auth_data, auth_ptr, sizeof(client_data->auth_data));

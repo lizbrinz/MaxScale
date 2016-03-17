@@ -20,7 +20,7 @@
 #include <jansson.h>
 #include <string.h>
 
-static const maxavro_schema_field_t types[MAXAVRO_TYPE_MAX] =
+static const MAXAVRO_SCHEMA_FIELD types[MAXAVRO_TYPE_MAX] =
 {
     {"int", MAXAVRO_TYPE_INT},
     {"long", MAXAVRO_TYPE_LONG},
@@ -89,9 +89,9 @@ static enum maxavro_value_type unpack_to_type(json_t *object)
  * @param json JSON where the schema is created from
  * @return New schema or NULL if an error occurred
  */
-maxavro_schema_t* maxavro_schema_from_json(const char* json)
+MAXAVRO_SCHEMA* maxavro_schema_from_json(const char* json)
 {
-    maxavro_schema_t* rval = malloc(sizeof(maxavro_schema_t));
+    MAXAVRO_SCHEMA* rval = malloc(sizeof(MAXAVRO_SCHEMA));
 
     if (rval)
     {
@@ -104,7 +104,7 @@ maxavro_schema_t* maxavro_schema_from_json(const char* json)
             json_unpack(schema, "{s:o}", "fields", &field_arr);
             char *dump = json_dumps(field_arr, JSON_PRESERVE_ORDER);
             size_t arr_size = json_array_size(field_arr);
-            rval->fields = malloc(sizeof(maxavro_schema_field_t) * arr_size);
+            rval->fields = malloc(sizeof(MAXAVRO_SCHEMA_FIELD) * arr_size);
             rval->num_fields = arr_size;
 
             for (int i = 0; i < arr_size; i++)
@@ -135,7 +135,7 @@ maxavro_schema_t* maxavro_schema_from_json(const char* json)
     return rval;
 }
 
-void maxavro_schema_free(maxavro_schema_t* schema)
+void maxavro_schema_free(MAXAVRO_SCHEMA* schema)
 {
     if (schema)
     {

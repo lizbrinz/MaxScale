@@ -26,7 +26,7 @@ static bool maxavro_read_sync(FILE *file, char* sync)
     return fread(sync, 1, SYNC_MARKER_SIZE, file) == SYNC_MARKER_SIZE;
 }
 
-bool maxavro_verify_block(maxavro_file_t *file)
+bool maxavro_verify_block(MAXAVRO_FILE *file)
 {
     char sync[SYNC_MARKER_SIZE];
     int rc = fread(sync, 1, SYNC_MARKER_SIZE, file->file);
@@ -56,7 +56,7 @@ bool maxavro_verify_block(maxavro_file_t *file)
     return true;
 }
 
-bool maxavro_read_datablock_start(maxavro_file_t* file)
+bool maxavro_read_datablock_start(MAXAVRO_FILE* file)
 {
     uint64_t records, bytes;
     bool rval = maxavro_read_integer(file, &records) && maxavro_read_integer(file, &bytes);
@@ -79,11 +79,11 @@ bool maxavro_read_datablock_start(maxavro_file_t* file)
  * key-value pairs. A @c bytes value is written as a length encoded string
  * where the length of the value is stored as a @c long followed by the
  * actual data. */
-static char* read_schema(maxavro_file_t* file)
+static char* read_schema(MAXAVRO_FILE* file)
 {
     char *rval = NULL;
-    maxavro_map_t* head = maxavro_map_read(file);
-    maxavro_map_t* map = head;
+    MAXAVRO_MAP* head = maxavro_map_read(file);
+    MAXAVRO_MAP* map = head;
 
     while (map)
     {
@@ -113,7 +113,7 @@ static char* read_schema(maxavro_file_t* file)
  * @param filename File to open
  * @return Pointer to opened file or NULL if an error occurred
  */
-maxavro_file_t* maxavro_file_open(const char* filename)
+MAXAVRO_FILE* maxavro_file_open(const char* filename)
 {
     FILE *file = fopen(filename, "rb");
     if (!file)
@@ -138,11 +138,12 @@ maxavro_file_t* maxavro_file_open(const char* filename)
         return NULL;
     }
 
-    maxavro_file_t* avrofile = calloc(1, sizeof(maxavro_file_t));
+    MAXAVRO_FILE* avrofile = calloc(1, sizeof(MAXAVRO_FILE));
 
     if (avrofile)
     {
         avrofile->file = file;
+        avrofile->filename = strdup(filename);
         char *schema = read_schema(avrofile);
         avrofile->schema = schema ? maxavro_schema_from_json(schema) : NULL;
         avrofile->last_error = MAXAVRO_ERR_NONE;
@@ -173,7 +174,7 @@ maxavro_file_t* maxavro_file_open(const char* filename)
  * @param file File to check
  * @return The last error or MAXAVRO_ERR_NONE if no errors have occurred
  */
-enum maxavro_error maxavro_get_error(maxavro_file_t *file)
+enum maxavro_error maxavro_get_error(MAXAVRO_FILE *file)
 {
     return file->last_error;
 }
@@ -183,7 +184,7 @@ enum maxavro_error maxavro_get_error(maxavro_file_t *file)
  * @param file File to check
  * @return Error in string form
  */
-const char* maxavro_get_error_string(maxavro_file_t *file)
+const char* maxavro_get_error_string(MAXAVRO_FILE *file)
 {
     switch (file->last_error)
     {
@@ -208,9 +209,10 @@ const char* maxavro_get_error_string(maxavro_file_t *file)
  * @brief Close an avro file
  * @param file File to close
  */
-void maxavro_file_close(maxavro_file_t *file)
+void maxavro_file_close(MAXAVRO_FILE *file)
 {
     fclose(file->file);
+    free(file->filename);
     free(file->schema);
     free(file);
 }

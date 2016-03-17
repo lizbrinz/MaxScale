@@ -305,7 +305,7 @@ avro_client_avro_to_json_ouput(AVRO_INSTANCE *router, AVRO_CLIENT *client,
         snprintf(filename, PATH_MAX, "%s/%s.avro", router->avrodir, avro_file);
         fprintf(stderr, "Reading from [%s]\n", filename);
 
-        maxavro_file_t *file = maxavro_file_open(filename);
+        MAXAVRO_FILE *file = maxavro_file_open(filename);
 
         if (file)
         {
@@ -351,3 +351,13 @@ avro_client_avro_to_json_ouput(AVRO_INSTANCE *router, AVRO_CLIENT *client,
     }
 }
 
+int avro_client_callback(DCB *dcb, DCB_REASON reason, void *userdata)
+{
+    if (false && reason == DCB_REASON_DRAINED)
+    {
+        AVRO_CLIENT *client = (AVRO_CLIENT*)userdata;
+        avro_client_avro_to_json_ouput(client->router, client, client->avrofile, client->last_sent_pos);
+    }
+
+    return 0;
+}

@@ -20,9 +20,9 @@
 #include <string.h>
 #include <skygw_debug.h>
 
-bool maxavro_read_datablock_start(maxavro_file_t *file, uint64_t *records,
+bool maxavro_read_datablock_start(MAXAVRO_FILE *file, uint64_t *records,
                                   uint64_t *bytes);
-bool maxavro_verify_block(maxavro_file_t *file);
+bool maxavro_verify_block(MAXAVRO_FILE *file);
 
 /**
  * @brief Read a single value from a file
@@ -31,7 +31,7 @@ bool maxavro_verify_block(maxavro_file_t *file);
  * @param type Type of the field
  * @return JSON object or NULL if an error occurred
  */
-static json_t* read_and_pack_value(maxavro_file_t *file, enum maxavro_value_type type)
+static json_t* read_and_pack_value(MAXAVRO_FILE *file, enum maxavro_value_type type)
 {
     json_t* value = NULL;
     switch (type)
@@ -80,7 +80,7 @@ static json_t* read_and_pack_value(maxavro_file_t *file, enum maxavro_value_type
     return value;
 }
 
-static void skip_value(maxavro_file_t *file, enum maxavro_value_type type)
+static void skip_value(MAXAVRO_FILE *file, enum maxavro_value_type type)
 {
     switch (type)
     {
@@ -119,7 +119,7 @@ static void skip_value(maxavro_file_t *file, enum maxavro_value_type type)
  * @param file File to read from
  * @return JSON value or NULL if an error occurred
  */
-json_t* maxavro_record_read(maxavro_file_t *file)
+json_t* maxavro_record_read(MAXAVRO_FILE *file)
 {
     json_t* object = NULL;
 
@@ -146,7 +146,7 @@ json_t* maxavro_record_read(maxavro_file_t *file)
     return object;
 }
 
-static void skip_record(maxavro_file_t *file)
+static void skip_record(MAXAVRO_FILE *file)
 {
     for (size_t i = 0; i < file->schema->num_fields; i++)
     {
@@ -163,7 +163,7 @@ static void skip_record(maxavro_file_t *file)
  * @param file File to read from
  * @return True if reading the next block was successfully read
  */
-bool maxavro_next_block(maxavro_file_t *file)
+bool maxavro_next_block(MAXAVRO_FILE *file)
 {
     if (file->last_error == MAXAVRO_ERR_NONE)
     {
@@ -190,7 +190,7 @@ bool maxavro_next_block(maxavro_file_t *file)
  * @param position
  * @return
  */
-bool maxavro_record_seek(maxavro_file_t *file, uint64_t offset)
+bool maxavro_record_seek(MAXAVRO_FILE *file, uint64_t offset)
 {
     bool rval = true;
 
