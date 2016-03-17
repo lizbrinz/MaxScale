@@ -88,6 +88,11 @@ uint64_t maxavro_encode_integer(uint8_t* buffer, uint64_t val)
     return nbytes;
 }
 
+/**
+ * @brief Calculate the length of an Avro integer
+ * @param val Vale to calculate
+ * @return Length of the value in bytes
+ */
 uint64_t avro_length_integer(uint64_t val)
 {
     uint64_t encval = encode_long(val);
@@ -102,7 +107,6 @@ uint64_t avro_length_integer(uint64_t val)
     return nbytes;
 }
 
-
 bool maxavro_write_integer(FILE *file, uint64_t val)
 {
     uint8_t buffer[MAX_INTEGER_SIZE];
@@ -110,6 +114,16 @@ bool maxavro_write_integer(FILE *file, uint64_t val)
     return fwrite(buffer, 1, nbytes, file) == nbytes;
 }
 
+/**
+ * @brief Read an Avro string
+ *
+ * The strings are encoded as one Avro integer followed by that many bytes of
+ * data.
+ * @param file File to read from
+ * @return Pointer to newly allocated string or NULL if an error occurred
+ *
+ * @see maxavro_get_error
+ */
 char* maxavro_read_string(maxavro_file_t* file)
 {
     char *key = NULL;
@@ -170,6 +184,11 @@ uint64_t maxavro_encode_string(uint8_t* dest, const char* str)
     return slen + ilen;
 }
 
+/**
+ * @brief Calculate the length of an Avro string
+ * @param val Vale to calculate
+ * @return Length of the string in bytes
+ */
 uint64_t avro_length_string(const char* str)
 {
     uint64_t slen = strlen(str);
@@ -183,6 +202,16 @@ bool maxavro_write_string(FILE *file, const char* str)
     return maxavro_write_integer(file, len) && fwrite(str, 1, len, file) == len;
 }
 
+/**
+ * @brief Read an Avro float
+ *
+ * The float is encoded as a 4 byte floating point value
+ * @param file File to read from
+ * @param dest Destination where the read value is stored
+ * @return True if value was read successfully, false if an error occurred
+ *
+ * @see maxavro_get_error
+ */
 bool maxavro_read_float(maxavro_file_t* file, float *dest)
 {
     size_t nread = fread(dest, 1, sizeof(*dest), file->file);
@@ -200,6 +229,11 @@ uint64_t maxavro_encode_float(uint8_t* dest, float val)
     return sizeof(val);
 }
 
+/**
+ * @brief Calculate the length of a float value
+ * @param val Vale to calculate
+ * @return Length of the value in bytes
+ */
 uint64_t avro_length_float(float val)
 {
     return sizeof(val);
@@ -210,6 +244,16 @@ bool maxavro_write_float(FILE *file, float val)
     return fwrite(&val, 1, sizeof(val), file) == sizeof(val);
 }
 
+/**
+ * @brief Read an Avro double
+ *
+ * The float is encoded as a 8 byte floating point value
+ * @param file File to read from
+ * @param dest Destination where the read value is stored
+ * @return True if value was read successfully, false if an error occurred
+ *
+ * @see maxavro_get_error
+ */
 bool maxavro_read_double(maxavro_file_t* file, double *dest)
 {
     size_t nread = fread(dest, 1, sizeof(*dest), file->file);
@@ -226,6 +270,12 @@ uint64_t maxavro_encode_double(uint8_t* dest, double val)
     memcpy(dest, &val, sizeof(val));
     return sizeof(val);
 }
+
+/**
+ * @brief Calculate the length of a double value
+ * @param val Vale to calculate
+ * @return Length of the value in bytes
+ */
 uint64_t avro_length_double(double val)
 {
     return sizeof(val);
@@ -236,6 +286,16 @@ bool maxavro_write_double(FILE *file, double val)
     return fwrite(&val, 1, sizeof(val), file) == sizeof(val);
 }
 
+/**
+ * @brief Read an Avro map
+ *
+ * A map is encoded as a series of blocks. Each block is encoded as an Avro
+ * integer followed by that many key-value pairs of Avro strings. The last
+ * block in the map will be a zero length block signaling its end.
+ * @param file File to read from
+ * @return A read map or NULL if an error occurred. The return value needs to be
+ * freed with maxavro_map_free().
+ */
 maxavro_map_t* maxavro_map_read(maxavro_file_t *file)
 {
 
@@ -278,6 +338,11 @@ maxavro_map_t* maxavro_map_read(maxavro_file_t *file)
     return rval;
 }
 
+/**
+ * @brief Free an Avro map
+ *
+ * @param value Map to free
+ */
 void maxavro_map_free(maxavro_map_t *value)
 {
     while (value)
@@ -311,6 +376,11 @@ uint64_t avro_map_encode(uint8_t *dest, maxavro_map_t* map)
     return len;
 }
 
+/**
+ * @brief Calculate the length of an Avro map
+ * @param map Map to measure
+ * @return Length of the map in bytes
+ */
 uint64_t avro_map_length(maxavro_map_t* map)
 {
     uint64_t len = avro_length_integer(map->blocks);
