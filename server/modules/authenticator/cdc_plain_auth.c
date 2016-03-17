@@ -266,7 +266,6 @@ cdc_auth_set_client_data(
     else
         return CDC_STATE_AUTH_ERR;
     strncpy(client_data->user, (char *)decoded_buffer, user_len);
-    memcpy(client_data->auth_data, auth_ptr, sizeof(client_data->auth_data));
     client_data->user[user_len] = '\0';
 #else
     tmp_ptr = (uint8_t *)strnchr_esc((char *)client_auth_packet, ':', client_auth_packet_size);
