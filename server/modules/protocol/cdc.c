@@ -69,6 +69,11 @@ static int do_auth(DCB *dcb, GWBUF *buffer, void *data);
 static void write_auth_ack(DCB *dcb);
 static void write_auth_err(DCB *dcb);
 
+static char* cdc_default_auth()
+{
+    return "CDCPlainAuth";
+}
+
 /**
  * The "module object" for the CDC protocol module.
  */
@@ -84,7 +89,8 @@ static GWPROTOCOL MyObject =
     cdc_close, /* Close                         */
     cdc_listen, /* Create a listener             */
     NULL, /* Authentication                */
-    NULL /* Session                       */
+    NULL, /* Session                       */
+    cdc_default_auth /* default authentication */
 };
 
 /**
