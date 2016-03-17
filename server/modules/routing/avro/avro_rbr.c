@@ -33,8 +33,9 @@
  * @param hdr Replication header
  * @param ptr Pointer to event payload
  */
-void handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
+bool handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
 {
+    bool rval = false;
     TABLE_MAP *map = table_map_alloc(ptr, router->event_type_hdr_lens[hdr->event_type]);
 
     if (map)
@@ -73,8 +74,14 @@ void handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr
             MXS_DEBUG("%s", json_schema);
             free(json_schema);
         }
+        rval = true;
         spinlock_release(&router->lock);
     }
+    else
+    {
+        MXS_ERROR("Failed to allocate new table map.");
+    }
+    return rval;
 }
 
 /**
@@ -86,8 +93,9 @@ void handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr
  * @param hdr Replication header
  * @param pos
  */
-void handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
+bool handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
 {
+    bool rval = false;
     uint8_t *start = ptr;
     uint8_t table_id_size = router->event_type_hdr_lens[hdr->event_type] == 6 ? 4 : 6;
     uint64_t table_id = 0;
@@ -103,7 +111,7 @@ void handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
     {
         /** This is an dummy event which should release all table maps. Right
          * now we just return without processing the rows. */
-        return;
+        return true;
     }
 
     if (hdr->event_type > DELETE_ROWS_EVENTv1)
@@ -160,6 +168,7 @@ void handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
             }
             MXS_INFO("Processed %d rows", rows);
             avro_value_decref(&record);
+            rval = true;
         }
         else if (table == NULL)
         {
@@ -175,6 +184,7 @@ void handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
                       " Only full row image is currently supported.");
         }
     }
+    return rval;
 }
 
 void set_numeric_field_value(avro_value_t *field, uint8_t type, uint8_t *metadata, uint8_t *value)

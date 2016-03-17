@@ -32,6 +32,7 @@
 
 #include <gw_authenticator.h>
 #include <cdc.h>
+#include <modutil.h>
 
 MODULE_INFO info =
 {
@@ -253,8 +254,9 @@ cdc_auth_set_client_data(
     int decoded_size = client_auth_packet_size / 2;
     int user_len = (client_auth_packet_size <= CDC_USER_MAXLEN) ? client_auth_packet_size : CDC_USER_MAXLEN;
     uint8_t *decoded_buffer = malloc(decoded_size);
-    uint8_t *tmp_ptr;
+    uint8_t *tmp_ptr, *auth_ptr;
 
+#ifndef NO_TEST_AUTH
     /* decode input data */
     gw_hex2bin(decoded_buffer, (const char *)client_auth_packet, decoded_size);
     if ((tmp_ptr = (uint8_t *)strchr((char *)decoded_buffer, ':')) != NULL)
@@ -263,10 +265,24 @@ cdc_auth_set_client_data(
     }
     else
         return CDC_STATE_AUTH_ERR;
-
     strncpy(client_data->user, (char *)decoded_buffer, user_len);
+    memcpy(client_data->auth_data, auth_ptr, sizeof(client_data->auth_data));
     client_data->user[user_len] = '\0';
+#else
+    tmp_ptr = (uint8_t *)strnchr_esc((char *)client_auth_packet, ':', client_auth_packet_size);
+    user_len = tmp_ptr - client_auth_packet;
+    if (tmp_ptr && client_auth_packet_size - (user_len) > SHA_DIGEST_LENGTH)
+    {
+        *tmp_ptr++ = '\0';
+        auth_ptr = tmp_ptr;
+    }
+    else
+        return CDC_STATE_AUTH_ERR;
 
+    strncpy(client_data->user, (char *)client_auth_packet, user_len);
+    memcpy(client_data->auth_data, auth_ptr, sizeof(client_data->auth_data));
+    client_data->user[user_len] = '\0';
+#endif
     return CDC_STATE_AUTH_OK;
 }
 

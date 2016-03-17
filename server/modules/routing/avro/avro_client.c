@@ -66,7 +66,8 @@ static int avro_client_do_registration(AVRO_INSTANCE *, AVRO_CLIENT *, GWBUF *);
 static int avro_client_binlog_dump(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, GWBUF *queue);
 int avro_client_callback(DCB *dcb, DCB_REASON reason, void *data);
 static void avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *queue);
-static void avro_client_avro_to_json_ouput(AVRO_INSTANCE *router, AVRO_CLIENT *client, char *avro_file);
+static void avro_client_avro_to_json_ouput(AVRO_INSTANCE *router, AVRO_CLIENT *client,
+                                           char *avro_file, uint64_t offset);
 
 void poll_fake_write_event(DCB *dcb);
 
@@ -159,7 +160,7 @@ avro_client_do_registration(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *d
         char *tmp_ptr;
         char *sep_ptr;
         int uuid_len = (data_len > CDC_UUID_LEN) ? CDC_UUID_LEN : data_len;
-        strncpy(uuid, request + sizeof(reg_uuid), uuid_len);
+        strncpy(uuid, request + sizeof(reg_uuid) + 1, uuid_len);
         uuid[uuid_len] = '\0';
 
         if ((sep_ptr = strchr(uuid, ',')) != NULL)
@@ -233,17 +234,16 @@ static void
 avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *queue)
 {
     const char req_data[] = "REQUEST-DATA";
+    const size_t req_data_len = sizeof(req_data) - 1;
     uint8_t *data = GWBUF_DATA(queue);
     uint8_t *ptr;
-    char *command_ptr;
-
-    command_ptr = strstr((char *)data, req_data);
+    char *command_ptr = strstr((char *)data, req_data);
 
     if (command_ptr != NULL)
     {
         char avro_file[AVRO_MAX_FILENAME_LEN + 1];
-        char *file_ptr = command_ptr + sizeof(req_data);
-        int data_len = GWBUF_LENGTH(queue) - sizeof(req_data);
+        char *file_ptr = command_ptr + req_data_len;
+        int data_len = GWBUF_LENGTH(queue) - req_data_len;
 
         if (data_len > 1)
         {
@@ -252,14 +252,23 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
             strncpy(avro_file, file_ptr + 1, data_len - 1);
             avro_file[data_len - 1] = '\0';
             cmd_sep = strchr(avro_file, ' ');
+
+            uint64_t position = 0;
             if (cmd_sep)
             {
-                *cmd_sep = '\0';
+                *cmd_sep++ = '\0';
+                position = strtol(cmd_sep, NULL, 10);
+                cmd_sep = strchr(cmd_sep, ' ');
+
+                if (cmd_sep)
+                {
+                    *cmd_sep = '\0';
+                }
             }
 
             strncpy(client->avrofile, avro_file, sizeof(client->avrofile));
 
-            avro_client_avro_to_json_ouput(router, client, avro_file);
+            avro_client_avro_to_json_ouput(router, client, avro_file, position);
         }
         else
         {
@@ -285,7 +294,8 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
  *
  */
 static void
-avro_client_avro_to_json_ouput(AVRO_INSTANCE *router, AVRO_CLIENT *client, char *avro_file)
+avro_client_avro_to_json_ouput(AVRO_INSTANCE *router, AVRO_CLIENT *client,
+                               char *avro_file, uint64_t offset)
 {
     ss_dassert(router && client && avro_file);
 
@@ -299,6 +309,11 @@ avro_client_avro_to_json_ouput(AVRO_INSTANCE *router, AVRO_CLIENT *client, char 
 
         if (file)
         {
+            if (offset > 0)
+            {
+                maxavro_record_seek(file, offset);
+            }
+
             do
             {
                 json_t *row;
