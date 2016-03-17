@@ -21,7 +21,7 @@
 #include <string.h>
 
 
-static bool maxavro_read_sync(FILE *file, char* sync)
+static bool maxavro_read_sync(FILE *file, uint8_t* sync)
 {
     return fread(sync, 1, SYNC_MARKER_SIZE, file) == SYNC_MARKER_SIZE;
 }

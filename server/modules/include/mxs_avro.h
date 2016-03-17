@@ -90,8 +90,6 @@ typedef struct avro_client
     int             state;          /*< The state of this client */
     char            *gtid;          /*< GTID the client requests */
     char            *schemaid;      /*< SchemaID the client requests */
-    char            avrofile[BINLOG_FNAMELEN + 1];
-    /*< Current avro file for this client */
     char            *uuid;          /*< Client UUID */
     char            *user;          /*< Username if given */
     char            *passwd;        /*< Password if given */
@@ -104,6 +102,7 @@ typedef struct avro_client
     uint64_t         last_sent_pos; /*< The last record we sent */
     AVRO_CLIENT_STATS  stats;       /*< Slave statistics */
     time_t          connect_time;   /*< Connect time of slave */
+    MAXAVRO_FILE    *avro_file;     /*< Avro file struct */
 #if defined(SS_DEBUG)
     skygw_chk_t     rses_chk_tail;
 #endif
@@ -162,7 +161,5 @@ extern void save_avro_schema(const char *path, const char* schema, TABLE_MAP *ma
 #define AVRO_CLIENT_REQUEST_DATA 0x0002
 #define AVRO_CLIENT_ERRORED      0x0003
 #define AVRO_CLIENT_MAXSTATE     0x0003
-
-#define AVRO_MAX_FILENAME_LEN         255
 
 #endif

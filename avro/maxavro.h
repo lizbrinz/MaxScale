@@ -29,6 +29,9 @@
 #define AVRO_MAGIC_SIZE 4
 #define SYNC_MARKER_SIZE 16
 
+/** Avro filename maxlen */
+#define AVRO_MAX_FILENAME_LEN 255
+
 /** The file magic */
 static const char avro_magic[] = {0x4f, 0x62, 0x6a, 0x01};
 
@@ -70,6 +73,7 @@ typedef struct
 {
     FILE* file;
     char* filename; /*< The filename */
+    char avro_binfile[AVRO_MAX_FILENAME_LEN + 1];
     MAXAVRO_SCHEMA* schema;
     uint64_t blocks_read; /*< Total number of data blocks read */
     uint64_t records_read; /*< Total number of records read */
@@ -82,7 +86,7 @@ typedef struct
     /** The position @c ftell returns before the first record is read  */
     long block_start_pos;
     enum maxavro_error last_error; /*< Last error */
-    char sync[SYNC_MARKER_SIZE];
+    uint8_t sync[SYNC_MARKER_SIZE];
 } MAXAVRO_FILE;
 
 /** A record field value */
