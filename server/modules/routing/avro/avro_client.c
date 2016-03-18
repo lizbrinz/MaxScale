@@ -253,11 +253,9 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
             avro_file[data_len - 1] = '\0';
             cmd_sep = strchr(avro_file, ' ');
 
-            uint64_t position = 0;
             if (cmd_sep)
             {
                 *cmd_sep++ = '\0';
-                position = strtol(cmd_sep, NULL, 10);
                 cmd_sep = strchr(cmd_sep, ' ');
 
                 if (cmd_sep)
@@ -379,7 +377,6 @@ int avro_client_callback(DCB *dcb, DCB_REASON reason, void *userdata)
     if (reason == DCB_REASON_DRAINED)
     {
         AVRO_CLIENT *client = (AVRO_CLIENT*)userdata;
-        unsigned int cstate;
 
         spinlock_acquire(&client->catch_lock);
         if (client->cstate & AVRO_CS_BUSY)
@@ -388,7 +385,6 @@ int avro_client_callback(DCB *dcb, DCB_REASON reason, void *userdata)
             return 0;
         }
 
-        cstate = client->cstate;
         client->cstate |= AVRO_CS_BUSY;
 
         spinlock_release(&client->catch_lock);
