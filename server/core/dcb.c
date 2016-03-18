@@ -201,6 +201,8 @@ dcb_alloc(dcb_role_t role, SERV_LISTENER *listener)
     spinlock_init(&newdcb->writeqlock);
     spinlock_init(&newdcb->delayqlock);
     spinlock_init(&newdcb->authlock);
+    spinlock_init(&newdcb->back_auth_lock1);
+    spinlock_init(&newdcb->back_auth_lock2);
     spinlock_init(&newdcb->cb_lock);
     spinlock_init(&newdcb->pollinlock);
     spinlock_init(&newdcb->polloutlock);

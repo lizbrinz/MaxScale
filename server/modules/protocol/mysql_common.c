@@ -746,7 +746,7 @@ int gw_send_authentication_to_backend(char *dbname,
  * @param port The host TCP/IP port
  * @param *fd where connected fd is copied
  * @return 0/1 on success and -1 on failure
- * If succesful, fd has file descriptor to socket which is connected to
+ * If successful, fd has file descriptor to socket which is connected to
  * backend server. In failure, fd == -1 and socket is closed.
  *
  */

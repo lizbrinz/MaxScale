@@ -229,6 +229,8 @@ typedef struct dcb
     GWBUF           *delayq;        /**< Delay Backend Write Data Queue */
     GWBUF           *dcb_readqueue; /**< read queue for storing incomplete reads */
     SPINLOCK        authlock;       /**< Generic Authorization spinlock */
+    SPINLOCK        back_auth_lock1; /**< Spinlock for MySQL backend auth */
+    SPINLOCK        back_auth_lock2; /**< Spinlock for MySQL backend auth */
 
     DCBSTATS        stats;          /**< DCB related statistics */
     unsigned int    dcb_server_status; /*< the server role indicator from SERVER */
