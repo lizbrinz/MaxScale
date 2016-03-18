@@ -83,11 +83,6 @@ static void clientReply(ROUTER *instance, void *router_session, GWBUF *queue,
 static void errorReply(ROUTER *instance, void *router_session, GWBUF *message,
                        DCB *backend_dcb, error_action_t action, bool *succp);
 static int getCapabilities();
-static int avro_set_service_CDC_user(SERVICE *service);
-int blr_load_dbusers(AVRO_INSTANCE *router);
-int blr_save_dbusers(AVRO_INSTANCE *router);
-extern char *decryptPassword(char *crypt);
-extern char *create_hex_sha1_sha1_passwd(char *passwd);
 extern int MaxScaleUptime();
 void converter_func(void* data);
 bool binlog_next_file_exists(const char* binlogdir, const char* binlog);
@@ -352,32 +347,6 @@ createInstance(SERVICE *service, char **options)
         inst->create_table_re = re;
     }
 
-    /* Set service user or load db users */
-    //avro_set_service_CDC_user(inst->service);
-
-    /**
-     * Initialise the AVRO router
-     */
-
-    /* Find latest binlog file or create a new one (000001) */
-    /*
-    if (blr_file_init(inst) == 0)
-    {
-        MXS_ERROR("%s: Service not started due to lack of binlog directory %s",
-                  service->name,
-                  inst->binlogdir);
-
-        if (service->users) {
-            users_free(service->users);
-            service->users = NULL;
-        }
-
-        free(inst);
-
-        return NULL;
-    }
-     */
-
     /**
      * We have completed the creation of the instance data, so now
      * insert this router instance into the linked list of routers
@@ -388,6 +357,7 @@ createInstance(SERVICE *service, char **options)
     instances = inst;
     spinlock_release(&instlock);
 
+    /* AVRO converter init */
     avro_load_conversion_state(inst);
     avro_load_created_tables(inst);
     /*
@@ -397,7 +367,7 @@ createInstance(SERVICE *service, char **options)
     hktask_add(task_name, stats_func, inst, AVRO_STATS_FREQ);
 
 
-    /* Start the scan, read, convert task */
+    /* Start the scan, read, convert AVRO task */
     hktask_oneshot(avro_task_name, converter_func, inst, inst->task_delay);
 
     MXS_INFO("AVRO: current MySQL binlog file is %s, pos is %lu\n",
@@ -1005,177 +975,6 @@ stats_func(void *inst)
 }
 
 /**
- * Add the service user to CDC dbusers (service->users)
- * via cdc_users_alloc
- *
- * @param service   The current service
- * @return      0 on success, 1 on failure
- */
-static int
-avro_set_service_CDC_user(SERVICE *service)
-{
-    char *dpwd = NULL;
-    char *newpasswd = NULL;
-    char *service_user = NULL;
-    char *service_passwd = NULL;
-
-    if (serviceGetUser(service, &service_user, &service_passwd) == 0)
-    {
-        MXS_ERROR("failed to get service user details for service %s",
-                  service->name);
-
-        return 1;
-    }
-
-    dpwd = decryptPassword(service->credentials.authdata);
-
-    if (!dpwd)
-    {
-        MXS_ERROR("decrypt password failed for service user %s, service %s",
-                  service_user,
-                  service->name);
-
-        return 1;
-    }
-
-    newpasswd = create_hex_sha1_sha1_passwd(dpwd);
-
-    if (!newpasswd)
-    {
-        MXS_ERROR("create hex_sha1_sha1_password failed for service user %s",
-                  service_user);
-
-        free(dpwd);
-        return 1;
-    }
-
-    /* add service user for % and localhost */
-    /*
-        (void)add_mysql_users_with_host_ipv4(service->users, service->credentials.name, "%", newpasswd, "Y", "");
-        (void)add_mysql_users_with_host_ipv4(service->users, service->credentials.name, "localhost", newpasswd, "Y", "");
-     */
-
-    free(newpasswd);
-    free(dpwd);
-
-    return 0;
-}
-
-/**
- * Load mysql dbusers into (service->users)
- *
- * @param router    The router instance
- * @return              -1 on failure, 0 for no users found, > 0 for found users
- */
-int
-blr_load_dbusers(AVRO_INSTANCE *router)
-{
-    int loaded = -1;
-    char path[PATH_MAX + 1] = "";
-    SERVICE *service;
-    service = router->service;
-
-    /* File path for router cached authentication data */
-    strncpy(path, router->binlogdir, PATH_MAX);
-    strncat(path, "/cache", PATH_MAX);
-    strncat(path, "/dbusers", PATH_MAX);
-
-    /* Try loading dbusers from configured backends */
-    loaded = load_mysql_users(service);
-
-    if (loaded < 0)
-    {
-        MXS_ERROR("Unable to load users for service %s",
-                  service->name);
-
-        /* Try loading authentication data from file cache */
-
-        loaded = dbusers_load(router->service->users, path);
-
-        if (loaded != -1)
-        {
-            MXS_ERROR("Service %s, Using cached credential information file %s.",
-                      service->name,
-                      path);
-        }
-        else
-        {
-            MXS_ERROR("Service %s, Unable to read cache credential information from %s."
-                      " No database user added to service users table.",
-                      service->name,
-                      path);
-        }
-    }
-    else
-    {
-        /* don't update cache if no user was loaded */
-        if (loaded == 0)
-        {
-            MXS_ERROR("Service %s: failed to load any user "
-                      "information. Authentication will "
-                      "probably fail as a result.",
-                      service->name);
-        }
-        else
-        {
-            /* update cached data */
-            blr_save_dbusers(router);
-        }
-    }
-
-    /* At service start last update is set to USERS_REFRESH_TIME seconds earlier.
-     * This way MaxScale could try reloading users' just after startup
-     */
-    service->rate_limit.last = time(NULL) - USERS_REFRESH_TIME;
-    service->rate_limit.nloads = 1;
-
-    return loaded;
-}
-
-/**
- * Save dbusers to cache file
- *
- * @param router    The router instance
- * @return              -1 on failure, >= 0 on success
- */
-int
-blr_save_dbusers(AVRO_INSTANCE *router)
-{
-    SERVICE *service;
-    char path[PATH_MAX + 1] = "";
-    int mkdir_rval = 0;
-
-    service = router->service;
-
-    /* File path for router cached authentication data */
-    strncpy(path, router->binlogdir, PATH_MAX);
-    strncat(path, "/cache", PATH_MAX);
-
-    /* check and create dir */
-    if (access(path, R_OK) == -1)
-    {
-        mkdir_rval = mkdir(path, 0700);
-    }
-
-    if (mkdir_rval == -1)
-    {
-        char err_msg[STRERROR_BUFLEN];
-        MXS_ERROR("Service %s, Failed to create directory '%s': [%d] %s",
-                  service->name,
-                  path,
-                  errno,
-                  strerror_r(errno, err_msg, sizeof(err_msg)));
-
-        return -1;
-    }
-
-    /* set cache file name */
-    strncat(path, "/dbusers", PATH_MAX);
-
-    return dbusers_save(service->users, path);
-}
-
-/**
  * Conversion task: MySQL binlogs to AVRO files
  */
 void converter_func(void* data)
@@ -1215,3 +1014,4 @@ void converter_func(void* data)
                    router->binlog_name, router->current_pos, router->task_delay);
     }
 }
+

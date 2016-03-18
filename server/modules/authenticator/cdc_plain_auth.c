@@ -33,6 +33,14 @@
 #include <gw_authenticator.h>
 #include <cdc.h>
 #include <modutil.h>
+#include <users.h>
+#include <sys/stat.h>
+
+/* Allowed time interval (in seconds) after last update*/
+#define CDC_USERS_REFRESH_TIME 30
+/* Max number of load calls within the time interval */
+#define CDC_USERS_REFRESH_MAX_PER_TIME 4
+
 
 MODULE_INFO info =
 {
@@ -43,11 +51,24 @@ MODULE_INFO info =
 };
 
 static char *version_str = "V1.0.0";
+static int   cdc_load_users_init = 0;
 
 static int  cdc_auth_set_protocol_data(DCB *dcb, GWBUF *buf);
 static bool cdc_auth_is_client_ssl_capable(DCB *dcb);
 static int  cdc_auth_authenticate(DCB *dcb);
 static void cdc_auth_free_client_data(DCB *dcb);
+
+static int cdc_set_service_user(SERVICE *service);
+static int cdc_read_users(USERS *users, char *usersfile);
+static int cdc_load_users(SERVICE *service);
+static int cdc_refresh_users(SERVICE *service);
+static int cdc_replace_users(SERVICE *service);
+
+extern char  *gw_bin2hex(char *out, const uint8_t *in, unsigned int len);
+extern void gw_sha1_str(const uint8_t *in, int in_len, uint8_t *out);
+extern char *create_hex_sha1_sha1_passwd(char *passwd);
+extern char *decryptPassword(char *crypt);
+
 
 /*
  * The "module object" for mysql client authenticator module.
@@ -119,13 +140,36 @@ GWAUTHENTICATOR* GetModuleObject()
 static int cdc_auth_check(DCB *dcb, CDC_protocol *protocol, char *username, uint8_t *auth_data,
                           unsigned int *flags)
 {
-    if (strcmp(username, "massi") == 0)
+    char *user_password;
+
+    if (!cdc_load_users_init)
     {
-        return CDC_STATE_AUTH_OK;
+        /* Load db users or set service user */
+        if (cdc_load_users(dcb->service) < 1)
+        {
+            cdc_set_service_user(dcb->service);
+        }
+
+        cdc_load_users_init = 1;
     }
+
+    user_password = users_fetch(dcb->service->users, username);
+
+    if (!user_password)
+        return CDC_STATE_AUTH_FAILED;
     else
     {
-        return CDC_STATE_AUTH_FAILED;
+        /* compute SHA1 of auth_data */
+        uint8_t sha1_step1[SHA_DIGEST_LENGTH]="";
+        char hex_step1[2 * SHA_DIGEST_LENGTH + 1]="";
+        
+        gw_sha1_str(auth_data, SHA_DIGEST_LENGTH, sha1_step1);
+        gw_bin2hex(hex_step1, sha1_step1, SHA_DIGEST_LENGTH);
+
+        if (memcmp(user_password, hex_step1, SHA_DIGEST_LENGTH) == 0)
+           return CDC_STATE_AUTH_OK;
+        else
+           return CDC_STATE_AUTH_FAILED;
     }
 }
 
@@ -154,16 +198,12 @@ cdc_auth_authenticate(DCB *dcb)
 
         auth_ret = cdc_auth_check(dcb, protocol, client_data->user, client_data->auth_data, client_data->flags);
 
-        /* On failed authentication try to load user table from backend database */
-        /* Success for service_refresh_users returns 0 */
-
-        /*
-        if (CDC_STATE_AUTH_OK != auth_ret && 0 == service_refresh_users(dcb->service))
+        /* On failed authentication try to reload user table */
+        if (CDC_STATE_AUTH_OK != auth_ret && 0 == cdc_refresh_users(dcb->service))
         {
-            auth_ret = cdc_auth_check(dcb, client_data->auth_token, client_data->auth_token_len, protocol,
-                client_data->user, client_data->client_sha1, client_data->db);
+            /* Call protocol authentication */
+            auth_ret = cdc_auth_check(dcb, protocol, client_data->user, client_data->auth_data, client_data->flags);
         }
-        */
 
         /* on successful authentication, set user into dcb field */
         if (CDC_STATE_AUTH_OK == auth_ret)
@@ -174,14 +214,6 @@ cdc_auth_authenticate(DCB *dcb)
         {
             MXS_NOTICE("%s: login attempt for user '%s', authentication failed.",
                        dcb->service->name, client_data->user);
-            if (dcb->ipv4.sin_addr.s_addr == 0x0100007F &&
-                !dcb->service->localhost_match_wildcard_host)
-            {
-                MXS_NOTICE("If you have a wildcard grant that covers"
-                           " this address, try adding "
-                           "'localhost_match_wildcard_host=true' for "
-                           "service '%s'. ", dcb->service->name);
-            }
         }
     }
 
@@ -254,16 +286,14 @@ cdc_auth_set_client_data(
     int client_auth_packet_size)
 {
     char username[CDC_USER_MAXLEN + 1] = "";
-    char auth_data[SHA_DIGEST_LENGTH] = "";
     unsigned int flags[2];
     int decoded_size = client_auth_packet_size / 2;
     int user_len = (client_auth_packet_size <= CDC_USER_MAXLEN) ? client_auth_packet_size : CDC_USER_MAXLEN;
     uint8_t *decoded_buffer = malloc(decoded_size);
     uint8_t *tmp_ptr, *auth_ptr;
 
-#ifndef NO_TEST_AUTH
     /* decode input data */
-    gw_hex2bin(decoded_buffer, (const char *)client_auth_packet, decoded_size);
+    gw_hex2bin(decoded_buffer, (const char *)client_auth_packet, client_auth_packet_size);
     if ((tmp_ptr = (uint8_t *)strchr((char *)decoded_buffer, ':')) != NULL)
     {
         *tmp_ptr++ = '\0';
@@ -273,24 +303,9 @@ cdc_auth_set_client_data(
         return CDC_STATE_AUTH_ERR;
     }
     strncpy(client_data->user, (char *)decoded_buffer, user_len);
+    memcpy(client_data->auth_data, tmp_ptr, sizeof(client_data->auth_data));
     client_data->user[user_len] = '\0';
-#else
-    tmp_ptr = (uint8_t *)strnchr_esc((char *)client_auth_packet, ':', client_auth_packet_size);
-    user_len = tmp_ptr - client_auth_packet;
-    if (tmp_ptr && client_auth_packet_size - (user_len) > SHA_DIGEST_LENGTH)
-    {
-        *tmp_ptr++ = '\0';
-        auth_ptr = tmp_ptr;
-    }
-    else
-    {
-        return CDC_STATE_AUTH_ERR;
-    }
 
-    strncpy(client_data->user, (char *)client_auth_packet, user_len);
-    memcpy(client_data->auth_data, auth_ptr, sizeof(client_data->auth_data));
-    client_data->user[user_len] = '\0';
-#endif
     return CDC_STATE_AUTH_OK;
 }
 
@@ -326,4 +341,301 @@ static void
 cdc_auth_free_client_data(DCB *dcb)
 {
     free(dcb->data);
+}
+
+/*
+ * Add the service user to CDC dbusers (service->users)
+ * via cdc_users_alloc
+ *
+ * @param service   The current service
+ * @return      0 on success, 1 on failure
+ */
+static int
+cdc_set_service_user(SERVICE *service)
+{
+    char *dpwd = NULL;
+    char *newpasswd = NULL;
+    char *service_user = NULL;
+    char *service_passwd = NULL;
+
+    if (serviceGetUser(service, &service_user, &service_passwd) == 0)
+    {
+        MXS_ERROR("failed to get service user details for service %s",
+                  service->name);
+
+        return 1;
+    }
+
+    dpwd = decryptPassword(service->credentials.authdata);
+
+    if (!dpwd)
+    {
+        MXS_ERROR("decrypt password failed for service user %s, service %s",
+                  service_user,
+                  service->name);
+
+        return 1;
+    }
+
+    newpasswd = create_hex_sha1_sha1_passwd(dpwd);
+
+    if (!newpasswd)
+    {
+        MXS_ERROR("create hex_sha1_sha1_password failed for service user %s",
+                  service_user);
+
+        free(dpwd);
+        return 1;
+    }
+
+    /* add service user */
+    (void)users_add(service->users, service->credentials.name, newpasswd);
+
+    free(newpasswd);
+    free(dpwd);
+
+    return 0;
+}
+
+/*
+ * Load AVRO users into (service->users)
+ *
+ * @param service    The current service
+ * @return          -1 on failure, 0 for no users found, > 0 for found users
+ */
+static int
+cdc_load_users(SERVICE *service)
+{
+    int loaded = -1;
+    char path[PATH_MAX + 1] = "";
+
+    /* File path for router cached authentication data */
+    snprintf(path, PATH_MAX, "%s/%s/cdcusers", get_datadir(), service->name);
+
+    /* Allocate users table */
+    if (service->users == NULL)
+        service->users = users_alloc();
+
+    /* Try loading authentication data from file cache */
+    loaded = cdc_read_users(service->users, path);
+
+    if (loaded == -1)
+    {
+        MXS_ERROR("Service %s, Unable to read AVRO users information from %s."
+                  " No AVRO user added to service users table.",
+                  service->name,
+                  path);
+    }
+
+    /* At service start last update is set to CDC_USERS_REFRESH_TIME seconds earlier.
+ *      * This way MaxScale could try reloading users' just after startup
+ *           */
+    service->rate_limit.last = time(NULL) - CDC_USERS_REFRESH_TIME;
+    service->rate_limit.nloads = 1;
+
+    return loaded;
+}
+
+/**
+ * Load the AVRO users
+ * 
+ * @param service    Current service
+ * @param usersfile  File with users
+ * @return -1 on error or users loaded (including 0)
+ */
+
+static int
+cdc_read_users(USERS *users, char *usersfile)
+{
+    FILE  *fp;
+    int loaded = 0;
+    char *avro_user;
+    char *user_passwd;
+    /* user maxlen ':' password hash  '\n' '\0' */
+    char read_buffer[CDC_USER_MAXLEN + 1 + SHA_DIGEST_LENGTH + 1 + 1];
+    char *all_users_data = NULL;
+    struct  stat    statb;
+    int fd;
+    int filelen = 0;
+    unsigned char hash[SHA_DIGEST_LENGTH] = "";
+
+    int max_line_size = sizeof(read_buffer) - 1;
+
+    if ((fp = fopen(usersfile, "r")) == NULL)
+    {
+        return -1;
+    }
+
+    fd = fileno(fp);
+
+    if (fstat(fd, &statb) == 0)
+                filelen = statb.st_size;
+
+    if ((all_users_data = malloc(filelen + 1)) == NULL)
+    {
+        MXS_ERROR("failed to allocate %i for service user data load %s",
+                  filelen + 1,
+                  usersfile);
+        return -1;
+    }
+
+    while (!feof(fp))
+    {
+        if (fgets(read_buffer, max_line_size, fp) != NULL)
+        {
+            char *tmp_ptr = read_buffer;
+            /* append data for hash */
+            strcat(all_users_data, read_buffer);
+ 
+            if ((tmp_ptr = strchr(read_buffer, ':')) != NULL)
+            {
+                *tmp_ptr++ = '\0';
+                avro_user = read_buffer;
+                user_passwd = tmp_ptr;
+                if ((tmp_ptr = strchr(user_passwd, '\n')) != NULL)
+                {
+                    *tmp_ptr = '\0';
+                }
+
+                /* add user */
+                users_add(users, avro_user, user_passwd);
+
+                loaded++;
+            }
+        }
+    }
+
+    /* compute SHA1 digest for users' data */
+    SHA1((const unsigned char *) all_users_data, strlen(all_users_data), hash);
+
+    memcpy(users->cksum, hash, SHA_DIGEST_LENGTH); 
+
+    free(all_users_data);
+
+    fclose(fp);
+
+    return loaded;
+}
+
+
+/**
+ *  * Refresh the database users for the service
+ *   * This function replaces the MySQL users used by the service with the latest
+ *    * version found on the backend servers. There is a limit on how often the users
+ *     * can be reloaded and if this limit is exceeded, the reload will fail.
+ *      * @param service Service to reload
+ *       * @return 0 on success and 1 on error
+ *        */
+static int
+cdc_refresh_users(SERVICE *service)
+{
+    int ret = 1;
+    /* check for another running getUsers request */
+    if (!spinlock_acquire_nowait(&service->users_table_spin))
+    {
+        MXS_DEBUG("%s: [service_refresh_users] failed to get get lock for "
+                  "loading new users' table: another thread is loading users",
+                  service->name);
+
+        return 1;
+    }
+
+    /* check if refresh rate limit has exceeded */
+    if ((time(NULL) < (service->rate_limit.last + CDC_USERS_REFRESH_TIME)) ||
+        (service->rate_limit.nloads > CDC_USERS_REFRESH_MAX_PER_TIME))
+    {
+        spinlock_release(&service->users_table_spin);
+        MXS_ERROR("%s: Refresh rate limit exceeded for load of users' table.",
+                  service->name);
+
+        return 1;
+    }
+
+    service->rate_limit.nloads++;
+
+    /* update time and counter */
+    if (service->rate_limit.nloads > CDC_USERS_REFRESH_MAX_PER_TIME)
+    {
+        service->rate_limit.nloads = 1;
+        service->rate_limit.last = time(NULL);
+    }
+
+    ret = cdc_replace_users(service);
+
+    /* remove lock */
+    spinlock_release(&service->users_table_spin);
+
+    if (ret >= 0)
+    {
+        return 0;
+    }
+    else
+    {
+        return 1;
+    }
+}
+
+/* Replace the user/passwd in the servicei users tbale from a db file.
+ * The replacement is succesful only if the users' table checksums differ
+ *
+ * @param service   The current service
+ * @return      -1 on any error or the number of users inserted (0 means no users at all)
+ *      */
+static int
+cdc_replace_users(SERVICE *service)
+{
+    int i;
+    USERS *newusers, *oldusers;
+    HASHTABLE *oldresources;
+    char path[PATH_MAX + 1] = "";
+
+    /* File path for router cached authentication data */
+    snprintf(path, PATH_MAX, "%s/%s/cdcusers", get_datadir(), service->name);
+
+    if ((newusers = users_alloc()) == NULL)
+    {
+        return -1;
+    }
+
+
+    /* load users */
+    i = cdc_read_users(newusers, path);
+
+    if (i <= 0)
+    {
+        users_free(newusers);
+        return i;
+    }
+
+    spinlock_acquire(&service->spin);
+    oldusers = service->users;
+
+    /* digest compare */
+    if (oldusers != NULL && memcmp(oldusers->cksum, newusers->cksum,
+                                   SHA_DIGEST_LENGTH) == 0)
+    {
+        /* same data, nothing to do */
+        MXS_DEBUG("%lu [cdc_replace_users] users' tables not switched, checksum is the same",
+                  pthread_self());
+
+        /* free the new table */
+        users_free(newusers);
+        i = 0;
+    }
+    else
+    {
+        /* replace the service with effective new data */
+        MXS_DEBUG("%lu [cdc_replace_users] users' tables replaced, checksum differs",
+                  pthread_self());
+        service->users = newusers;
+    }
+
+    spinlock_release(&service->spin);
+
+    if (i && oldusers)
+    {
+        /* free the old table */
+        users_free(oldusers);
+    }
+    return i;
 }
