@@ -240,6 +240,8 @@ createInstance(SERVICE *service, char **options)
     inst->task_delay = 1;
     inst->row_count = 0;
     inst->trx_count = 0;
+    inst->row_target = AVRO_DEFAULT_BLOCK_ROW_COUNT;
+    inst->trx_target = AVRO_DEFAULT_BLOCK_TRX_COUNT;
     int first_file = 1;
     bool err = false;
 
@@ -262,6 +264,14 @@ createInstance(SERVICE *service, char **options)
             else if (strcmp(options[i], "filestem") == 0)
             {
                 inst->fileroot = strdup(value);
+            }
+            else if (strcmp(options[i], "group_rows") == 0)
+            {
+                inst->row_target = atoi(value);
+            }
+            else if (strcmp(options[i], "group_trx") == 0)
+            {
+                inst->trx_target = atoi(value);
             }
             else if (strcmp(options[i], "start_index") == 0)
             {
@@ -419,15 +429,6 @@ newSession(ROUTER *instance, SESSION *session)
 #endif
 
     client->cstate = 0;
-
-    if ((client->avro_file = (MAXAVRO_FILE *) calloc(1, sizeof(MAXAVRO_FILE))) == NULL)
-
-    {
-        MXS_ERROR("Insufficient memory to create avro file struct for AVRO router");
-        return NULL;
-    }
-
-    strcpy(client->avro_file->avro_binfile, "unassigned");
 
     client->connect_time = time(0);
     client->requested_pos = 0;
@@ -781,19 +782,19 @@ diagnostics(ROUTER *router, DCB *dcb)
                        avro_client_states[session->state]);
             dcb_printf(dcb,
                        "\t\tAvro file:					%s\n",
-                       session->avro_file->avro_binfile);
+                       session->avro_binfile);
 
-            gw_bin2hex(sync_marker_hex, session->avro_file->sync, SYNC_MARKER_SIZE);
+            gw_bin2hex(sync_marker_hex, session->avro_file.sync, SYNC_MARKER_SIZE);
 
             dcb_printf(dcb,
                        "\t\tAvro file SyncMarker:					%s\n",
                        sync_marker_hex);
             dcb_printf(dcb,
                        "\t\tAvro file last read block:					%lu\n",
-                       session->avro_file->blocks_read);
+                       session->avro_file.blocks_read);
             dcb_printf(dcb,
                        "\t\tAvro file last read record:					%lu\n",
-                       session->avro_file->records_read);
+                       session->avro_file.records_read);
             dcb_printf(dcb,
                        "\t\tAvro Schema ID:					%lu\n",
                        0);

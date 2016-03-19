@@ -149,7 +149,8 @@ static int
 avro_client_do_registration(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *data)
 {
     const char reg_uuid[] = "REGISTER UUID=";
-    int data_len = GWBUF_LENGTH(data) - sizeof(reg_uuid);
+    const int reg_uuid_len = strlen(reg_uuid);
+    int data_len = GWBUF_LENGTH(data) - reg_uuid_len;
     char *request = GWBUF_DATA(data);
     /* 36 +1 */
     char uuid[CDC_UUID_LEN + 1];
@@ -160,7 +161,7 @@ avro_client_do_registration(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *d
         char *tmp_ptr;
         char *sep_ptr;
         int uuid_len = (data_len > CDC_UUID_LEN) ? CDC_UUID_LEN : data_len;
-        strncpy(uuid, request + sizeof(reg_uuid) + 1, uuid_len);
+        strncpy(uuid, request + reg_uuid_len, uuid_len);
         uuid[uuid_len] = '\0';
 
         if ((sep_ptr = strchr(uuid, ',')) != NULL)
@@ -192,9 +193,10 @@ avro_client_do_registration(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *d
             if (tmp_ptr)
             {
                 int cdc_type_len = (data_len > CDC_TYPE_LEN) ? CDC_TYPE_LEN : data_len;
-                if (strlen(tmp_ptr) < data_len)
+                int typelen = strnlen(tmp_ptr, GWBUF_LENGTH(data) - (tmp_ptr - request));
+                if (typelen < data_len)
                 {
-                    cdc_type_len -= (data_len - strlen(tmp_ptr));
+                    cdc_type_len -= (data_len - typelen);
                 }
 
                 cdc_type_len -= strlen("TYPE=");
@@ -264,8 +266,8 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
                 }
             }
 
-            strncpy(client->avro_file->avro_binfile, avro_file, AVRO_MAX_FILENAME_LEN);
-            client->avro_file->avro_binfile[AVRO_MAX_FILENAME_LEN] = '\0';
+            strncpy(client->avro_binfile, avro_file, AVRO_MAX_FILENAME_LEN);
+            client->avro_binfile[AVRO_MAX_FILENAME_LEN] = '\0';
 
 
             /* set callback routine for data sending */
@@ -335,6 +337,7 @@ avro_client_avro_to_json_output(AVRO_INSTANCE *router, AVRO_CLIENT *client,
                         MXS_ERROR("Failed to dump JSON value.");
                     }
                     free(json);
+                    json_decref(row);
                 }
             }
             while (maxavro_next_block(file));
@@ -346,12 +349,10 @@ avro_client_avro_to_json_output(AVRO_INSTANCE *router, AVRO_CLIENT *client,
             }
 
             /* update client struct */
-            memcpy( client->avro_file->sync, file->sync, SYNC_MARKER_SIZE);
-            client->avro_file->blocks_read = file->blocks_read;
-            client->avro_file->records_read = file->records_read;
+            memcpy(&client->avro_file, file, sizeof(client->avro_file));
 
             /* may be just use client->avro_file->records_read and remove this var */
-            client->last_sent_pos = client->avro_file->records_read;
+            client->last_sent_pos = client->avro_file.records_read;
 
             maxavro_file_close(file);
         }
@@ -386,20 +387,38 @@ int avro_client_callback(DCB *dcb, DCB_REASON reason, void *userdata)
         }
 
         client->cstate |= AVRO_CS_BUSY;
-
         spinlock_release(&client->catch_lock);
 
+        spinlock_acquire(&client->router->lock);
+        uint64_t last_pos = client->router->current_pos;
+        spinlock_release(&client->router->lock);
+
         /* send current file content */
-        avro_client_avro_to_json_output(client->router, client, client->avro_file->avro_binfile,
-                                        client->last_sent_pos);
+        if (last_pos > client->last_sent_pos)
+        {
+            avro_client_avro_to_json_output(client->router, client,
+                                            client->avro_binfile,
+                                            client->last_sent_pos);
+        }
 
         spinlock_acquire(&client->catch_lock);
         client->cstate &= ~AVRO_CS_BUSY;
+        client->cstate |= AVRO_WAIT_DATA;
         spinlock_release(&client->catch_lock);
-
-        /* prepare for next transmission */
-        poll_fake_write_event(client->dcb);
     }
 
     return 0;
+}
+
+/**
+ * @brief Notify a client that new data is available
+ *
+ * The client catch_lock must be held when calling this function.
+ * @param client Client to notify
+ */
+void avro_notify_client(AVRO_CLIENT *client)
+{
+    /* Add fake event that will call the avro_client_callback() routine */
+    poll_fake_write_event(client->dcb);
+    client->cstate &= ~AVRO_WAIT_DATA;
 }

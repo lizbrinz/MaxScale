@@ -24,6 +24,15 @@
 #define AVRO_STATS_FREQ          60
 #define AVRO_NSTATS_MINUTES      30
 
+/**
+ * Avro block grouping defaults
+ */
+#define AVRO_DEFAULT_BLOCK_TRX_COUNT 50
+#define AVRO_DEFAULT_BLOCK_ROW_COUNT 1000
+
+/** Avro filename maxlen */
+#define AVRO_MAX_FILENAME_LEN 255
+
 static char *avro_client_states[] = { "Unregistered", "Registered", "Processing", "Errored" };
 
 /** How a binlog file is closed */
@@ -101,7 +110,8 @@ typedef struct avro_client
     uint64_t         last_sent_pos; /*< The last record we sent */
     AVRO_CLIENT_STATS  stats;       /*< Slave statistics */
     time_t          connect_time;   /*< Connect time of slave */
-    MAXAVRO_FILE    *avro_file;     /*< Avro file struct */
+    MAXAVRO_FILE    avro_file;     /*< Avro file struct */
+    char avro_binfile[AVRO_MAX_FILENAME_LEN + 1];
     unsigned int    cstate;         /*< Catch up state */
 #if defined(SS_DEBUG)
     skygw_chk_t     rses_chk_tail;
@@ -142,6 +152,12 @@ typedef struct avro_instance
     SPINLOCK          fileslock;    /*< Lock for the files queue above */
     AVRO_ROUTER_STATS      stats;        /*< Statistics for this router */
     int task_delay; /*< Delay in seconds until the next conversion takes place */
+    uint64_t        trx_count; /*< Transactions processed */
+    uint64_t        trx_target; /*< Minimum about of transactions that will trigger
+                                 * a flush of all tables */
+    uint64_t        row_count; /*< Row events processed */
+    uint64_t        row_target; /*< Minimum about of row events that will trigger
+                                 * a flush of all tables */
     struct avro_instance  *next;
 } AVRO_INSTANCE;
 
@@ -170,5 +186,6 @@ uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value
  * Client catch-up status
  */
 #define AVRO_CS_BUSY             0x0001
+#define AVRO_WAIT_DATA           0x0002
 
 #endif

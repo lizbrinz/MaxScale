@@ -102,7 +102,6 @@ MAXAVRO_SCHEMA* maxavro_schema_from_json(const char* json)
         {
             json_t *field_arr = NULL;
             json_unpack(schema, "{s:o}", "fields", &field_arr);
-            char *dump = json_dumps(field_arr, JSON_PRESERVE_ORDER);
             size_t arr_size = json_array_size(field_arr);
             rval->fields = malloc(sizeof(MAXAVRO_SCHEMA_FIELD) * arr_size);
             rval->num_fields = arr_size;
@@ -110,8 +109,6 @@ MAXAVRO_SCHEMA* maxavro_schema_from_json(const char* json)
             for (int i = 0; i < arr_size; i++)
             {
                 json_t *object = json_array_get(field_arr, i);
-                dump = json_dumps(object, JSON_PRESERVE_ORDER);
-                (void) dump;
                 char *key;
                 json_t *value_obj;
 
@@ -120,7 +117,6 @@ MAXAVRO_SCHEMA* maxavro_schema_from_json(const char* json)
                 rval->fields[i].type = unpack_to_type(value_obj);
             }
 
-            json_decref(field_arr);
             json_decref(schema);
         }
         else

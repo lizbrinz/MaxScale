@@ -48,8 +48,8 @@ static const char *statefile_section = "avro-conversion";
 void handle_query_event(AVRO_INSTANCE *router, REP_HEADER *hdr,
                         int *pending_transaction, uint8_t *ptr);
 bool is_create_table_statement(AVRO_INSTANCE *router, char* ptr, size_t len);
-
 void avro_flush_all_tables(AVRO_INSTANCE *router);
+void avro_notify_client(AVRO_CLIENT *client);
 
 /**
  * Prepare an existing binlog file to be appened to.
@@ -406,6 +406,27 @@ static GWBUF* read_event_data(AVRO_INSTANCE *router, REP_HEADER* hdr, uint64_t p
     return result;
 }
 
+void notify_all_clients(AVRO_INSTANCE *router)
+{
+    AVRO_CLIENT *client = router->clients;
+    int notified = 0;
+
+    while (client)
+    {
+        spinlock_acquire(&client->catch_lock);
+        if (client->cstate & AVRO_WAIT_DATA)
+        {
+            notified++;
+            avro_notify_client(client);
+        }
+        spinlock_release(&client->catch_lock);
+
+        client = client->next;
+    }
+
+    MXS_INFO("Notified %d clients about new data.", notified);
+}
+
 /**
  * @brief Read all replication events from a binlog file.
  *
@@ -435,6 +456,8 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
     unsigned long total_bytes = 0;
     unsigned long event_bytes = 0;
     unsigned long max_bytes = 0;
+
+    uint64_t total_commits = 0, total_rows = 0;
 
     bool rotate_seen = false;
     bool stop_seen = false;
@@ -494,6 +517,8 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
                 }
                 else
                 {
+                    MXS_INFO("Processed %lu transactions and %lu row events.",
+                             total_commits, total_rows);
                     if (rotate_seen)
                     {
                         rotate_to_file(router, pos, next_binlog);
@@ -613,6 +638,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
         else if ((hdr.event_type >= WRITE_ROWS_EVENTv0 && hdr.event_type <= DELETE_ROWS_EVENTv1) ||
                  (hdr.event_type >= WRITE_ROWS_EVENTv2 && hdr.event_type <= DELETE_ROWS_EVENTv2))
         {
+            router->row_count++;
             handle_row_event(router, &hdr, ptr);
         }
         /* Decode ROTATE EVENT */
@@ -660,14 +686,30 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
          */
         else if (hdr.event_type == QUERY_EVENT)
         {
+            int trx_before = pending_transaction;
             handle_query_event(router, &hdr, &pending_transaction, ptr);
+
+            if (trx_before != pending_transaction)
+            {
+                /** A non-transactional engine finished a transaction */
+                router->trx_count++;
+            }
         }
         else if (hdr.event_type == XID_EVENT)
         {
-            // TODO: Handle XID Event
-            avro_flush_all_tables(router);
-            avro_save_conversion_state(router);
+            router->trx_count++;
             pending_transaction = 0;
+
+            if (router->row_count >= router->row_target ||
+                router->trx_count >= router->trx_target)
+            {
+                notify_all_clients(router);
+                avro_flush_all_tables(router);
+                avro_save_conversion_state(router);
+                total_rows += router->row_count;
+                total_commits += router->trx_count;
+                router->row_count = router->trx_count = 0;
+            }
         }
 
         gwbuf_free(result);
@@ -748,7 +790,7 @@ bool avro_load_created_tables(AVRO_INSTANCE *router)
 
         if (file)
         {
-            if (fread(buffer, 1, len, file) == len)
+            if (buffer && fread(buffer, 1, len, file) == len)
             {
                 buffer[len] = '\0';
                 char *saveptr;
@@ -780,6 +822,7 @@ bool avro_load_created_tables(AVRO_INSTANCE *router)
                     }
                     tok = strtok_r(NULL, "\n", &saveptr);
                 }
+                free(buffer);
             }
 
             fclose(file);

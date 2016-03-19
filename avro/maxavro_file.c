@@ -153,11 +153,11 @@ MAXAVRO_FILE* maxavro_file_open(const char* filename)
             !maxavro_read_datablock_start(avrofile))
         {
             printf("Failed to initialize avrofile.\n");
-            free(schema);
             free(avrofile->schema);
             free(avrofile);
             avrofile = NULL;
         }
+        free(schema);
     }
     else
     {

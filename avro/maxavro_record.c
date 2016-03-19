@@ -69,7 +69,11 @@ static json_t* read_and_pack_value(MAXAVRO_FILE *file, enum maxavro_value_type t
         case MAXAVRO_TYPE_STRING:
         {
             char *str = maxavro_read_string(file);
-            value = json_pack("s", str);
+            if(str)
+            {
+                value = json_string_nocheck(str);
+                free(str);
+            }
         }
         break;
 
@@ -117,7 +121,8 @@ static void skip_value(MAXAVRO_FILE *file, enum maxavro_value_type type)
  * @brief Read a record and convert in into JSON
  *
  * @param file File to read from
- * @return JSON value or NULL if an error occurred
+ * @return JSON value or NULL if an error occurred. The caller must call
+ * json_decref() on the returned value to free the allocated memory.
  */
 json_t* maxavro_record_read(MAXAVRO_FILE *file)
 {
@@ -134,7 +139,7 @@ json_t* maxavro_record_read(MAXAVRO_FILE *file)
                 json_t* value = read_and_pack_value(file, file->schema->fields[i].type);
                 if (value)
                 {
-                    json_object_set(object, file->schema->fields[i].name, value);
+                    json_object_set_new(object, file->schema->fields[i].name, value);
                 }
             }
         }

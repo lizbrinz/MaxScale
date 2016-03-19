@@ -479,6 +479,8 @@ cdc_read_users(USERS *users, char *usersfile)
         return -1;
     }
 
+    *all_users_data = '\0';
+
     while (!feof(fp))
     {
         if (fgets(read_buffer, max_line_size, fp) != NULL)
