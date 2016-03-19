@@ -42,9 +42,10 @@
 #include <fcntl.h>
 #include <maxscale_pcre2.h>
 #include <ini.h>
+#include <dirent.h>
 
 static const char *statefile_section = "avro-conversion";
-
+static const char *ddl_list_name = "table-ddl.list";
 void handle_query_event(AVRO_INSTANCE *router, REP_HEADER *hdr,
                         int *pending_transaction, uint8_t *ptr);
 bool is_create_table_statement(AVRO_INSTANCE *router, char* ptr, size_t len);
@@ -771,6 +772,16 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
 }
 
 /**
+ *
+ * @param router
+ * @return
+ */
+void avro_load_metadata_from_schemas(AVRO_INSTANCE *router)
+{
+    // TODO: implement this
+}
+
+/**
  * @brief Load stored CREATE TABLE statements from file
  * @param router Avro router instance
  * @return True on success
@@ -779,7 +790,7 @@ bool avro_load_created_tables(AVRO_INSTANCE *router)
 {
     bool rval = false;
     char createlist[PATH_MAX + 1];
-    snprintf(createlist, sizeof(createlist), "%s/table-ddl.list", router->avrodir);
+    snprintf(createlist, sizeof(createlist), "%s/%s", router->avrodir, ddl_list_name);
     struct stat st;
 
     if (stat(createlist, &st) == 0)
@@ -856,11 +867,11 @@ void avro_flush_all_tables(AVRO_INSTANCE *router)
 }
 
 /**
- *
- * @param router
- * @param ptr
- * @param len
- * @return
+ * @brief Detection of table creation statements
+ * @param router Avro router instance
+ * @param ptr Pointer to statement
+ * @param len Statement length
+ * @return True if the statement creates a new table
  */
 bool is_create_table_statement(AVRO_INSTANCE *router, char* ptr, size_t len)
 {
@@ -870,6 +881,28 @@ bool is_create_table_statement(AVRO_INSTANCE *router, char* ptr, size_t len)
     if (mdata)
     {
         rc = pcre2_match(router->create_table_re, (PCRE2_SPTR) ptr, len, 0, 0, mdata, NULL);
+        pcre2_match_data_free(mdata);
+    }
+
+    return rc > 0;
+}
+
+
+/**
+ * @brief Detection of table alteration statements
+ * @param router Avro router instance
+ * @param ptr Pointer to statement
+ * @param len Statement length
+ * @return True if the statement alters a table
+ */
+bool is_alter_table_statement(AVRO_INSTANCE *router, char* ptr, size_t len)
+{
+    int rc = 0;
+    pcre2_match_data *mdata = pcre2_match_data_create_from_pattern(router->alter_table_re, NULL);
+
+    if (mdata)
+    {
+        rc = pcre2_match(router->alter_table_re, (PCRE2_SPTR) ptr, len, 0, 0, mdata, NULL);
         pcre2_match_data_free(mdata);
     }
 
@@ -886,6 +919,39 @@ bool is_create_table_statement(AVRO_INSTANCE *router, char* ptr, size_t len)
 #define PHDR_OFF 4 + 4 + 1 + 2 + 2
 
 /**
+ * Save the CREATE TABLE statement to disk and replace older versions of the table
+ * in the router's hashtable.
+ * @param router Avro router instance
+ * @param created Created table
+ * @return False if an error occurred and true if successful
+ */
+bool save_and_replace_table_create(AVRO_INSTANCE *router, TABLE_CREATE *created)
+{
+    char createlist[PATH_MAX + 1];
+    snprintf(createlist, sizeof(createlist), "%s/%s", router->avrodir, ddl_list_name);
+
+    if (!table_create_save(created, createlist))
+    {
+        return false;
+    }
+
+    char table_ident[MYSQL_TABLE_MAXLEN + MYSQL_DATABASE_MAXLEN + 2];
+    snprintf(table_ident, sizeof(table_ident), "%s.%s", created->database, created->table);
+
+    spinlock_acquire(&router->lock); // Is this necessary?
+    TABLE_CREATE *old = hashtable_fetch(router->created_tables, table_ident);
+
+    if (old)
+    {
+        hashtable_delete(router->created_tables, table_ident);
+    }
+
+    hashtable_add(router->created_tables, table_ident, created);
+    spinlock_release(&router->lock);
+    return true;
+}
+
+/**
  * @brief Simple detection of CREATE TABLE statements
  *
  * @param router Avro router instance
@@ -900,37 +966,21 @@ void handle_query_event(AVRO_INSTANCE *router, REP_HEADER *hdr, int *pending_tra
     int len = hdr->event_size - BINLOG_EVENT_HDR_LEN - (PHDR_OFF + vblklen + 1 + dblen);
     char *sql = (char *) ptr + PHDR_OFF + vblklen + 1 + dblen;
 
-    /** Very   */
     if (is_create_table_statement(router, sql, len))
     {
         char db[dblen + 1];
         strncpy(db, (char*) ptr + PHDR_OFF + vblklen, sizeof(db));
         TABLE_CREATE *created = table_create_alloc(sql, db, router->current_gtid);
 
-        if (created)
+        if (created && !save_and_replace_table_create(router, created))
         {
-            char createlist[PATH_MAX + 1];
-            snprintf(createlist, sizeof(createlist), "%s/table-ddl.list", router->avrodir);
-
-            if (!table_create_save(created, createlist))
-            {
-                MXS_ERROR("Failed to store CREATE TABLE statement to disk: %s", sql);
-            }
-
-            char table_ident[MYSQL_TABLE_MAXLEN + MYSQL_DATABASE_MAXLEN + 2];
-            snprintf(table_ident, sizeof(table_ident), "%s.%s", created->database, created->table);
-
-            spinlock_acquire(&router->lock);
-            TABLE_CREATE *old = hashtable_fetch(router->created_tables, table_ident);
-
-            if (old)
-            {
-                hashtable_delete(router->created_tables, table_ident);
-            }
-
-            hashtable_add(router->created_tables, table_ident, created);
-            spinlock_release(&router->lock);
+            MXS_ERROR("Failed to save statement to disk: %.*s", len, sql);
         }
+    }
+    else if (is_alter_table_statement(router, sql, len))
+    {
+        MXS_NOTICE("Alter table statements are not currently supported: %.*s",
+                   len, sql);
     }
     /* A transaction starts with this event */
     else if (strncmp(sql, "BEGIN", 5) == 0)

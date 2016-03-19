@@ -922,8 +922,7 @@ static int process_column_definition(const char *nameptr, char*** dest)
  * @brief Handle a query event which contains a CREATE TABLE statement
  * @param sql Query SQL
  * @param db Database where this query was executed
- * @return
- * TODO: NULL return value checks
+ * @return New CREATE_TABLE object or NULL if an error occurred
  */
 TABLE_CREATE* table_create_alloc(const char* sql, const char* event_db,
                                  const char* gtid)

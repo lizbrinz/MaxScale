@@ -127,7 +127,7 @@ void save_avro_schema(const char *path, const char* schema, TABLE_MAP *map)
 {
     char filepath[PATH_MAX];
     int i = 1;
-    sprintf(filepath, "%s/%s.%s.%06d.avsc", path, map->database, map->table, i);
+    snprintf(filepath, sizeof(filepath), "%s/%s.%s.%06d.avsc", path, map->database, map->table, i);
 
     while (access(filepath, F_OK) == 0)
     {
@@ -147,6 +147,7 @@ void save_avro_schema(const char *path, const char* schema, TABLE_MAP *map)
             if (oldfile)
             {
                 fread(old_schema, 1, sizeof(old_schema), oldfile);
+                old_schema[st.st_size] = '\0';
                 if (strncmp(old_schema, schema, MIN(sizeof(old_schema), strlen(schema))) == 0)
                 {
                     equal = true;

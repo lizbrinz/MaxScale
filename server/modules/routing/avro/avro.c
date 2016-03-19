@@ -67,9 +67,11 @@
 static char *version_str = "V1.0.0";
 static const char* avro_task_name = "binlog_to_avro";
 
-/** For detection of CREATE TABLE */
+/** For detection of CREATE/ALTER TABLE statements */
 static const char* create_table_regex =
-    "(?i)^create[a-z0-9[:space:]_]+table";
+    "(?i)^[:space:]*create[a-z0-9[:space:]_]+table";
+static const char* alter_table_regex =
+    "(?i)^[:space:]*alter[:space:]+table";
 
 /* The router entry points */
 static ROUTER *createInstance(SERVICE *service, char **options);
@@ -330,13 +332,17 @@ createInstance(SERVICE *service, char **options)
 
     int pcreerr;
     size_t erroff;
-    pcre2_code *re = pcre2_compile((PCRE2_SPTR) create_table_regex,
-                                   PCRE2_ZERO_TERMINATED, 0, &pcreerr, &erroff, NULL);
-    ss_dassert(re); // This should almost never fail
+    pcre2_code *create_re = pcre2_compile((PCRE2_SPTR) create_table_regex,
+                                          PCRE2_ZERO_TERMINATED, 0, &pcreerr, &erroff, NULL);
+    ss_dassert(create_re); // This should almost never fail
+    pcre2_code *alter_re = pcre2_compile((PCRE2_SPTR) alter_table_regex,
+                                         PCRE2_ZERO_TERMINATED, 0, &pcreerr, &erroff, NULL);
+    ss_dassert(alter_re); // This should almost never fail
 
-    if (re)
+    if (create_re && alter_re)
     {
-        inst->create_table_re = re;
+        inst->create_table_re = create_re;
+        inst->alter_table_re = alter_re;
     }
     else
     {
