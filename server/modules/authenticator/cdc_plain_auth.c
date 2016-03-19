@@ -427,9 +427,9 @@ cdc_load_users(SERVICE *service)
                   path);
     }
 
-    /* At service start last update is set to CDC_USERS_REFRESH_TIME seconds earlier.
- *      * This way MaxScale could try reloading users' just after startup
- *           */
+    /* At service start last update is set to CDC_USERS_REFRESH_TIME seconds
+     * earlier. This way MaxScale could try reloading users just after startup.
+     */
     service->rate_limit.last = time(NULL) - CDC_USERS_REFRESH_TIME;
     service->rate_limit.nloads = 1;
 

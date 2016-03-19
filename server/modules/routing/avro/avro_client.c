@@ -67,7 +67,7 @@ static int avro_client_binlog_dump(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave,
 int avro_client_callback(DCB *dcb, DCB_REASON reason, void *data);
 static void avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *queue);
 static void avro_client_avro_to_json_output(AVRO_INSTANCE *router, AVRO_CLIENT *client,
-                                           char *avro_file, uint64_t offset);
+                                            char *avro_file, uint64_t offset);
 
 void poll_fake_write_event(DCB *dcb);
 
@@ -299,7 +299,7 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
  */
 static void
 avro_client_avro_to_json_output(AVRO_INSTANCE *router, AVRO_CLIENT *client,
-                               char *avro_file, uint64_t start_record)
+                                char *avro_file, uint64_t start_record)
 {
     uint64_t offset = start_record;
     ss_dassert(router && client && avro_file);
@@ -390,7 +390,8 @@ int avro_client_callback(DCB *dcb, DCB_REASON reason, void *userdata)
         spinlock_release(&client->catch_lock);
 
         /* send current file content */
-        avro_client_avro_to_json_output(client->router, client, client->avro_file->avro_binfile, client->last_sent_pos);
+        avro_client_avro_to_json_output(client->router, client, client->avro_file->avro_binfile,
+                                        client->last_sent_pos);
 
         spinlock_acquire(&client->catch_lock);
         client->cstate &= ~AVRO_CS_BUSY;

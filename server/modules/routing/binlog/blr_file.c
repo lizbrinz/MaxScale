@@ -65,7 +65,6 @@
 #include <mysql_utils.h>
 #include <mysql_binlog.h>
 #include <avro.h>
-#include <rbr.h>
 
 #include <maxscale_pcre2.h>
 

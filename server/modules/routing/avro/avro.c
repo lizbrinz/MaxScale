@@ -90,6 +90,7 @@ int blr_file_get_next_binlogname(const char *router);
 bool avro_load_conversion_state(AVRO_INSTANCE *router);
 bool avro_load_created_tables(AVRO_INSTANCE *router);
 int avro_client_callback(DCB *dcb, DCB_REASON reason, void *userdata);
+static bool ensure_dir_ok(const char* path, int mode);
 
 /** The module object definition */
 static ROUTER_OBJECT MyObject =
@@ -216,29 +217,14 @@ createInstance(SERVICE *service, char **options)
         return NULL;
     }
 
-    /*
-     * We only support one server behind this router, since the server is
-     * the master from which we replicate binlog records. Therefore check
-     * that only one server has been defined.
-     */
-    if (service->dbref != NULL)
-    {
-        MXS_WARNING("%s: backend database server is provided by master.ini file "
-                    "for use with the binlog router."
-                    " Server section is no longer required.",
-                    service->name);
-    }
-
     if ((inst = calloc(1, sizeof(AVRO_INSTANCE))) == NULL)
     {
         MXS_ERROR("%s: Error: failed to allocate memory for router instance.",
                   service->name);
-
         return NULL;
     }
 
     memset(&inst->stats, 0, sizeof(AVRO_ROUTER_STATS));
-
     spinlock_init(&inst->lock);
     spinlock_init(&inst->fileslock);
     inst->service = service;
@@ -247,56 +233,51 @@ createInstance(SERVICE *service, char **options)
     inst->avrodir = NULL;
     inst->current_pos = 4;
     inst->binlog_position = 4;
+    inst->clients = NULL;
+    inst->next = NULL;
+    inst->lastEventTimestamp = 0;
+    inst->binlog_position = 0;
+    inst->task_delay = 1;
+    inst->row_count = 0;
+    inst->trx_count = 0;
     int first_file = 1;
+    bool err = false;
 
-    if (options)
+    for (i = 0; options[i]; i++)
     {
-        for (i = 0; options[i]; i++)
+        if ((value = strchr(options[i], '=')))
         {
-            if ((value = strchr(options[i], '=')) == NULL)
+            *value++ = '\0';
+
+            if (strcmp(options[i], "binlogdir") == 0)
             {
-                MXS_WARNING("Unsupported router "
-                            "option %s for binlog router.",
-                            options[i]);
+                inst->binlogdir = strdup(value);
+                MXS_INFO("Reading MySQL binlog files from %s", inst->binlogdir);
+            }
+            else if (strcmp(options[i], "avrodir") == 0)
+            {
+                inst->avrodir = strdup(value);
+                MXS_INFO("AVRO files stored in %s", inst->avrodir);
+            }
+            else if (strcmp(options[i], "filestem") == 0)
+            {
+                inst->fileroot = strdup(value);
+            }
+            else if (strcmp(options[i], "start_index") == 0)
+            {
+                first_file = MAX(1, atoi(value));
             }
             else
             {
-                *value = 0;
-                value++;
-
-                if (strcmp(options[i], "binlogdir") == 0)
-                {
-                    inst->binlogdir = strdup(value);
-                    MXS_INFO("reading MySQL binlog files from %s",
-                             inst->binlogdir);
-                }
-                else if (strcmp(options[i], "avrodir") == 0)
-                {
-                    inst->avrodir = strdup(value);
-                    MXS_INFO("AVRO files are in %s",
-                             inst->avrodir);
-                }
-                else if (strcmp(options[i], "filestem") == 0)
-                {
-                    inst->fileroot = strdup(value);
-                }
-                else if (strcmp(options[i], "start_index") == 0)
-                {
-                    first_file = MAX(1, atoi(value));
-                }
-                else
-                {
-                    MXS_WARNING("Unsupported router "
-                                "option %s for AVRO router.",
-                                options[i]);
-                }
+                MXS_WARNING("[avrorouter] Unknown router option: '%s'", options[i]);
+                err = true;
             }
         }
-    }
-    else
-    {
-        MXS_ERROR("%s: Error: No router options supplied for AVRO router",
-                  service->name);
+        else
+        {
+            MXS_WARNING("[avrorouter] Unknown router option: '%s'", options[i]);
+            err = true;
+        }
     }
 
     if (inst->fileroot == NULL)
@@ -304,12 +285,17 @@ createInstance(SERVICE *service, char **options)
         inst->fileroot = strdup(BINLOG_NAME_ROOT);
     }
 
-    inst->clients = NULL;
-    inst->next = NULL;
-    inst->lastEventTimestamp = 0;
+    if (inst->binlogdir == NULL || !ensure_dir_ok(inst->binlogdir, R_OK))
+    {
+        MXS_ERROR("Access to binary log directory is not possible.");
+        err = true;
+    }
 
-    inst->binlog_position = 0;
-    inst->task_delay = 1;
+    if (inst->avrodir == NULL || !ensure_dir_ok(inst->avrodir, W_OK))
+    {
+        MXS_ERROR("Access to Avro file directory is not possible.");
+        err = true;
+    }
 
     snprintf(inst->binlog_name, sizeof(inst->binlog_name), BINLOG_NAMEFMT, inst->fileroot, first_file);
     inst->prevbinlog[0] = '\0';
@@ -327,26 +313,37 @@ createInstance(SERVICE *service, char **options)
     }
     else
     {
-        hashtable_free(inst->table_maps);
-        hashtable_free(inst->open_tables);
-        hashtable_free(inst->created_tables);
         MXS_ERROR("Hashtable allocation failed. This is most likely caused "
                   "by a lack of available memory.");
-        free(inst);
-        return NULL;
+        err = true;
     }
 
-    int err;
+    int pcreerr;
     size_t erroff;
-
     pcre2_code *re = pcre2_compile((PCRE2_SPTR) create_table_regex,
-                                   PCRE2_ZERO_TERMINATED, 0, &err, &erroff, NULL);
+                                   PCRE2_ZERO_TERMINATED, 0, &pcreerr, &erroff, NULL);
+    ss_dassert(re); // This should almost never fail
 
     if (re)
     {
         inst->create_table_re = re;
     }
+    else
+    {
+        err = true;
+    }
 
+    if (err)
+    {
+        hashtable_free(inst->table_maps);
+        hashtable_free(inst->open_tables);
+        hashtable_free(inst->created_tables);
+        free(inst->avrodir);
+        free(inst->binlogdir);
+        free(inst->fileroot);
+        free(inst);
+        return NULL;
+    }
     /**
      * We have completed the creation of the instance data, so now
      * insert this router instance into the linked list of routers
@@ -787,7 +784,7 @@ diagnostics(ROUTER *router, DCB *dcb)
                        session->avro_file->avro_binfile);
 
             gw_bin2hex(sync_marker_hex, session->avro_file->sync, SYNC_MARKER_SIZE);
-   
+
             dcb_printf(dcb,
                        "\t\tAvro file SyncMarker:					%s\n",
                        sync_marker_hex);
@@ -1003,15 +1000,55 @@ void converter_func(void* data)
         }
     }
 
-    avro_flush_all_tables(router);
-
     if (binlog_end == AVRO_LAST_FILE)
     {
         router->task_delay = MIN(router->task_delay + 1, AVRO_TASK_DELAY_MAX);
         hktask_oneshot(avro_task_name, converter_func, router, router->task_delay);
-        MXS_NOTICE("Stopped processing file %s at position %lu. Waiting until"
-                   " more data is written before continuing. Next check in %d seconds.",
-                   router->binlog_name, router->current_pos, router->task_delay);
+        MXS_INFO("Stopped processing file %s at position %lu. Waiting until"
+                 " more data is written before continuing. Next check in %d seconds.",
+                 router->binlog_name, router->current_pos, router->task_delay);
     }
 }
 
+/**
+ * @brief Ensure directory exists and is writable
+ * @param path Path to directory
+ * @param mode One of O_RDONLY, O_WRONLY or O_RDWR
+ * @return True if directory exists and can be opened with @p mode permission
+ */
+static bool ensure_dir_ok(const char* path, int mode)
+{
+    bool rval = false;
+    char resolved[PATH_MAX + 1];
+    char err[STRERROR_BUFLEN];
+    if (path)
+    {
+        if (realpath(path, resolved))
+        {
+            /** Make sure the directory exists */
+            if (mkdir(resolved, 0774) == 0 || errno == EEXIST)
+            {
+                if (access(resolved, mode) == 0)
+                {
+                    rval = true;
+                }
+                else
+                {
+                    MXS_ERROR("Failed to access directory '%s': %d, %s", resolved,
+                              errno, strerror_r(errno, err, sizeof(err)));
+                }
+            }
+            else
+            {
+                MXS_ERROR("Failed to create directory '%s': %d, %s", resolved,
+                          errno, strerror_r(errno, err, sizeof(err)));
+            }
+        }
+        else
+        {
+            MXS_ERROR("Failed to resolve real path name for '%s': %d, %s", path,
+                      errno, strerror_r(errno, err, sizeof(err)));
+        }
+    }
+    return rval;
+}

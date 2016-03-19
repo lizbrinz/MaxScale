@@ -41,7 +41,6 @@
 #include <log_manager.h>
 #include <fcntl.h>
 #include <maxscale_pcre2.h>
-#include <rbr.h>
 #include <ini.h>
 
 static const char *statefile_section = "avro-conversion";

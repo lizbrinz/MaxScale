@@ -1697,6 +1697,7 @@ static char *InternalRouters[] =
     "maxinfo",
     "binlogrouter",
     "testroute",
+    "avrorouter",
     NULL
 };
 

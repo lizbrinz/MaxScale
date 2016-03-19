@@ -17,7 +17,6 @@
  */
 
 
-#include <rbr.h>
 #include <mysql_utils.h>
 #include <jansson.h>
 #include <dbusers.h>
@@ -166,7 +165,7 @@ bool handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
                 avro_file_writer_append_value(table->avro_file, &record);
                 rows++;
             }
-            MXS_INFO("Processed %d rows", rows);
+
             avro_value_decref(&record);
             rval = true;
         }

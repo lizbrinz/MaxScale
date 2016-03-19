@@ -16,6 +16,7 @@
 #include <cdc.h>
 #include <maxscale_pcre2.h>
 #include <maxavro.h>
+#include <binlog_common.h>
 
 /**
  * How often to call the router status function (seconds)
@@ -23,9 +24,7 @@
 #define AVRO_STATS_FREQ          60
 #define AVRO_NSTATS_MINUTES      30
 
-static char *avro_client_states[] = { "Unregistered", "Registered",
-                                      "Processing", "Errored"
-                                    };
+static char *avro_client_states[] = { "Unregistered", "Registered", "Processing", "Errored" };
 
 /** How a binlog file is closed */
 typedef enum avro_binlog_end
@@ -156,6 +155,10 @@ extern void* avro_table_free(AVRO_TABLE *table);
 extern void avro_flush_all_tables(AVRO_INSTANCE *router);
 extern char* json_new_schema_from_table(TABLE_MAP *map, TABLE_CREATE *create);
 extern void save_avro_schema(const char *path, const char* schema, TABLE_MAP *map);
+bool handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr);
+bool handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr);
+uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value_t *record,
+                                uint8_t *ptr, uint64_t columns_present, uint64_t columns_update);
 
 #define AVRO_CLIENT_UNREGISTERED 0x0000
 #define AVRO_CLIENT_REGISTERED   0x0001
