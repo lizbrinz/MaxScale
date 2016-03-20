@@ -53,7 +53,7 @@
 #include <ini.h>
 #include <sys/stat.h>
 
-#include <mxs_avro.h>
+#include <avrorouter.h>
 #include <random_jkiss.h>
 #include <binlog_common.h>
 #include <avro/errors.h>

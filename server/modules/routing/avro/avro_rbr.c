@@ -20,7 +20,7 @@
 #include <mysql_utils.h>
 #include <jansson.h>
 #include <dbusers.h>
-#include <mxs_avro.h>
+#include <avrorouter.h>
 #include <strings.h>
 
 /**

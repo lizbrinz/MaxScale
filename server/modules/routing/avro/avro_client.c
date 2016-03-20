@@ -48,7 +48,7 @@
 #include <zlib.h>
 
 /* AVRO */
-#include <mxs_avro.h>
+#include <avrorouter.h>
 #include <maxavro.h>
 
 extern int load_mysql_users(SERVICE *service);

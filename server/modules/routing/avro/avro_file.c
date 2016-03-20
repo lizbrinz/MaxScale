@@ -37,7 +37,7 @@
 
 #include <binlog_common.h>
 #include <sys/stat.h>
-#include <mxs_avro.h>
+#include <avrorouter.h>
 #include <log_manager.h>
 #include <fcntl.h>
 #include <maxscale_pcre2.h>
