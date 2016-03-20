@@ -69,9 +69,9 @@ static const char* avro_task_name = "binlog_to_avro";
 
 /** For detection of CREATE/ALTER TABLE statements */
 static const char* create_table_regex =
-    "(?i)^[:space:]*create[a-z0-9[:space:]_]+table";
+    "(?i)^[[:space:]]*create[a-z0-9[:space:]_]+table";
 static const char* alter_table_regex =
-    "(?i)^[:space:]*alter[:space:]+table";
+    "(?i)^[[:space:]]*alter[{:space:]]+table";
 
 /* The router entry points */
 static ROUTER *createInstance(SERVICE *service, char **options);

@@ -323,14 +323,14 @@ avro_client_avro_to_json_output(AVRO_INSTANCE *router, AVRO_CLIENT *client,
             do
             {
                 json_t *row;
-
-                while ((row = maxavro_record_read(file)))
+                int rc = 1;
+                while (rc > 0 && (row = maxavro_record_read(file)))
                 {
                     char *json = json_dumps(row, JSON_PRESERVE_ORDER);
-
-                    if (json)
+                    GWBUF *buf;
+                    if (json && (buf = gwbuf_alloc_and_load(strlen(json), (void*)json)))
                     {
-                        dcb_printf(client->dcb, "%s", json);
+                        rc = client->dcb->func.write(client->dcb, buf);
                     }
                     else
                     {
