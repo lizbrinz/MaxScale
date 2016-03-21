@@ -63,6 +63,10 @@
 
 #include "gw_authenticator.h"
 
+ /* @see function load_module in load_utils.c for explanation of the following
+  * lint directives.
+ */
+/*lint -e14 */
 MODULE_INFO info =
 {
     MODULE_API_PROTOCOL,
@@ -70,6 +74,7 @@ MODULE_INFO info =
     GWPROTOCOL_VERSION,
     "The client to MaxScale MySQL protocol implementation"
 };
+/*lint +e14*/
 
 static char *version_str = "V1.1.0";
 
@@ -113,7 +118,11 @@ static GWPROTOCOL MyObject =
  * Implementation of the mandatory version entry point
  *
  * @return version string of the module
+ *
+ * @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
  */
+/*lint -e14 */
 char* version()
 {
     return version_str;
@@ -139,6 +148,7 @@ GWPROTOCOL* GetModuleObject()
 {
     return &MyObject;
 }
+/*lint +e14 */
 
 /**
  * The default authenticator name for this protocol
@@ -248,7 +258,7 @@ int MySQLSendHandshake(DCB* dcb)
     uint32_t mysql_payload_size = 0;
     uint8_t mysql_packet_header[4];
     uint8_t mysql_packet_id = 0;
-    uint8_t mysql_filler = GW_MYSQL_HANDSHAKE_FILLER;
+    /* uint8_t mysql_filler = GW_MYSQL_HANDSHAKE_FILLER; not needed*/
     uint8_t mysql_protocol_version = GW_MYSQL_PROTOCOL_VERSION;
     uint8_t *mysql_handshake_payload = NULL;
     uint8_t mysql_thread_id_num[4];
@@ -260,7 +270,7 @@ int MySQLSendHandshake(DCB* dcb)
     uint8_t mysql_server_status[2];
     uint8_t mysql_scramble_len = 21;
     uint8_t mysql_filler_ten[10];
-    uint8_t mysql_last_byte = 0x00;
+    /* uint8_t mysql_last_byte = 0x00; not needed */
     char server_scramble[GW_MYSQL_SCRAMBLE_SIZE + 1]="";
     char *version_string;
     int len_version_string = 0;
@@ -300,10 +310,10 @@ int MySQLSendHandshake(DCB* dcb)
 
     mysql_payload_size =
         sizeof(mysql_protocol_version) + (len_version_string + 1) + sizeof(mysql_thread_id_num) + 8 +
-        sizeof(mysql_filler) + sizeof(mysql_server_capabilities_one) + sizeof(mysql_server_language) +
+        sizeof(/* mysql_filler */ uint8_t) + sizeof(mysql_server_capabilities_one) + sizeof(mysql_server_language) +
         sizeof(mysql_server_status) + sizeof(mysql_server_capabilities_two) + sizeof(mysql_scramble_len) +
-        sizeof(mysql_filler_ten) + 12 + sizeof(mysql_last_byte) + strlen("mysql_native_password") +
-        sizeof(mysql_last_byte);
+        sizeof(mysql_filler_ten) + 12 + sizeof(/* mysql_last_byte */ uint8_t) + strlen("mysql_native_password") +
+        sizeof(/* mysql_last_byte */ uint8_t);
 
     // allocate memory for packet header + payload
     if ((buf = gwbuf_alloc(sizeof(mysql_packet_header) + mysql_payload_size)) == NULL)
@@ -313,10 +323,10 @@ int MySQLSendHandshake(DCB* dcb)
     }
     outbuf = GWBUF_DATA(buf);
 
-    // write packet heder with mysql_payload_size
+    // write packet header with mysql_payload_size
     gw_mysql_set_byte3(mysql_packet_header, mysql_payload_size);
 
-    // write packent number, now is 0
+    // write packet number, now is 0
     mysql_packet_header[3]= mysql_packet_id;
     memcpy(outbuf, mysql_packet_header, sizeof(mysql_packet_header));
 
@@ -399,8 +409,6 @@ int MySQLSendHandshake(DCB* dcb)
 
     //write last byte, 0
     *mysql_handshake_payload = 0x00;
-
-    mysql_handshake_payload++;
 
     // writing data in the Client buffer queue
     dcb->func.write(dcb, buf);

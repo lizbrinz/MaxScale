@@ -92,11 +92,14 @@ version()
 /**
  * The module initialisation routine, called when the module
  * is first loaded.
+ * @see function load_module in load_utils.c for explanation of lint
  */
+/*lint -e14 */
 void
 ModuleInit()
 {
 }
+/*lint +e14 */
 
 /**
  * The module entry point routine. It is this routine that
@@ -115,7 +118,7 @@ GetModuleObject()
 /**
  * Create an instance of the filter for a particular service
  * within MaxScale.
- * 
+ *
  * @param options	The options for this filter
  * @param params	The array of name/value pair parameters for the filter
  *
@@ -160,7 +163,7 @@ TEST_SESSION	*my_session;
  * @param instance	The filter instance data
  * @param session	The session being closed
  */
-static	void 	
+static	void
 closeSession(FILTER *instance, void *session)
 {
 }
@@ -203,7 +206,7 @@ TEST_SESSION	*my_session = (TEST_SESSION *)session;
  * @param session	The filter session
  * @param queue		The query data
  */
-static	int	
+static	int
 routeQuery(FILTER *instance, void *session, GWBUF *queue)
 {
 TEST_SESSION	*my_session = (TEST_SESSION *)session;

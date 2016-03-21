@@ -71,11 +71,14 @@ version()
 /**
  * The module initialisation routine, called when the module
  * is first loaded.
+ * @see function load_module in load_utils.c for explanation of lint
  */
+/*lint -e14 */
 void
 ModuleInit()
 {
 }
+/*lint +e14 */
 
 /**
  * The module entry point routine. It is this routine that
@@ -94,7 +97,7 @@ GetModuleObject()
 /**
  * Create an instance of the filter for a particular service
  * within MaxScale.
- * 
+ *
  * @param options	The options for this filter
  *
  * @return The instance data for this new instance
@@ -140,7 +143,7 @@ HINT_SESSION	*my_session;
  * @param instance	The filter instance data
  * @param session	The session being closed
  */
-static	void 	
+static	void
 closeSession(FILTER *instance, void *session)
 {
 HINT_SESSION	*my_session = (HINT_SESSION *)session;
@@ -150,15 +153,15 @@ HINTSTACK*      hint_stack;
 	if (my_session->request)
 		gwbuf_free(my_session->request);
 
-        
+
         /** Free named hints */
         named_hints = my_session->named_hints;
-        
+
         while ((named_hints = free_named_hint(named_hints)) != NULL)
                 ;
         /** Free stacked hints */
         hint_stack = my_session->stack;
-        
+
         while ((hint_stack = free_hint_stack(hint_stack)) != NULL)
                 ;
 }
@@ -201,7 +204,7 @@ HINT_SESSION	*my_session = (HINT_SESSION *)session;
  * @param session	The filter session
  * @param queue		The query data
  */
-static	int	
+static	int
 routeQuery(FILTER *instance, void *session, GWBUF *queue)
 {
 HINT_SESSION	*my_session = (HINT_SESSION *)session;

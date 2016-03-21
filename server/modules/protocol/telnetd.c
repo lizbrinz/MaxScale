@@ -39,6 +39,10 @@
 #include <log_manager.h>
 #include <modinfo.h>
 
+ /* @see function load_module in load_utils.c for explanation of the following
+  * lint directives.
+ */
+/*lint -e14 */
 MODULE_INFO info =
 {
     MODULE_API_PROTOCOL,
@@ -46,6 +50,7 @@ MODULE_INFO info =
     GWPROTOCOL_VERSION,
     "A telnet deamon protocol for simple administration interface"
 };
+/*lint +e14 */
 
 /**
  * @file telnetd.c - telnet daemon protocol module
@@ -107,7 +112,11 @@ static void telnetd_echo(DCB *dcb, int enable);
  * Implementation of the mandatory version entry point
  *
  * @return version string of the module
+ *
+ * @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
  */
+/*lint -e14 */
 char* version()
 {
     return version_str;
@@ -134,6 +143,7 @@ GWPROTOCOL* GetModuleObject()
 {
     return &MyObject;
 }
+/*lint +e14 */
 
 /**
  * The default authenticator name for this protocol
@@ -367,7 +377,7 @@ static void telnetd_command(DCB *dcb, unsigned char *cmd)
 static void telnetd_echo(DCB *dcb, int enable)
 {
     GWBUF *gwbuf;
-    char *buf;
+    unsigned char *buf;
 
     if ((gwbuf = gwbuf_alloc(3)) == NULL)
     {

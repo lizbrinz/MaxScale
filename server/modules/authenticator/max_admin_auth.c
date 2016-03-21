@@ -36,6 +36,10 @@
 #include <buffer.h>
 #include <adminusers.h>
 
+ /* @see function load_module in load_utils.c for explanation of the following
+  * lint directives.
+ */
+/*lint -e14 */
 MODULE_INFO info =
 {
     MODULE_API_AUTHENTICATOR,
@@ -43,6 +47,7 @@ MODULE_INFO info =
     GWAUTHENTICATOR_VERSION,
     "The MaxScale Admin client authenticator implementation"
 };
+/*lint +e14 */
 
 static char *version_str = "V1.0.0";
 
@@ -67,6 +72,10 @@ static GWAUTHENTICATOR MyObject =
  *
  * @return version string of the module
  */
+ /* @see function load_module in load_utils.c for explanation of the following
+  * lint directives.
+ */
+/*lint -e14 */
 char* version()
 {
     return version_str;
@@ -92,6 +101,7 @@ GWAUTHENTICATOR* GetModuleObject()
 {
     return &MyObject;
 }
+/*lint +e14 */
 
 /**
  * @brief Authentication of a user/password combination.

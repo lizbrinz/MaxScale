@@ -53,12 +53,17 @@
 #include <gw_protocol.h>
 #include <mysql_auth.h>
 
+ /* @see function load_module in load_utils.c for explanation of the following
+  * lint directives.
+ */
+/*lint -e14 */
 MODULE_INFO info = {
                     MODULE_API_PROTOCOL,
                     MODULE_GA,
                     GWPROTOCOL_VERSION,
                     "The MySQL to backend server protocol"
 };
+/*lint +e14 */
 
 static char *version_str = "V2.0.0";
 static int gw_create_backend_connection(DCB *backend, SERVER *server, SESSION *in_session);
@@ -103,7 +108,11 @@ static GWPROTOCOL MyObject = {
  * Implementation of the mandatory version entry point
  *
  * @return version string of the module
+ *
+ * @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
  */
+/*lint -e14 */
 char* version()
 {
     return version_str;
@@ -129,6 +138,7 @@ GWPROTOCOL* GetModuleObject()
 {
     return &MyObject;
 }
+/*lint +e14 */
 
 /**
  * The default authenticator name for this protocol
@@ -942,7 +952,7 @@ static int gw_create_backend_connection(DCB *backend_dcb,
     }
     else
     {
-        protocol->client_capabilities = GW_MYSQL_CAPABILITIES_CLIENT;
+        protocol->client_capabilities = (int)GW_MYSQL_CAPABILITIES_CLIENT;
         protocol->charset = 0x08;
     }
 

@@ -35,6 +35,10 @@
 #include <buffer.h>
 #include <gw_protocol.h>
 
+ /* @see function load_module in load_utils.c for explanation of the following
+  * lint directives.
+ */
+/*lint -e14 */
 MODULE_INFO info =
 {
     MODULE_API_PROTOCOL,
@@ -42,6 +46,7 @@ MODULE_INFO info =
     GWPROTOCOL_VERSION,
     "Test protocol"
 };
+/*lint +e14 */
 
 static char *version_str = "V1.1.0";
 
@@ -81,7 +86,11 @@ static GWPROTOCOL MyObject =
  * Implementation of the mandatory version entry point
  *
  * @return version string of the module
+ *
+ * @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
  */
+/*lint -e14 */
 char* version()
 {
     return version_str;
@@ -107,3 +116,4 @@ GWPROTOCOL* GetModuleObject()
 {
     return &MyObject;
 }
+/*lint +e14 */

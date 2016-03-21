@@ -44,6 +44,10 @@
 #include <log_manager.h>
 #include <resultset.h>
 
+ /* @see function load_module in load_utils.c for explanation of the following
+  * lint directives.
+ */
+/*lint -e14 */
 MODULE_INFO info =
 {
     MODULE_API_PROTOCOL,
@@ -51,6 +55,7 @@ MODULE_INFO info =
     GWPROTOCOL_VERSION,
     "An experimental HTTPD implementation for use in administration"
 };
+/*lint +e14 */
 
 #define ISspace(x) isspace((int)(x))
 #define HTTP_SERVER_STRING "MaxScale(c) v.1.0.0"
@@ -91,7 +96,11 @@ static GWPROTOCOL MyObject =
  * Implementation of the mandatory version entry point
  *
  * @return version string of the module
+ *
+ * @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
  */
+/*lint -e14 */
 char* version()
 {
     return version_str;
@@ -117,6 +126,7 @@ GWPROTOCOL* GetModuleObject()
 {
     return &MyObject;
 }
+/*lint +e14 */
 
 /**
  * The default authenticator name for this protocol
@@ -137,9 +147,6 @@ static char *httpd_default_auth()
 static int httpd_read_event(DCB* dcb)
 {
     SESSION *session = dcb->session;
-    ROUTER_OBJECT *router = session->service->router;
-    ROUTER *router_instance = session->service->router_instance;
-    void *rsession = session->router_session;
 
     int numchars = 1;
     char buf[HTTPD_REQUESTLINE_MAXLEN-1] = "";
@@ -206,7 +213,6 @@ static int httpd_read_event(DCB* dcb)
         if (*query_string == '?')
         {
             *query_string = '\0';
-            query_string++;
         }
     }
 

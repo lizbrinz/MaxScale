@@ -106,6 +106,13 @@ WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp)
  * will look for library files in the current directory,
  * the configured folder and /usr/lib64/maxscale.
  *
+ * Note that a number of entry points are standard for any module, as is
+ * the data structure named "info".  They are only accessed by explicit
+ * reference to the module, and so the fact that they are duplicated in
+ * every module is not a problem.  The declarations are protected from
+ * lint by suppressing error 14, since the duplication is a feature and
+ * not an error.
+ *
  * @param module        Name of the module to load
  * @param type          Type of module, used purely for registration
  * @return              The module specific entry point structure or NULL

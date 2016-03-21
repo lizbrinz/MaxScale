@@ -104,12 +104,15 @@ version()
 /**
  * The module initialisation routine, called when the module
  * is first loaded.
+ * @see function load_module in load_utils.c for explanation of lint
  */
+/*lint -e14 */
 void
 ModuleInit()
 {
     MXS_NOTICE("Initialise the MySQL Monitor module %s.", version_str);
 }
+/*lint +e14 */
 
 /**
  * The module entry point routine. It is this routine that
@@ -775,9 +778,9 @@ monitorMain(void *arg)
             heartbeat_checked = true;
         }
 
-        /** 
-         * Calculate how far away the monitor interval is from its full 
-         * cycle and if monitor interval time further than the base 
+        /**
+         * Calculate how far away the monitor interval is from its full
+         * cycle and if monitor interval time further than the base
          * interval, then skip monitoring checks. Excluding the first
          * round.
          */
@@ -828,7 +831,7 @@ monitorMain(void *arg)
                  * Here we say: If the server's state changed
                  * so that it isn't running or some other way
                  * lost cluster membership, call call-back function
-                 * of every DCB for which such callback was 
+                 * of every DCB for which such callback was
                  * registered for this kind of issue (DCB_REASON_...)
                  */
                 if (!(SERVER_IS_RUNNING(ptr->server)) ||

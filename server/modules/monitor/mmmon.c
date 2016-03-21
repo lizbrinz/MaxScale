@@ -73,12 +73,15 @@ version()
 /**
  * The module initialisation routine, called when the module
  * is first loaded.
+ * @see function load_module in load_utils.c for explanation of lint
  */
+/*lint -e14 */
 void
 ModuleInit()
 {
     MXS_NOTICE("Initialise the Multi-Master Monitor module %s.", version_str);
 }
+/*lint +e14 */
 
 /**
  * The module entry point routine. It is this routine that
@@ -373,8 +376,8 @@ monitorDatabase(MONITOR* mon, MONITOR_SERVERS *database)
                     isslave += 1;
                 }
 
-                /* If Slave_IO_Running = Yes, assign the master_id to current server: this allows building 
-                 * the replication tree, slaves ids will be added to master(s) and we will have at least the 
+                /* If Slave_IO_Running = Yes, assign the master_id to current server: this allows building
+                 * the replication tree, slaves ids will be added to master(s) and we will have at least the
                  * root master server.
                  * Please note, there could be no slaves at all if Slave_SQL_Running == 'No'
                  */
@@ -447,8 +450,8 @@ monitorDatabase(MONITOR* mon, MONITOR_SERVERS *database)
                     isslave = 1;
                 }
 
-                /* If Slave_IO_Running = Yes, assign the master_id to current server: this allows building 
-                 * the replication tree, slaves ids will be added to master(s) and we will have at least the 
+                /* If Slave_IO_Running = Yes, assign the master_id to current server: this allows building
+                 * the replication tree, slaves ids will be added to master(s) and we will have at least the
                  * root master server.
                  * Please note, there could be no slaves at all if Slave_SQL_Running == 'No'
                  */

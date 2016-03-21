@@ -1914,7 +1914,10 @@ static QUERY_CLASSIFIER qc =
     qc_get_database_names,
 };
 
-
+ /* @see function load_module in load_utils.c for explanation of the following
+  * lint directives.
+ */
+/*lint -e14 */
 MODULE_INFO info =
 {
     MODULE_API_QUERY_CLASSIFIER,
@@ -1936,5 +1939,6 @@ QUERY_CLASSIFIER* GetModuleObject()
 {
     return &qc;
 }
+/*lint +e14 */
 
 }
