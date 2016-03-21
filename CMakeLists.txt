@@ -15,8 +15,8 @@ if(PACKAGE)
 endif()
 
 # Set default values for cache entries and set the MaxScale version
-set_variables() 
-set_maxscale_version()
+include(cmake/defaults.cmake)
+include(VERSION)
 
 set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING "Choose the type of build, options are: None(CMAKE_CXX_FLAGS or CMAKE_C_FLAGS used) Debug Release RelWithDebInfo MinSizeRel.")
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
