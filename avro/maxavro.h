@@ -159,7 +159,7 @@ enum maxavro_error maxavro_get_error(MAXAVRO_FILE *file);
 const char* maxavro_get_error_string(MAXAVRO_FILE *file);
 
 /** Schema creation */
-MAXAVRO_SCHEMA* maxavro_schema_from_json(const char* json);
+MAXAVRO_SCHEMA* maxavro_schema_alloc(const char* json);
 void maxavro_schema_free(MAXAVRO_SCHEMA* schema);
 
 #endif

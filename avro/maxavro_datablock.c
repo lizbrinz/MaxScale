@@ -21,6 +21,9 @@
 #include <unistd.h>
 #include <sys/types.h>
 
+/**
+ * @file maxavro_datablock.c - Experimental Avro interface for storing data
+ */
 
 /** Encoding values in-memory */
 uint64_t maxavro_encode_integer(uint8_t* buffer, uint64_t val);

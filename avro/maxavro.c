@@ -23,6 +23,7 @@
 #include <log_manager.h>
 #include <errno.h>
 
+/** Maximum byte size of an integer value */
 #define MAX_INTEGER_SIZE 10
 
 #define avro_decode(n) ((n >> 1) ^ -(n & 1))
@@ -34,7 +35,7 @@
  *
  * The integer lengths are all variable and the last bit in a byte indicates
  * if more bytes belong to the integer value. The real value of the integer is
- * the concatenation of the lowest seven bits of eacy byte. This value is encoded
+ * the concatenation of the lowest seven bits of each byte. This value is encoded
  * in a zigzag patten i.e. first value is -1, second 1, third -2 and so on.
  * @param file The source FILE handle
  * @param dest Destination where the read value is written
@@ -73,6 +74,12 @@ bool maxavro_read_integer(MAXAVRO_FILE* file, uint64_t *dest)
     return true;
 }
 
+/**
+ * @brief Encode an integer value in Avro format
+ * @param buffer Buffer where the encoded value is stored
+ * @param val Value to encode
+ * @return Number of bytes encoded
+ */
 uint64_t maxavro_encode_integer(uint8_t* buffer, uint64_t val)
 {
     uint64_t encval = encode_long(val);
@@ -90,6 +97,7 @@ uint64_t maxavro_encode_integer(uint8_t* buffer, uint64_t val)
 
 /**
  * @brief Calculate the length of an Avro integer
+ *
  * @param val Vale to calculate
  * @return Length of the value in bytes
  */
@@ -157,6 +165,13 @@ char* maxavro_read_string(MAXAVRO_FILE* file)
     return key;
 }
 
+/**
+ * @bref Skip an Avro string
+ *
+ * @param file Avro file handle
+ * @return True if the string was skipped, false if an error occurred.
+ * @see maxavro_get_error
+ */
 bool maxavro_skip_string(MAXAVRO_FILE* file)
 {
     uint64_t len;
@@ -176,6 +191,13 @@ bool maxavro_skip_string(MAXAVRO_FILE* file)
     return false;
 }
 
+/**
+ * @brief Encode a string in Avro format
+ *
+ * @param dest Destination buffer where the string is stored
+ * @param str Null-terminated string to store
+ * @return number of bytes stored
+ */
 uint64_t maxavro_encode_string(uint8_t* dest, const char* str)
 {
     uint64_t slen = strlen(str);
@@ -223,6 +245,12 @@ bool maxavro_read_float(MAXAVRO_FILE* file, float *dest)
     return nread == sizeof(*dest);
 }
 
+/**
+ * @brief Encode a float value in Avro format
+ * @param buffer Buffer where the encoded value is stored
+ * @param val Value to encode
+ * @return Number of bytes encoded
+ */
 uint64_t maxavro_encode_float(uint8_t* dest, float val)
 {
     memcpy(dest, &val, sizeof(val));
@@ -265,6 +293,12 @@ bool maxavro_read_double(MAXAVRO_FILE* file, double *dest)
     return nread == sizeof(*dest);
 }
 
+/**
+ * @brief Encode a double value in Avro format
+ * @param buffer Buffer where the encoded value is stored
+ * @param val Value to encode
+ * @return Number of bytes encoded
+ */
 uint64_t maxavro_encode_double(uint8_t* dest, double val)
 {
     memcpy(dest, &val, sizeof(val));

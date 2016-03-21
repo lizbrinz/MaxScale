@@ -34,7 +34,12 @@ static const MAXAVRO_SCHEMA_FIELD types[MAXAVRO_TYPE_MAX] =
     {"null", NULL, MAXAVRO_TYPE_NULL},
     {NULL, NULL, MAXAVRO_TYPE_UNKNOWN}
 };
-
+/**
+ * @brief Convert string to Avro value type
+ *
+ * @param type Value string
+ * @return Avro value type
+ */
 static enum maxavro_value_type string_to_type(const char *str)
 {
     for (int i = 0; types[i].name; i++)
@@ -47,6 +52,12 @@ static enum maxavro_value_type string_to_type(const char *str)
     return MAXAVRO_TYPE_UNKNOWN;
 }
 
+/**
+ * @brief Convert Avro value type to string
+ *
+ * @param type Type of the value
+ * @return String representation of the value
+ */
 static const char* type_to_string(enum maxavro_value_type type)
 {
     for (int i = 0; types[i].name; i++)
@@ -59,6 +70,12 @@ static const char* type_to_string(enum maxavro_value_type type)
     return "unknown type";
 }
 
+/**
+ * @brief extract the type definition from a JSON schema
+ * @param object JSON object containing the schema
+ * @param field The associated field
+ * @return Type of the field
+ */
 static enum maxavro_value_type unpack_to_type(json_t *object,
                                               MAXAVRO_SCHEMA_FIELD* field)
 {
@@ -103,11 +120,11 @@ static enum maxavro_value_type unpack_to_type(json_t *object,
 }
 
 /**
- * @brief Create an Avro schema from JSON
- * @param json JSON where the schema is created from
+ * @brief Create a new Avro schema from JSON
+ * @param json JSON from which the schema is created from
  * @return New schema or NULL if an error occurred
  */
-MAXAVRO_SCHEMA* maxavro_schema_from_json(const char* json)
+MAXAVRO_SCHEMA* maxavro_schema_alloc(const char* json)
 {
     MAXAVRO_SCHEMA* rval = malloc(sizeof(MAXAVRO_SCHEMA));
 
@@ -157,6 +174,10 @@ static void maxavro_schema_field_free(MAXAVRO_SCHEMA_FIELD *field)
     }
 }
 
+/**
+ * Free a MAXAVRO_SCHEMA object
+ * @param schema Schema to free
+ */
 void maxavro_schema_free(MAXAVRO_SCHEMA* schema)
 {
     if (schema)

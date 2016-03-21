@@ -145,7 +145,7 @@ MAXAVRO_FILE* maxavro_file_open(const char* filename)
         avrofile->file = file;
         avrofile->filename = strdup(filename);
         char *schema = read_schema(avrofile);
-        avrofile->schema = schema ? maxavro_schema_from_json(schema) : NULL;
+        avrofile->schema = schema ? maxavro_schema_alloc(schema) : NULL;
         avrofile->last_error = MAXAVRO_ERR_NONE;
 
         if (!schema || !avrofile->schema ||

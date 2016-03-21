@@ -16,6 +16,10 @@
  * Copyright MariaDB Corporation Ab 2016
  */
 
+/**
+ * @file maxavrocheck.c - Simple Avro file validator
+ */
+
 #include <maxavro.h>
 #include <stdio.h>
 #include <string.h>
