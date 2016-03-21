@@ -23,6 +23,45 @@
 #include <avrorouter.h>
 #include <strings.h>
 
+#define WRITE_EVENT         0
+#define UPDATE_EVENT        1
+#define UPDATE_EVENT_AFTER  2
+#define DELETE_EVENT        3
+
+uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create,
+                                avro_value_t *record, uint8_t *ptr,
+                                uint8_t *columns_present);
+
+/**
+ * @brief Get row event name
+ * @param event Event type
+ * @return String representation of the event
+ */
+static int get_event_type(uint8_t event)
+{
+    switch (event)
+    {
+
+        case WRITE_ROWS_EVENTv0:
+        case WRITE_ROWS_EVENTv1:
+        case WRITE_ROWS_EVENTv2:
+            return WRITE_EVENT;
+
+        case UPDATE_ROWS_EVENTv0:
+        case UPDATE_ROWS_EVENTv1:
+        case UPDATE_ROWS_EVENTv2:
+            return UPDATE_EVENT;
+
+        case DELETE_ROWS_EVENTv0:
+        case DELETE_ROWS_EVENTv1:
+        case DELETE_ROWS_EVENTv2:
+            return DELETE_EVENT;
+
+        default:
+            return -1;
+    }
+}
+
 /**
  * @brief Handle a table map event
  *
@@ -83,6 +122,20 @@ bool handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr
     return rval;
 }
 
+static void set_common_fields(AVRO_INSTANCE *router, REP_HEADER *hdr,
+                              int event_type, avro_value_t *record)
+{
+    avro_value_t field;
+    avro_value_get_by_name(record, "GTID", &field, NULL);
+    avro_value_set_string(&field, router->current_gtid);
+
+    avro_value_get_by_name(record, "timestamp", &field, NULL);
+    avro_value_set_int(&field, hdr->timestamp);
+
+    avro_value_get_by_name(record, "event_type", &field, NULL);
+    avro_value_set_enum(&field, event_type);
+}
+
 /**
  * @brief Handle a RBR row event
  *
@@ -122,16 +175,17 @@ bool handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
     }
 
     uint64_t ncolumns = leint_consume(&ptr);
-    uint64_t col_present = 0;
-    memcpy(&col_present, ptr, (ncolumns + 7) / 8);
-    ptr += (ncolumns + 7) / 8;
+    const int coldata_size = (ncolumns + 7) / 8;
+    uint8_t col_present[coldata_size];
+    memcpy(&col_present, ptr, coldata_size);
+    ptr += coldata_size;
 
-    uint64_t col_update = 0;
+    uint8_t col_update[coldata_size];
     if (hdr->event_type == UPDATE_ROWS_EVENTv1 ||
         hdr->event_type == UPDATE_ROWS_EVENTv2)
     {
-        memcpy(&col_update, ptr, (ncolumns + 7) / 8);
-        ptr += (ncolumns + 7) / 8;
+        memcpy(&col_update, ptr, coldata_size);
+        ptr += coldata_size;
     }
 
     TABLE_MAP *map = hashtable_fetch(router->table_maps, (void*) &table_id);
@@ -154,15 +208,21 @@ bool handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
             while (ptr - start < hdr->event_size - BINLOG_EVENT_HDR_LEN)
             {
                 /** Add the current GTID and timestamp */
-                avro_value_t field;
-                avro_value_get_by_name(&record, "GTID", &field, NULL);
-                avro_value_set_string(&field, router->current_gtid);
-
-                avro_value_get_by_name(&record, "timestamp", &field, NULL);
-                avro_value_set_int(&field, hdr->timestamp);
-
-                ptr = process_row_event_data(map, create, &record, ptr, col_present, col_update);
+                int event_type = get_event_type(hdr->event_type);
+                set_common_fields(router, hdr, event_type, &record);
+                ptr = process_row_event_data(map, create, &record, ptr, col_present);
                 avro_file_writer_append_value(table->avro_file, &record);
+
+                /** Update rows events have the before and after images of the
+                 * affected rows so we'll process them as another record with
+                 * a different type */
+                if (event_type == UPDATE_EVENT)
+                {
+                    set_common_fields(router, hdr, UPDATE_EVENT_AFTER, &record);
+                    ptr = process_row_event_data(map, create, &record, ptr, col_present);
+                    avro_file_writer_append_value(table->avro_file, &record);
+                }
+
                 rows++;
             }
 
@@ -171,7 +231,7 @@ bool handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
         }
         else if (table == NULL)
         {
-            MXS_ERROR("Avro datafile to open properly for table %s.%s.", map->database, map->table);
+            MXS_ERROR("Avro file handle was not found for table %s.%s.", map->database, map->table);
         }
         else if (create == NULL)
         {
@@ -232,12 +292,19 @@ void set_numeric_field_value(avro_value_t *field, uint8_t type, uint8_t *metadat
     }
 }
 
-bool column_is_null(uint8_t *ptr, int columns, int current_column)
+/**
+ *
+ * @param ptr
+ * @param columns
+ * @param current_column Zero indexed column number
+ * @return
+ */
+static bool bit_is_set(uint8_t *ptr, int columns, int current_column)
 {
-    while (current_column > 8)
+    if (current_column >= 8)
     {
-        ptr++;
-        current_column -= 8;
+        ptr += current_column / 8;
+        current_column = current_column % 8;
     }
 
     return ((*ptr) & (1 << current_column));
@@ -280,16 +347,18 @@ int get_metadata_len(uint8_t type)
  * @param col_update
  */
 uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value_t *record,
-                                uint8_t *ptr, uint64_t columns_present, uint64_t columns_update)
+                                uint8_t *ptr, uint8_t *columns_present)
 {
     int npresent = 0;
     avro_value_t field;
     long ncolumns = map->columns;
     uint8_t *metadata = map->column_metadata;
     size_t metadata_offset = 0;
+
+    /** BIT type values use the extra bits in the row event header */
     int extra_bits = (((ncolumns + 7) / 8) * 8) - ncolumns;
 
-    /** Skip the null-bitmap */
+    /** Store the null value bitmap */
     uint8_t *null_bitmap = ptr;
     ptr += (ncolumns + 7) / 8;
 
@@ -297,10 +366,10 @@ uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value
     {
         avro_value_get_by_name(record, create->column_names[i], &field, NULL);
 
-        if (columns_present & (1 << i))
+        if (bit_is_set(columns_present, ncolumns, i))
         {
             npresent++;
-            if (column_is_null(null_bitmap, ncolumns, i))
+            if (bit_is_set(null_bitmap, ncolumns, i))
             {
                 avro_value_set_null(&field);
             }
@@ -327,7 +396,7 @@ uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value
                     ptr += bytes + 1;
                 }
             }
-            else if (map->column_types[i] == TABLE_COL_TYPE_BIT)
+            else if (column_is_bit(map->column_types[i]))
             {
                 uint64_t value = 0;
                 int width = metadata[metadata_offset] + metadata[metadata_offset + 1] * 8;
@@ -375,35 +444,5 @@ uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value
         }
     }
 
-    // TODO: implement update row event processing
-    /*
-        if (columns_update != 0 && false)
-        {
-            ptr += (ncolumns + 7) / 8;
-
-            for (long i = 0; i < map->columns && npresent < ncolumns; i++)
-            {
-
-                if (columns_update & (1 << i))
-                {
-                    if (column_is_variable_string(map->column_types[i]))
-                    {
-                        char *str = lestr_consume_dup(&ptr);
-                        free(str);
-                    }
-                    else
-                    {
-                        uint64_t lval = 0;
-                        ptr += extract_field_value(ptr, map->column_types[i], &lval);
-                        if (column_is_temporal(map->column_types[i]))
-                        {
-                            struct tm tm;
-                            unpack_temporal_value(map->column_types[i], lval, &tm);
-                        }
-                    }
-                }
-            }
-        }
-    */
     return ptr;
 }

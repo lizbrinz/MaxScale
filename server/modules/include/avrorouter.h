@@ -174,8 +174,6 @@ extern char* json_new_schema_from_table(TABLE_MAP *map, TABLE_CREATE *create);
 extern void save_avro_schema(const char *path, const char* schema, TABLE_MAP *map);
 bool handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr);
 bool handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr);
-uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value_t *record,
-                                uint8_t *ptr, uint64_t columns_present, uint64_t columns_update);
 
 #define AVRO_CLIENT_UNREGISTERED 0x0000
 #define AVRO_CLIENT_REGISTERED   0x0001

@@ -19,18 +19,20 @@
 #include "maxavro.h"
 #include <jansson.h>
 #include <string.h>
+#include <skygw_debug.h>
 
 static const MAXAVRO_SCHEMA_FIELD types[MAXAVRO_TYPE_MAX] =
 {
-    {"int", MAXAVRO_TYPE_INT},
-    {"long", MAXAVRO_TYPE_LONG},
-    {"float", MAXAVRO_TYPE_FLOAT},
-    {"double", MAXAVRO_TYPE_DOUBLE},
-    {"bool", MAXAVRO_TYPE_BOOL},
-    {"bytes", MAXAVRO_TYPE_BYTES},
-    {"string", MAXAVRO_TYPE_STRING},
-    {"null", MAXAVRO_TYPE_NULL},
-    {NULL, MAXAVRO_TYPE_UNKNOWN}
+    {"int", NULL, MAXAVRO_TYPE_INT},
+    {"long", NULL, MAXAVRO_TYPE_LONG},
+    {"float", NULL, MAXAVRO_TYPE_FLOAT},
+    {"double", NULL, MAXAVRO_TYPE_DOUBLE},
+    {"bool", NULL, MAXAVRO_TYPE_BOOL},
+    {"bytes", NULL, MAXAVRO_TYPE_BYTES},
+    {"string", NULL, MAXAVRO_TYPE_STRING},
+    {"enum", NULL, MAXAVRO_TYPE_ENUM},
+    {"null", NULL, MAXAVRO_TYPE_NULL},
+    {NULL, NULL, MAXAVRO_TYPE_UNKNOWN}
 };
 
 static enum maxavro_value_type string_to_type(const char *str)
@@ -57,28 +59,44 @@ static const char* type_to_string(enum maxavro_value_type type)
     return "unknown type";
 }
 
-static enum maxavro_value_type unpack_to_type(json_t *object)
+static enum maxavro_value_type unpack_to_type(json_t *object,
+                                              MAXAVRO_SCHEMA_FIELD* field)
 {
     enum maxavro_value_type rval = MAXAVRO_TYPE_UNKNOWN;
+    json_t* type = NULL;
+
+#ifdef SS_DEBUG
+    char *js = json_dumps(object, JSON_PRESERVE_ORDER);
+    printf("%s\n", js);
+    free(js);
+#endif
 
     if (json_is_object(object))
     {
-        json_t *tmp;
+        json_t *tmp = NULL;
         json_unpack(object, "{s:o}", "type", &tmp);
-        object = tmp;
+        type = tmp;
     }
 
     if (json_is_array(object))
     {
         json_t *tmp = json_array_get(object, 0);
-        object = tmp;
+        type = tmp;
     }
 
-    if (json_is_string(object))
+    if (type && json_is_string(type))
     {
-        char *value;
-        json_unpack(object, "s", &value);
+        const char *value = json_string_value(type);
         rval = string_to_type(value);
+
+        if (rval == MAXAVRO_TYPE_ENUM)
+        {
+            json_t *tmp = NULL;
+            json_unpack(object, "{s:o}", "symbols", &tmp);
+            ss_dassert(json_is_array(tmp));
+            json_incref(tmp);
+            field->extra = tmp;
+        }
     }
 
     return rval;
@@ -114,7 +132,7 @@ MAXAVRO_SCHEMA* maxavro_schema_from_json(const char* json)
 
                 json_unpack(object, "{s:s s:o}", "name", &key, "type", &value_obj);
                 rval->fields[i].name = strdup(key);
-                rval->fields[i].type = unpack_to_type(value_obj);
+                rval->fields[i].type = unpack_to_type(value_obj, &rval->fields[i]);
             }
 
             json_decref(schema);
@@ -131,13 +149,21 @@ MAXAVRO_SCHEMA* maxavro_schema_from_json(const char* json)
     return rval;
 }
 
+static void maxavro_schema_field_free(MAXAVRO_SCHEMA_FIELD *field)
+{
+    if (field->type == MAXAVRO_TYPE_ENUM)
+    {
+        json_decref((json_t*)field->extra);
+    }
+}
+
 void maxavro_schema_free(MAXAVRO_SCHEMA* schema)
 {
     if (schema)
     {
         for (int i = 0; i < schema->num_fields; i++)
         {
-            free(schema->fields[i].name);
+            maxavro_schema_field_free(&schema->fields[i]);
         }
         free(schema->fields);
         free(schema);

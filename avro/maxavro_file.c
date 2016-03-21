@@ -213,6 +213,6 @@ void maxavro_file_close(MAXAVRO_FILE *file)
 {
     fclose(file->file);
     free(file->filename);
-    free(file->schema);
+    maxavro_schema_free(file->schema);
     free(file);
 }

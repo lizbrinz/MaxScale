@@ -256,6 +256,16 @@ bool column_is_variable_string(uint8_t type)
 }
 
 /**
+ * @brief Detect BIT type columns
+ * @param type Type of the column
+ * @return  True if the column is a BIT
+ */
+bool column_is_bit(uint8_t type)
+{
+    return type == TABLE_COL_TYPE_BIT;
+}
+
+/**
  * Check if a column is of a temporal type
  * @param type Column type
  * @return True if the type is temporal

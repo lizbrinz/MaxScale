@@ -42,6 +42,7 @@ enum maxavro_value_type
     MAXAVRO_TYPE_BOOL,
     MAXAVRO_TYPE_STRING,
     MAXAVRO_TYPE_BYTES,
+    MAXAVRO_TYPE_ENUM,
     MAXAVRO_TYPE_NULL,
     MAXAVRO_TYPE_MAX
 };
@@ -49,6 +50,7 @@ enum maxavro_value_type
 typedef struct
 {
     char *name;
+    void *extra;
     enum maxavro_value_type type;
 } MAXAVRO_SCHEMA_FIELD;
 

@@ -32,6 +32,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <skygw_utils.h>
+#include <skygw_debug.h>
 #include <string.h>
 
 /**
@@ -95,6 +96,7 @@ char* json_new_schema_from_table(TABLE_MAP *map, TABLE_CREATE *create)
     }
 
     json_error_t err;
+    memset(&err, 0, sizeof(err));
     json_t *schema = json_object();
     json_object_set_new(schema, "namespace", json_string("MaxScaleChangeDataSchema.avro"));
     json_object_set_new(schema, "type", json_string("record"));
@@ -105,6 +107,15 @@ char* json_new_schema_from_table(TABLE_MAP *map, TABLE_CREATE *create)
                                           "GTID", "type", "string"));
     json_array_append(array, json_pack_ex(&err, 0, "{s:s, s:s}", "name",
                                           "timestamp", "type", "int"));
+
+    /** Enums and other complex types are defined with complete JSON objects
+     * instead of string values */
+    json_t *event_types = json_pack_ex(&err, 0, "{s:s, s:s, s:[s,s,s,s]}", "type", "enum",
+                                       "name", "EVENT_TYPES", "symbols", "insert",
+                                       "update_before", "update_after", "delete");
+
+    json_array_append(array, json_pack_ex(&err, 0, "{s:s, s:o}", "name", "event_type",
+                                          "type", event_types));
 
     for (uint64_t i = 0; i < map->columns; i++)
     {

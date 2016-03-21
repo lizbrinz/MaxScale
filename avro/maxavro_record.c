@@ -19,6 +19,7 @@
 #include "maxavro.h"
 #include <string.h>
 #include <skygw_debug.h>
+#include <log_manager.h>
 
 bool maxavro_read_datablock_start(MAXAVRO_FILE *file, uint64_t *records,
                                   uint64_t *bytes);
@@ -29,12 +30,13 @@ bool maxavro_verify_block(MAXAVRO_FILE *file);
  * @param file File to read from
  * @param name Name of the field
  * @param type Type of the field
+ * @param field_num Field index in the schema
  * @return JSON object or NULL if an error occurred
  */
-static json_t* read_and_pack_value(MAXAVRO_FILE *file, enum maxavro_value_type type)
+static json_t* read_and_pack_value(MAXAVRO_FILE *file, MAXAVRO_SCHEMA_FIELD *field)
 {
     json_t* value = NULL;
-    switch (type)
+    switch (field->type)
     {
         case MAXAVRO_TYPE_BOOL:
         {
@@ -56,6 +58,24 @@ static json_t* read_and_pack_value(MAXAVRO_FILE *file, enum maxavro_value_type t
         }
         break;
 
+        case MAXAVRO_TYPE_ENUM:
+        {
+            uint64_t val = 0;
+            maxavro_read_integer(file, &val);
+
+            json_t *arr = field->extra;
+            ss_dassert(arr);
+            ss_dassert(json_is_array(arr));
+
+            if (json_array_size(arr) >= val)
+            {
+                json_t * symbol = json_array_get(arr, val);
+                ss_dassert(json_is_string(symbol));
+                value = json_pack("s", json_string_value(symbol));
+            }
+        }
+        break;
+
         case MAXAVRO_TYPE_FLOAT:
         case MAXAVRO_TYPE_DOUBLE:
         {
@@ -69,7 +89,7 @@ static json_t* read_and_pack_value(MAXAVRO_FILE *file, enum maxavro_value_type t
         case MAXAVRO_TYPE_STRING:
         {
             char *str = maxavro_read_string(file);
-            if(str)
+            if (str)
             {
                 value = json_string_nocheck(str);
                 free(str);
@@ -78,7 +98,7 @@ static json_t* read_and_pack_value(MAXAVRO_FILE *file, enum maxavro_value_type t
         break;
 
         default:
-            printf("Unimplemented type: %d\n", type);
+            MXS_ERROR("Unimplemented type: %d", field->type);
             break;
     }
     return value;
@@ -90,6 +110,7 @@ static void skip_value(MAXAVRO_FILE *file, enum maxavro_value_type type)
     {
         case MAXAVRO_TYPE_INT:
         case MAXAVRO_TYPE_LONG:
+        case MAXAVRO_TYPE_ENUM:
         {
             uint64_t val = 0;
             maxavro_read_integer(file, &val);
@@ -112,7 +133,7 @@ static void skip_value(MAXAVRO_FILE *file, enum maxavro_value_type type)
         break;
 
         default:
-            printf("Unimplemented type: %d\n", type);
+            MXS_ERROR("Unimplemented type: %d", type);
             break;
     }
 }
@@ -136,7 +157,7 @@ json_t* maxavro_record_read(MAXAVRO_FILE *file)
         {
             for (size_t i = 0; i < file->schema->num_fields; i++)
             {
-                json_t* value = read_and_pack_value(file, file->schema->fields[i].type);
+                json_t* value = read_and_pack_value(file, &file->schema->fields[i]);
                 if (value)
                 {
                     json_object_set_new(object, file->schema->fields[i].name, value);

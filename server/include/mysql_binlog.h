@@ -128,6 +128,7 @@ bool column_is_variable_string(uint8_t type);
 bool column_is_fixed_string(uint8_t type);
 bool column_is_blob(uint8_t type);
 bool column_is_temporal(uint8_t type);
+bool column_is_bit(uint8_t type);
 
 /** Various types are stored as fixed string types and the real type is stored
  * in the table metadata */
