@@ -27,6 +27,7 @@
 #include <string.h>
 #include <skygw_debug.h>
 #include <dbusers.h>
+#include <strings.h>
 
 /**
  * @brief Extract a table map from a table map event
@@ -521,7 +522,7 @@ static size_t temporal_field_size(uint8_t type, uint8_t decimals)
 
         case TABLE_COL_TYPE_DATETIME2:
             return 5 + ((decimals + 1) / 2);
-            
+
         default:
             MXS_ERROR("Unknown field type: %x %s", type, column_type_to_string(type));
             break;
@@ -546,7 +547,7 @@ uint64_t unpack_temporal_value(uint8_t type, uint8_t *ptr, uint8_t *metadata, st
         case TABLE_COL_TYPE_YEAR:
             unpack_year(ptr, tm);
             break;
-        
+
         case TABLE_COL_TYPE_DATETIME:
             // This is not used with MariaDB RBR
             //unpack_datetime(ptr, *metadata, tm);
@@ -1028,4 +1029,138 @@ void* table_create_free(TABLE_CREATE* value)
         free(value);
     }
     return NULL;
+}
+
+char* get_next_def(char* sql, char* end)
+{
+    int depth = 0;
+    while (sql < end)
+    {
+        if (*sql == ',' && depth == 0)
+        {
+            return sql + 1;
+        }
+        else if (*sql == '(')
+        {
+            depth++;
+        }
+        else if (*sql == ')')
+        {
+            depth--;
+        }
+        sql++;
+    }
+
+    return NULL;
+}
+
+char* get_tok(char* sql, int* toklen, char* end)
+{
+    char *start = sql;
+
+    while (isspace(*start))
+    {
+        start++;
+    }
+
+    int len = 0;
+    int depth = 0;
+    while (start + len < end)
+    {
+        if (isspace(start[len]) && depth == 0)
+        {
+            *toklen = len;
+            return start;
+        }
+        else if (start[len] == '(')
+        {
+            depth++;
+        }
+        else if (start[len] == ')')
+        {
+            depth--;
+        }
+
+        len++;
+    }
+
+    if (len > 0 && start + len <= end)
+    {
+        *toklen = len;
+        return start;
+    }
+
+    return NULL;
+}
+
+static bool tok_eq(const char *a, const char *b, size_t len)
+{
+    size_t i = 0;
+
+    while (i < len)
+    {
+        if (tolower(a[i]) - tolower(b[i]) != 0)
+        {
+            return false;
+        }
+        i++;
+    }
+
+    return true;
+}
+
+bool create_table_modify(const char* db, char *sql, char *end)
+{
+    char *tbl = strcasestr(sql, "table"), *def;
+
+    if ((def = strchr(tbl, ' ')))
+    {
+        int len = 0;
+        char *tok = get_tok(def, &len, end);
+        char *table = tok;
+        int tbllen = len;
+
+        if (tok)
+        {
+            printf("Altering table %.*s\n", len, tok);
+            def = tok + len;
+        }
+
+        while (tok && (tok = get_tok(tok + len, &len, end)))
+        {
+            char *ptok = tok;
+            int plen = len;
+            tok = get_tok(tok + len, &len, end);
+
+            if (tok)
+            {
+                if (tok_eq(ptok, "add", plen) && tok_eq(tok, "column", len))
+                {
+                    tok = get_tok(tok + len, &len, end);
+                    printf("column %.*s added for %.*s\n", len, tok, tbllen, table);
+                    tok = get_next_def(tok, end);
+                    len = 0;
+                }
+                else if (tok_eq(ptok, "drop", plen) && tok_eq(tok, "column", len))
+                {
+                    tok = get_tok(tok + len, &len, end);
+                    printf("column %.*s dropped for %.*s\n", len, tok, tbllen, table);
+                    tok = get_next_def(tok, end);
+                    len = 0;
+                }
+                else if (tok_eq(ptok, "change", plen) && tok_eq(tok, "column", len))
+                {
+                    tok = get_tok(tok + len, &len, end);
+                    printf("column %.*s changed for %.*s\n", len, tok, tbllen, table);
+                    tok = get_next_def(tok, end);
+                    len = 0;
+                }
+            }
+            else
+            {
+                break;
+            }
+        }
+    }
+    return true;
 }

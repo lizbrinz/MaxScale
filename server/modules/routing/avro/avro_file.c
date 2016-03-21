@@ -965,11 +965,11 @@ void handle_query_event(AVRO_INSTANCE *router, REP_HEADER *hdr, int *pending_tra
     int vblklen = ptr[VBLK_OFF];
     int len = hdr->event_size - BINLOG_EVENT_HDR_LEN - (PHDR_OFF + vblklen + 1 + dblen);
     char *sql = (char *) ptr + PHDR_OFF + vblklen + 1 + dblen;
+    char db[dblen + 1];
+    strncpy(db, (char*) ptr + PHDR_OFF + vblklen, sizeof(db));
 
     if (is_create_table_statement(router, sql, len))
     {
-        char db[dblen + 1];
-        strncpy(db, (char*) ptr + PHDR_OFF + vblklen, sizeof(db));
         TABLE_CREATE *created = table_create_alloc(sql, db, router->current_gtid);
 
         if (created && !save_and_replace_table_create(router, created))
@@ -979,8 +979,7 @@ void handle_query_event(AVRO_INSTANCE *router, REP_HEADER *hdr, int *pending_tra
     }
     else if (is_alter_table_statement(router, sql, len))
     {
-        MXS_NOTICE("Alter table statements are not currently supported: %.*s",
-                   len, sql);
+        create_table_modify(db, sql, sql + len);
     }
     /* A transaction starts with this event */
     else if (strncmp(sql, "BEGIN", 5) == 0)

@@ -120,6 +120,7 @@ void table_map_rotate(TABLE_MAP *map);
 TABLE_CREATE* table_create_alloc(const char* sql, const char* db, const char* gtid);
 void* table_create_free(TABLE_CREATE* value);
 bool table_create_save(TABLE_CREATE *create, const char *filename);
+bool create_table_modify(const char* db, char *sql, char* end);
 
 const char* column_type_to_string(uint8_t type);
 
