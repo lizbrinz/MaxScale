@@ -34,6 +34,10 @@
 #include <mysql_client_server_protocol.h>
 #include <gw_authenticator.h>
 
+ /* @see function load_module in load_utils.c for explanation of the following
+  * lint directives.
+ */
+/*lint -e14 */
 MODULE_INFO info =
 {
     MODULE_API_AUTHENTICATOR,
@@ -41,6 +45,7 @@ MODULE_INFO info =
     GWAUTHENTICATOR_VERSION,
     "The MySQL client to MaxScale authenticator implementation"
 };
+/*lint +e14 */
 
 static char *version_str = "V1.0.0";
 
@@ -79,7 +84,11 @@ static int mysql_auth_set_client_data(
  * Implementation of the mandatory version entry point
  *
  * @return version string of the module
+ *
+ * @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
  */
+/*lint -e14 */
 char* version()
 {
     return version_str;
@@ -88,13 +97,10 @@ char* version()
 /**
  * The module initialisation routine, called when the module
  * is first loaded.
- * @see function load_module in load_utils.c for explanation of lint
  */
-/*lint -e14 */
 void ModuleInit()
 {
 }
-/*lint +e14 */
 
 /**
  * The module entry point routine. It is this routine that
@@ -108,6 +114,7 @@ GWAUTHENTICATOR* GetModuleObject()
 {
     return &MyObject;
 }
+/*lint +e14 */
 
 /**
  * @brief Authenticates a MySQL user who is a client to MaxScale.
@@ -347,8 +354,8 @@ mysql_auth_set_client_data(
             /*
              * Note: some clients may pass empty database, CONNECT_WITH_DB !=0 but database =""
              */
-            if (GW_MYSQL_CAPABILITIES_CONNECT_WITH_DB &
-                gw_mysql_get_byte4((uint32_t *)&protocol->client_capabilities)
+            if ((uint32_t)GW_MYSQL_CAPABILITIES_CONNECT_WITH_DB &
+                gw_mysql_get_byte4((uint8_t *)&protocol->client_capabilities)
                 && client_auth_packet_size > packet_length_used)
             {
                 char *database = (char *)(client_auth_packet + packet_length_used);
@@ -387,7 +394,7 @@ mysql_auth_is_client_ssl_capable(DCB *dcb)
     MySQLProtocol *protocol;
 
     protocol = DCB_PROTOCOL(dcb, MySQLProtocol);
-    return (protocol->client_capabilities & GW_MYSQL_CAPABILITIES_SSL) ? true : false;
+    return (protocol->client_capabilities & (int)GW_MYSQL_CAPABILITIES_SSL) ? true : false;
 }
 
 /**
@@ -409,7 +416,7 @@ int
 gw_check_mysql_scramble_data(DCB *dcb,
                                  uint8_t *token,
                                  unsigned int token_len,
-                                 uint8_t *scramble,
+                                 uint8_t *mxs_scramble,
                                  unsigned int scramble_len,
                                  char *username,
                                  uint8_t *stage1_hash)
@@ -423,7 +430,7 @@ gw_check_mysql_scramble_data(DCB *dcb,
     uint8_t null_client_sha1[MYSQL_SCRAMBLE_LEN]="";
 
 
-    if ((username == NULL) || (scramble == NULL) || (stage1_hash == NULL))
+    if ((username == NULL) || (mxs_scramble == NULL) || (stage1_hash == NULL))
     {
         return MYSQL_FAILED_AUTH;
     }
@@ -473,7 +480,7 @@ gw_check_mysql_scramble_data(DCB *dcb,
      * the result in step1 is SHA_DIGEST_LENGTH long
      */
 
-    gw_sha1_2_str(scramble, scramble_len, password, SHA_DIGEST_LENGTH, step1);
+    gw_sha1_2_str(mxs_scramble, scramble_len, password, SHA_DIGEST_LENGTH, step1);
 
     /*<
      * step2: STEP2 = XOR(token, STEP1)

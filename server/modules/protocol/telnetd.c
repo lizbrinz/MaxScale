@@ -39,8 +39,8 @@
 #include <log_manager.h>
 #include <modinfo.h>
 
- /* @see function load_module in load_utils.c for explanation of the following
-  * lint directives.
+/* @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
  */
 /*lint -e14 */
 MODULE_INFO info =

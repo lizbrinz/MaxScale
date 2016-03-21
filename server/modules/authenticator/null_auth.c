@@ -36,6 +36,10 @@
 #include <dcb.h>
 #include <buffer.h>
 
+/* @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
+ */
+/*lint -e14 */
 MODULE_INFO info =
 {
     MODULE_API_AUTHENTICATOR,
@@ -43,6 +47,7 @@ MODULE_INFO info =
     GWAUTHENTICATOR_VERSION,
     "The Null client authenticator implementation"
 };
+/*lint +e14 */
 
 static char *version_str = "V1.0.0";
 
@@ -66,7 +71,11 @@ static GWAUTHENTICATOR MyObject =
  * Implementation of the mandatory version entry point
  *
  * @return version string of the module
+ *
+ * @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
  */
+/*lint -e14 */
 char* version()
 {
     return version_str;
@@ -75,13 +84,10 @@ char* version()
 /**
  * The module initialisation routine, called when the module
  * is first loaded.
- * @see function load_module in load_utils.c for explanation of lint
  */
-/*lint -e14 */
 void ModuleInit()
 {
 }
-/*lint +e14 */
 
 /**
  * The module entry point routine. It is this routine that
@@ -95,6 +101,7 @@ GWAUTHENTICATOR* GetModuleObject()
 {
     return &MyObject;
 }
+/*lint +e14 */
 
 /**
  * @brief Null authentication of a user.

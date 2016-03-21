@@ -36,8 +36,8 @@
 #include <buffer.h>
 #include <adminusers.h>
 
- /* @see function load_module in load_utils.c for explanation of the following
-  * lint directives.
+/* @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
  */
 /*lint -e14 */
 MODULE_INFO info =
@@ -144,7 +144,7 @@ max_admin_auth_set_protocol_data(DCB *dcb, GWBUF *buf)
             session_data->adminses_chk_top = CHK_NUM_ADMINSES;
             session_data->adminses_chk_tail = CHK_NUM_ADMINSES;
 #endif
-            memcpy(&session_data->user, GWBUF_DATA(buf), GWBUF_LENGTH(buf));
+            memcpy(session_data->user, GWBUF_DATA(buf), GWBUF_LENGTH(buf));
             session_data->validated = false;
             dcb->data = (void *)session_data;
 
