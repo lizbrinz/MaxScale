@@ -48,6 +48,10 @@ static void monitorMain(void *);
 
 static char *version_str = "V2.0.0";
 
+/* @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
+ */
+/*lint -e14 */
 MODULE_INFO info =
 {
     MODULE_API_MONITOR,
@@ -55,6 +59,7 @@ MODULE_INFO info =
     MONITOR_VERSION,
     "A Galera cluster monitor"
 };
+/*lint +e14 */
 
 static void *startMonitor(void *, void*);
 static void stopMonitor(void *);
@@ -75,7 +80,11 @@ static MONITOR_OBJECT MyObject =
  * Implementation of the mandatory version entry point
  *
  * @return version string of the module
+ *
+ * @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
  */
+/*lint -e14 */
 char *
 version()
 {
@@ -108,6 +117,7 @@ GetModuleObject()
 {
     return &MyObject;
 }
+/*lint +e14 */
 
 /**
  * Start the instance of the monitor, returning a handle on the monitor.
@@ -178,7 +188,7 @@ startMonitor(void *arg, void* opt)
         }
         else if (!strcmp(params->name, "events"))
         {
-            if (mon_parse_event_string((bool*) & handle->events,
+            if (mon_parse_event_string((bool *) handle->events,
                                        sizeof(handle->events), params->value) != 0)
             {
                 script_error = true;
@@ -288,7 +298,6 @@ monitorDatabase(MONITOR *mon, MONITOR_SERVERS *database)
     MYSQL_ROW row;
     MYSQL_RES *result, *result2;
     int isjoined = 0;
-    unsigned long int server_version = 0;
     char *server_string;
     SERVER temp_server;
 
@@ -737,13 +746,15 @@ static MONITOR_SERVERS *set_cluster_master(MONITOR_SERVERS *current_master, MONI
  *
  * @param arg           The handle allocated by startMonitor
  * @param disable       To disable it use 1, 0 keeps failback
- */
+ *
+ * NOT USED
 static void
 disableMasterFailback(void *arg, int disable)
 {
     GALERA_MONITOR *handle = (GALERA_MONITOR *) arg;
     memcpy(&handle->disableMasterFailback, &disable, sizeof(int));
 }
+*/
 
 /**
  * Allow a Galera node to be in sync when Donor.
@@ -753,13 +764,14 @@ disableMasterFailback(void *arg, int disable)
  *
  * @param arg		The handle allocated by startMonitor
  * @param disable	To allow sync status use 1, 0 for traditional behavior
- */
+ * NOT USED
 static void
 availableWhenDonor(void *arg, int disable)
 {
     GALERA_MONITOR *handle = (GALERA_MONITOR *) arg;
     memcpy(&handle->availableWhenDonor, &disable, sizeof(int));
 }
+*/
 
 static monitor_event_t galera_events[] =
 {

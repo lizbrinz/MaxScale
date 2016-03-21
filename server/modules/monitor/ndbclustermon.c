@@ -37,6 +37,10 @@ static void monitorMain(void *);
 
 static char *version_str = "V2.1.0";
 
+/* @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
+ */
+/*lint -e14 */
 MODULE_INFO info =
 {
     MODULE_API_MONITOR,
@@ -44,6 +48,7 @@ MODULE_INFO info =
     MONITOR_VERSION,
     "A MySQL cluster SQL node monitor"
 };
+/*lint +e14 */
 
 static void *startMonitor(void *, void*);
 static void stopMonitor(void *);
@@ -61,7 +66,11 @@ static MONITOR_OBJECT MyObject =
  * Implementation of the mandatory version entry point
  *
  * @return version string of the module
+ *
+ * @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
  */
+/*lint -e14 */
 char *
 version()
 {
@@ -71,15 +80,12 @@ version()
 /**
  * The module initialisation routine, called when the module
  * is first loaded.
- * @see function load_module in load_utils.c for explanation of lint
  */
-/*lint -e14 */
 void
 ModuleInit()
 {
     MXS_NOTICE("Initialise the MySQL Cluster Monitor module %s.", version_str);
 }
-/*lint +e14 */
 
 /**
  * The module entry point routine. It is this routine that
@@ -94,6 +100,7 @@ GetModuleObject()
 {
     return &MyObject;
 }
+/*lint +e14 */
 
 /**
  * Start the instance of the monitor, returning a handle on the monitor.
@@ -143,7 +150,7 @@ startMonitor(void *arg, void* opt)
         }
         else if (!strcmp(params->name, "events"))
         {
-            if (mon_parse_event_string((bool*) &handle->events,
+            if (mon_parse_event_string((bool *)handle->events,
                                        sizeof(handle->events), params->value) != 0)
             {
                 script_error = true;
