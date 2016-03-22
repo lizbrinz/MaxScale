@@ -525,11 +525,8 @@ int gw_send_authentication_to_backend(char *dbname,
     uint8_t *payload = NULL;
     uint8_t *payload_start = NULL;
     long bytes;
-    uint8_t client_scramble[GW_MYSQL_SCRAMBLE_SIZE];
     uint8_t client_capabilities[4];
-    uint32_t server_capabilities = 0;
     uint32_t final_capabilities  = 0;
-    char dbpass[MYSQL_USER_MAXLEN + 1]="";
     GWBUF *buffer;
     DCB *dcb;
 
@@ -558,10 +555,9 @@ int gw_send_authentication_to_backend(char *dbname,
     }
 
     dcb = conn->owner_dcb;
-    final_capabilities = gw_mysql_get_byte4((uint8_t *)&server_capabilities);
 
     /** Copy client's flags to backend but with the known capabilities mask */
-    final_capabilities |= (conn->client_capabilities & (int)GW_MYSQL_CAPABILITIES_CLIENT);
+    final_capabilities = (conn->client_capabilities & (int)GW_MYSQL_CAPABILITIES_CLIENT);
 
     /* get charset the client sent and use it for connection auth */
     charset = conn->charset;
@@ -572,29 +568,6 @@ int gw_send_authentication_to_backend(char *dbname,
 #ifdef DEBUG_MYSQL_CONN
         fprintf(stderr, ">>>> Backend Connection with compression\n");
 #endif
-    }
-
-    if (curr_passwd != NULL)
-    {
-        uint8_t hash1[GW_MYSQL_SCRAMBLE_SIZE]="";
-        uint8_t hash2[GW_MYSQL_SCRAMBLE_SIZE]="";
-        uint8_t new_sha[GW_MYSQL_SCRAMBLE_SIZE]="";
-
-        // hash1 is the function input, SHA1(real_password)
-        memcpy(hash1, passwd, GW_MYSQL_SCRAMBLE_SIZE);
-
-        // hash2 is the SHA1(input data), where input_data = SHA1(real_password)
-        gw_sha1_str(hash1, GW_MYSQL_SCRAMBLE_SIZE, hash2);
-
-        // dbpass is the HEX form of SHA1(SHA1(real_password))
-        gw_bin2hex(dbpass, hash2, GW_MYSQL_SCRAMBLE_SIZE);
-
-        // new_sha is the SHA1(CONCAT(scramble, hash2)
-        gw_sha1_2_str(conn->scramble, GW_MYSQL_SCRAMBLE_SIZE, hash2, GW_MYSQL_SCRAMBLE_SIZE, new_sha);
-
-        // compute the xor in client_scramble
-        gw_str_xor(client_scramble, new_sha, hash1, GW_MYSQL_SCRAMBLE_SIZE);
-
     }
 
     if (curr_db == NULL)
@@ -682,6 +655,23 @@ int gw_send_authentication_to_backend(char *dbname,
 
     if (curr_passwd != NULL)
     {
+        uint8_t hash1[GW_MYSQL_SCRAMBLE_SIZE]="";
+        uint8_t hash2[GW_MYSQL_SCRAMBLE_SIZE]="";
+        uint8_t new_sha[GW_MYSQL_SCRAMBLE_SIZE]="";
+        uint8_t client_scramble[GW_MYSQL_SCRAMBLE_SIZE];
+
+        // hash1 is the function input, SHA1(real_password)
+        memcpy(hash1, passwd, GW_MYSQL_SCRAMBLE_SIZE);
+
+        // hash2 is the SHA1(input data), where input_data = SHA1(real_password)
+        gw_sha1_str(hash1, GW_MYSQL_SCRAMBLE_SIZE, hash2);
+
+        // new_sha is the SHA1(CONCAT(scramble, hash2)
+        gw_sha1_2_str(conn->scramble, GW_MYSQL_SCRAMBLE_SIZE, hash2, GW_MYSQL_SCRAMBLE_SIZE, new_sha);
+
+        // compute the xor in client_scramble
+        gw_str_xor(client_scramble, new_sha, hash1, GW_MYSQL_SCRAMBLE_SIZE);
+
         // set the auth-length
         *payload = GW_MYSQL_SCRAMBLE_SIZE;
         payload++;
@@ -694,7 +684,7 @@ int gw_send_authentication_to_backend(char *dbname,
     }
     else
     {
-        // skip the auth-length and write a NULL
+        // skip the auth-length and leave it as NULL
         payload++;
     }
 
@@ -1092,9 +1082,6 @@ GWBUF* gw_create_change_user_packet(MYSQL_session*  mses,
     uint8_t* payload = NULL;
     uint8_t* payload_start = NULL;
     long bytes;
-    uint8_t client_scramble[GW_MYSQL_SCRAMBLE_SIZE];
-    uint32_t server_capabilities = 0;
-    uint32_t final_capabilities  = 0;
     char dbpass[MYSQL_USER_MAXLEN + 1]="";
     char* curr_db = NULL;
     uint8_t* curr_passwd = NULL;
@@ -1113,61 +1100,17 @@ GWBUF* gw_create_change_user_packet(MYSQL_session*  mses,
     {
         curr_passwd = pwd;
     }
-    final_capabilities = gw_mysql_get_byte4((uint8_t *)&server_capabilities);
-
-    /** Copy client's flags to backend */
-    final_capabilities |= protocol->client_capabilities;
 
     /* get charset the client sent and use it for connection auth */
     charset = protocol->charset;
 
     if (compress)
     {
-        final_capabilities |= (int)GW_MYSQL_CAPABILITIES_COMPRESS;
 #ifdef DEBUG_MYSQL_CONN
         fprintf(stderr, ">>>> Backend Connection with compression\n");
 #endif
     }
 
-    if (curr_passwd != NULL)
-    {
-        uint8_t hash1[GW_MYSQL_SCRAMBLE_SIZE]="";
-        uint8_t hash2[GW_MYSQL_SCRAMBLE_SIZE]="";
-        uint8_t new_sha[GW_MYSQL_SCRAMBLE_SIZE]="";
-
-        /** hash1 is the function input, SHA1(real_password) */
-        memcpy(hash1, pwd, GW_MYSQL_SCRAMBLE_SIZE);
-
-        /**
-         * hash2 is the SHA1(input data), where
-         * input_data = SHA1(real_password)
-         */
-        gw_sha1_str(hash1, GW_MYSQL_SCRAMBLE_SIZE, hash2);
-
-        /** dbpass is the HEX form of SHA1(SHA1(real_password)) */
-        gw_bin2hex(dbpass, hash2, GW_MYSQL_SCRAMBLE_SIZE);
-
-        /** new_sha is the SHA1(CONCAT(scramble, hash2) */
-        gw_sha1_2_str(protocol->scramble,
-                      GW_MYSQL_SCRAMBLE_SIZE,
-                      hash2,
-                      GW_MYSQL_SCRAMBLE_SIZE,
-                      new_sha);
-
-        /** compute the xor in client_scramble */
-        gw_str_xor(client_scramble,
-                   new_sha, hash1,
-                   GW_MYSQL_SCRAMBLE_SIZE);
-    }
-    if (curr_db == NULL)
-    {
-        final_capabilities &= ~(int)GW_MYSQL_CAPABILITIES_CONNECT_WITH_DB;
-    }
-    else
-    {
-        final_capabilities |= (int)GW_MYSQL_CAPABILITIES_CONNECT_WITH_DB;
-    }
-    final_capabilities |= (int)GW_MYSQL_CAPABILITIES_PLUGIN_AUTH;
     /**
      * Protocol MySQL COM_CHANGE_USER for CLIENT_PROTOCOL_41
      * 1 byte COMMAND
@@ -1225,6 +1168,35 @@ GWBUF* gw_create_change_user_packet(MYSQL_session*  mses,
 
     if (curr_passwd != NULL)
     {
+        uint8_t hash1[GW_MYSQL_SCRAMBLE_SIZE]="";
+        uint8_t hash2[GW_MYSQL_SCRAMBLE_SIZE]="";
+        uint8_t new_sha[GW_MYSQL_SCRAMBLE_SIZE]="";
+        uint8_t client_scramble[GW_MYSQL_SCRAMBLE_SIZE];
+
+        /** hash1 is the function input, SHA1(real_password) */
+        memcpy(hash1, pwd, GW_MYSQL_SCRAMBLE_SIZE);
+
+        /**
+         * hash2 is the SHA1(input data), where
+         * input_data = SHA1(real_password)
+         */
+        gw_sha1_str(hash1, GW_MYSQL_SCRAMBLE_SIZE, hash2);
+
+        /** dbpass is the HEX form of SHA1(SHA1(real_password)) */
+        gw_bin2hex(dbpass, hash2, GW_MYSQL_SCRAMBLE_SIZE);
+
+        /** new_sha is the SHA1(CONCAT(scramble, hash2) */
+        gw_sha1_2_str(protocol->scramble,
+                      GW_MYSQL_SCRAMBLE_SIZE,
+                      hash2,
+                      GW_MYSQL_SCRAMBLE_SIZE,
+                      new_sha);
+
+        /** compute the xor in client_scramble */
+        gw_str_xor(client_scramble,
+                   new_sha, hash1,
+                   GW_MYSQL_SCRAMBLE_SIZE);
+
         /** set the auth-length */
         *payload = GW_MYSQL_SCRAMBLE_SIZE;
         payload++;
@@ -1237,7 +1209,7 @@ GWBUF* gw_create_change_user_packet(MYSQL_session*  mses,
     }
     else
     {
-        /** skip the auth-length and write a NULL */
+        /** skip the auth-length and leave the byte as NULL */
         payload++;
     }
     /** if the db is not NULL append it */
