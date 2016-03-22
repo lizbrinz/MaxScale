@@ -416,7 +416,9 @@ uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value
                 else
                 {
                     uint8_t bytes = *ptr;
-                    avro_value_set_string_len(&field, (char*)ptr + 1, bytes);
+                    char str[bytes + 1];
+                    strncpy(str, (char*)ptr + 1, bytes);
+                    avro_value_set_string(&field, str);
                     ptr += bytes + 1;
                 }
             }
@@ -436,7 +438,9 @@ uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value
             {
                 size_t sz;
                 char *str = lestr_consume(&ptr, &sz);
-                avro_value_set_string_len(&field, str, sz);
+                char buf[sz + 1];
+                strncpy(buf,str, sz);
+                avro_value_set_string(&field, str);
             }
             else if (column_is_blob(map->column_types[i]))
             {
