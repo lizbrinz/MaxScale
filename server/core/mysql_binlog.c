@@ -30,6 +30,43 @@
 #include <strings.h>
 
 /**
+ * @brief Read the fully qualified name of the table
+ *
+ * @param ptr Pointer to the start of the event payload
+ * @param post_header_len Length of the event specific header, 8 or 6 bytes
+ * @param dest Destination where the string is stored
+ * @param len Size of destination
+ */
+void read_table_info(uint8_t *ptr, uint8_t post_header_len, uint64_t *tbl_id, char* dest, size_t len)
+{
+    uint64_t table_id = 0;
+    size_t id_size = post_header_len == 6 ? 4 : 6;
+    memcpy(&table_id, ptr, id_size);
+    ptr += id_size;
+
+    uint16_t flags = 0;
+    memcpy(&flags, ptr, 2);
+    ptr += 2;
+
+    uint8_t schema_name_len = *ptr++;
+    char schema_name[schema_name_len + 2];
+
+    /** Copy the NULL byte after the schema name */
+    memcpy(schema_name, ptr, schema_name_len + 1);
+    ptr += schema_name_len + 1;
+
+    uint8_t table_name_len = *ptr++;
+    char table_name[table_name_len + 2];
+
+    /** Copy the NULL byte after the table name */
+    memcpy(table_name, ptr, table_name_len + 1);
+    ptr += table_name_len + 1;
+
+    snprintf(dest, len, "%s.%s", schema_name, table_name);
+    *tbl_id = table_id;
+}
+
+/**
  * @brief Extract a table map from a table map event
  *
  * This assumes that the complete event minus the replication header is stored
@@ -38,10 +75,11 @@
  * @param post_header_len Length of the event specific header, 8 or 6 bytes
  * @return New TABLE_MAP or NULL if memory allocation failed
  */
-TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len)
+TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t hdr_len, TABLE_CREATE* create,
+                           const char* gtid)
 {
     uint64_t table_id = 0;
-    size_t id_size = post_header_len == 6 ? 4 : 6;
+    size_t id_size = hdr_len == 6 ? 4 : 6;
     memcpy(&table_id, ptr, id_size);
     ptr += id_size;
 
@@ -79,8 +117,7 @@ TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len)
     if (map)
     {
         map->id = table_id;
-        map->version = 1;
-        snprintf(map->version_string, sizeof(map->version_string), "%06d", map->version);
+        map->version = create->version;
         map->flags = flags;
         map->columns = column_count;
         map->column_types = malloc(column_count);
@@ -89,6 +126,8 @@ TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len)
         map->null_bitmap = malloc(nullmap_size);
         map->database = strdup(schema_name);
         map->table = strdup(table_name);
+        map->table_create = create;
+        strncpy(map->gtid, gtid, sizeof(map->gtid));
         if (map->column_types && map->database && map->table &&
             map->column_metadata && map->null_bitmap)
         {
@@ -130,17 +169,6 @@ void* table_map_free(TABLE_MAP *map)
         free(map);
     }
     return NULL;
-}
-
-/**
- * @brief Rotate a table map
- *
- * @param map Map to rotate
- */
-void table_map_rotate(TABLE_MAP *map)
-{
-    map->version++;
-    snprintf(map->version_string, sizeof(map->version_string), "%06d", map->version);
 }
 
 /**
@@ -980,6 +1008,7 @@ TABLE_CREATE* table_create_alloc(const char* sql, const char* event_db,
                 memcpy(rval->table_definition, statement_sql, stmt_len);
                 rval->table_definition[stmt_len] = '\0';
             }
+            rval->version = 1;
             rval->column_names = names;
             rval->columns = n_columns;
             rval->database = strdup(db);
@@ -1031,7 +1060,7 @@ void* table_create_free(TABLE_CREATE* value)
     return NULL;
 }
 
-char* get_next_def(char* sql, char* end)
+const char* get_next_def(const char* sql, const char* end)
 {
     int depth = 0;
     while (sql < end)
@@ -1054,9 +1083,9 @@ char* get_next_def(char* sql, char* end)
     return NULL;
 }
 
-char* get_tok(char* sql, int* toklen, char* end)
+const char* get_tok(const char* sql, int* toklen, const char* end)
 {
-    char *start = sql;
+    const char *start = sql;
 
     while (isspace(*start))
     {
@@ -1109,26 +1138,38 @@ static bool tok_eq(const char *a, const char *b, size_t len)
     return true;
 }
 
-bool create_table_modify(const char* db, char *sql, char *end)
+void read_alter_identifier(const char *sql, const char *end, char *dest, int size)
 {
-    char *tbl = strcasestr(sql, "table"), *def;
+    int len = 0;
+    const char *tok = get_tok(sql, &len, end);
+    if (tok && (tok = get_tok(tok + len, &len, end)) && (tok = get_tok(tok + len, &len, end)))
+    {
+        snprintf(dest, size, "%.*s", len, tok);
+    }
+}
+
+bool table_create_alter(TABLE_CREATE *create, const char *sql, const char *end)
+{
+    const char *tbl = strcasestr(sql, "table"), *def;
 
     if ((def = strchr(tbl, ' ')))
     {
         int len = 0;
-        char *tok = get_tok(def, &len, end);
-        char *table = tok;
+        const char *tok = get_tok(def, &len, end);
+        const char *table = tok;
         int tbllen = len;
 
         if (tok)
         {
-            printf("Altering table %.*s\n", len, tok);
+            MXS_DEBUG("Altering table %.*s\n", len, tok);
             def = tok + len;
         }
 
+        int updates = 0;
+
         while (tok && (tok = get_tok(tok + len, &len, end)))
         {
-            char *ptok = tok;
+            const char *ptok = tok;
             int plen = len;
             tok = get_tok(tok + len, &len, end);
 
@@ -1137,21 +1178,47 @@ bool create_table_modify(const char* db, char *sql, char *end)
                 if (tok_eq(ptok, "add", plen) && tok_eq(tok, "column", len))
                 {
                     tok = get_tok(tok + len, &len, end);
-                    printf("column %.*s added for %.*s\n", len, tok, tbllen, table);
+
+                    char ** tmp = realloc(create->column_names, sizeof(char*) * create->columns + 1);
+                    ss_dassert(tmp);
+
+                    if (tmp == NULL)
+                    {
+                        return false;
+                    }
+
+                    create->column_names = tmp;
+                    create->column_names[create->columns] = strndup(tok, len);
+                    create->columns++;
+                    updates++;
                     tok = get_next_def(tok, end);
                     len = 0;
                 }
                 else if (tok_eq(ptok, "drop", plen) && tok_eq(tok, "column", len))
                 {
                     tok = get_tok(tok + len, &len, end);
-                    printf("column %.*s dropped for %.*s\n", len, tok, tbllen, table);
+
+                    free(create->column_names[create->columns - 1]);
+                    char ** tmp = realloc(create->column_names, sizeof(char*) * create->columns - 1);
+                    ss_dassert(tmp);
+                    
+                    if (tmp == NULL)
+                    {
+                        return false;
+                    }
+                    
+                    create->column_names = tmp;
+                    create->columns--;
+                    updates++;
                     tok = get_next_def(tok, end);
                     len = 0;
                 }
                 else if (tok_eq(ptok, "change", plen) && tok_eq(tok, "column", len))
                 {
                     tok = get_tok(tok + len, &len, end);
-                    printf("column %.*s changed for %.*s\n", len, tok, tbllen, table);
+                    free(create->column_names[create->columns - 1]);
+                    create->column_names[create->columns - 1] = strndup(tok, len);
+                    updates++;
                     tok = get_next_def(tok, end);
                     len = 0;
                 }
@@ -1161,6 +1228,13 @@ bool create_table_modify(const char* db, char *sql, char *end)
                 break;
             }
         }
+        
+        if (updates > 0)
+        {
+            create->version++;
+            MXS_INFO("Did %d alterations on table %.*s.", updates, tbllen, table);
+        }
     }
+    
     return true;
 }

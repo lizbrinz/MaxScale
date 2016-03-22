@@ -87,11 +87,15 @@ static const char* column_type_to_avro_type(uint8_t type)
  * @param create The TABLE_CREATE for this table
  * @return New schema or NULL if an error occurred
  */
-char* json_new_schema_from_table(TABLE_MAP *map, TABLE_CREATE *create)
+char* json_new_schema_from_table(TABLE_MAP *map)
 {
-    if (map->columns != create->columns)
+    TABLE_CREATE *create = map->table_create;
+
+    if (map->version != create->version)
     {
-        MXS_ERROR("Column count mismatch for table %s.%s.", map->database, map->table);
+        MXS_ERROR("Version mismatch for table %s.%s. Table map version is %d and "
+                  "the table definition version is %d.", map->database, map->table,
+                  map->version, create->version);
         return NULL;
     }
 
@@ -138,48 +142,20 @@ void save_avro_schema(const char *path, const char* schema, TABLE_MAP *map)
 {
     char filepath[PATH_MAX];
     int i = 1;
-    snprintf(filepath, sizeof(filepath), "%s/%s.%s.%06d.avsc", path, map->database, map->table, i);
+    snprintf(filepath, sizeof(filepath), "%s/%s.%s.%06d.avsc", path, map->database,
+             map->table, map->version);
 
-    while (access(filepath, F_OK) == 0)
+    if (access(filepath, F_OK) != 0)
     {
-        struct stat st;
-        bool equal = false;
-
-        if (stat(filepath, &st) == -1)
+        FILE *file = fopen(filepath, "wb");
+        if (file)
         {
-            char errbuf[STRERROR_BUFLEN];
-            MXS_ERROR("Failed to stat file '%s': %d, %s", filepath, errno,
-                      strerror_r(errno, errbuf, sizeof(errbuf)));
+            fprintf(file, "%s\n", schema);
+            fclose(file);
         }
-        else
-        {
-            char old_schema[st.st_size + 1];
-            FILE *oldfile = fopen(filepath, "rb");
-            if (oldfile)
-            {
-                fread(old_schema, 1, sizeof(old_schema), oldfile);
-                old_schema[st.st_size] = '\0';
-                if (strncmp(old_schema, schema, MIN(sizeof(old_schema), strlen(schema))) == 0)
-                {
-                    equal = true;
-                }
-                fclose(oldfile);
-            }
-
-            /** Old schema matches the new schema, no need to create a new one */
-            if (equal)
-            {
-                return;
-            }
-        }
-        i++;
-        sprintf(filepath, "%s/%s.%s.%06d.avsc", path, map->database, map->table, i);
     }
-
-    FILE *file = fopen(filepath, "wb");
-    if (file)
+    else
     {
-        fprintf(file, "%s\n", schema);
-        fclose(file);
+        MXS_ERROR("Schema version %d already exists: %s", map->version, filepath);
     }
 }

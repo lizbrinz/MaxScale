@@ -74,51 +74,73 @@ static int get_event_type(uint8_t event)
 bool handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
 {
     bool rval = false;
-    TABLE_MAP *map = table_map_alloc(ptr, router->event_type_hdr_lens[hdr->event_type]);
+    uint64_t id;
+    char table_ident[MYSQL_TABLE_MAXLEN + MYSQL_DATABASE_MAXLEN + 2];
+    int ev_len = router->event_type_hdr_lens[hdr->event_type];
 
-    if (map)
+    read_table_info(ptr, ev_len, &id, table_ident, sizeof(table_ident));
+    TABLE_CREATE* create = hashtable_fetch(router->created_tables, table_ident);
+
+    if (create)
     {
-        spinlock_acquire(&router->lock);
-        TABLE_MAP *old;
+        TABLE_MAP *old = hashtable_fetch(router->table_maps, table_ident);
 
-        if ((old = hashtable_fetch(router->table_maps, (void*) &map->id)) &&
-            old->columns == map->columns &&
-            memcmp(old->column_types, map->column_types,
-                   MIN(old->columns, map->columns)) == 0)
+        if (old == NULL || old->version != create->version)
         {
-            table_map_free(map);
+            TABLE_MAP *map = table_map_alloc(ptr, ev_len, create, router->current_gtid);
+
+            if (map)
+            {
+                char* json_schema = json_new_schema_from_table(map);
+
+                if (json_schema)
+                {
+                    char filepath[PATH_MAX + 1];
+                    snprintf(filepath, sizeof(filepath), "%s/%s.%06d.avro",
+                             router->avrodir, table_ident, map->version);
+                    AVRO_TABLE *avro_table = avro_table_alloc(filepath, json_schema);
+                    if (avro_table)
+                    {
+                        if (old)
+                        {
+                            router->active_maps[old->id % sizeof(router->active_maps)] = NULL;
+                        }
+                        hashtable_delete(router->table_maps, table_ident);
+                        hashtable_delete(router->open_tables, table_ident);
+                        hashtable_add(router->table_maps, (void*) table_ident, map);
+                        hashtable_add(router->open_tables, table_ident, avro_table);
+                        save_avro_schema(router->avrodir, json_schema, map);
+                        router->active_maps[map->id % sizeof(router->active_maps)] = map;
+                        rval = true;
+                    }
+                    else
+                    {
+                        MXS_ERROR("Failed to open new Avro file for writing.");
+                    }
+                    free(json_schema);
+                }
+                else
+                {
+                    MXS_ERROR("Failed to create JSON schema.");
+                }
+            }
+            else
+            {
+                MXS_ERROR("Failed to allocate new table map.");
+            }
         }
         else
         {
-            /** New definition for an old table */
-            if (old)
-            {
-                hashtable_delete(router->table_maps, &map->id);
-            }
-            char table_ident[MYSQL_TABLE_MAXLEN + MYSQL_DATABASE_MAXLEN + 2];
-            snprintf(table_ident, sizeof(table_ident), "%s.%s", map->database, map->table);
-            TABLE_CREATE* create = hashtable_fetch(router->created_tables, table_ident);
-            ss_dassert(create);
-            char* json_schema = json_new_schema_from_table(map, create);
-
-            char filepath[PATH_MAX + 1];
-            snprintf(filepath, sizeof(filepath), "%s/%s.%s.avro", router->avrodir,
-                     table_ident, map->version_string);
-            AVRO_TABLE *avro_table = avro_table_alloc(filepath, json_schema);
-            strncpy(map->gtid, router->current_gtid, GTID_MAX_LEN);
-            hashtable_add(router->table_maps, (void*) &map->id, map);
-            hashtable_add(router->open_tables, table_ident, avro_table);
-            save_avro_schema(router->avrodir, json_schema, map);
-            MXS_DEBUG("%s", json_schema);
-            free(json_schema);
+            /** No changes in the schema */
+            rval = true;
         }
-        rval = true;
-        spinlock_release(&router->lock);
     }
     else
     {
-        MXS_ERROR("Failed to allocate new table map.");
+        MXS_ERROR("Table map event for table '%s' read before the DDL statement "
+                  "for that table  was read.", table_ident);
     }
+
     return rval;
 }
 
@@ -188,13 +210,15 @@ bool handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
         ptr += coldata_size;
     }
 
-    TABLE_MAP *map = hashtable_fetch(router->table_maps, (void*) &table_id);
+    TABLE_MAP *map = router->active_maps[table_id % sizeof(router->active_maps)];
+    ss_dassert(map);
+
     if (map)
     {
         char table_ident[MYSQL_TABLE_MAXLEN + MYSQL_DATABASE_MAXLEN + 2];
         snprintf(table_ident, sizeof(table_ident), "%s.%s", map->database, map->table);
         AVRO_TABLE* table = hashtable_fetch(router->open_tables, table_ident);
-        TABLE_CREATE* create = hashtable_fetch(router->created_tables, table_ident);
+        TABLE_CREATE* create = map->table_create;
 
         if (table && create && ncolumns == map->columns)
         {

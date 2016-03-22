@@ -979,7 +979,30 @@ void handle_query_event(AVRO_INSTANCE *router, REP_HEADER *hdr, int *pending_tra
     }
     else if (is_alter_table_statement(router, sql, len))
     {
-        create_table_modify(db, sql, sql + len);
+        char ident[MYSQL_TABLE_MAXLEN + MYSQL_DATABASE_MAXLEN + 2];
+        char full_ident[MYSQL_TABLE_MAXLEN + MYSQL_DATABASE_MAXLEN + 2];
+        read_alter_identifier(sql, sql + len, ident, sizeof(ident));
+
+        if (strnlen(db, 1))
+        {
+            snprintf(full_ident, sizeof(full_ident), "%s.%s", db, ident);
+        }
+        else
+        {
+            strncpy(full_ident, ident, sizeof(full_ident));
+        }
+
+        TABLE_CREATE *created = hashtable_fetch(router->created_tables, full_ident);
+        ss_dassert(created);
+
+        if (created)
+        {
+            table_create_alter(created, sql, sql + len);
+        }
+        else
+        {
+            MXS_ERROR("Alter statement to a table with no create statement.");
+        }
     }
     /* A transaction starts with this event */
     else if (strncmp(sql, "BEGIN", 5) == 0)

@@ -28,7 +28,7 @@
 #include <time.h>
 
 /** Maximum GTID string length */
-#define GTID_MAX_LEN 96
+#define GTID_MAX_LEN 64
 
 /** Table map column types */
 #define TABLE_COL_TYPE_DECIMAL 0x00
@@ -91,6 +91,7 @@ typedef struct table_create
     char *database;
     char *table_definition;
     char gtid[GTID_MAX_LEN]; /*< the current GTID event or NULL if GTID is not enabled */
+    int version; /*< How many times this table has changed */
 } TABLE_CREATE;
 
 /** A representation of a table map event read from a binary log. A table map
@@ -106,6 +107,7 @@ typedef struct table_map
     uint8_t *null_bitmap;
     uint8_t *column_metadata;
     size_t column_metadata_size;
+    TABLE_CREATE *table_create; /*< The definition of the table */
     int version;
     char version_string[TABLE_MAP_VERSION_DIGITS + 1];
     char *table;
@@ -113,14 +115,17 @@ typedef struct table_map
     char gtid[GTID_MAX_LEN + 1]; /*< the current GTID event or NULL if GTID is not enabled */
 } TABLE_MAP;
 
-TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t post_header_len);
+void read_table_info(uint8_t *ptr, uint8_t post_header_len, uint64_t *table_id,
+                     char* dest, size_t len);
+TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t hdr_len, TABLE_CREATE* create,
+                           const char* gtid);
 void* table_map_free(TABLE_MAP *map);
-void table_map_rotate(TABLE_MAP *map);
 
 TABLE_CREATE* table_create_alloc(const char* sql, const char* db, const char* gtid);
 void* table_create_free(TABLE_CREATE* value);
 bool table_create_save(TABLE_CREATE *create, const char *filename);
-bool create_table_modify(const char* db, char *sql, char* end);
+bool table_create_alter(TABLE_CREATE *create, const char *sql, const char *end);
+void read_alter_identifier(const char *sql, const char *end, char *dest, int size);
 
 const char* column_type_to_string(uint8_t type);
 

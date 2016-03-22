@@ -312,7 +312,7 @@ createInstance(SERVICE *service, char **options)
     snprintf(inst->binlog_name, sizeof(inst->binlog_name), BINLOG_NAMEFMT, inst->fileroot, first_file);
     inst->prevbinlog[0] = '\0';
 
-    if ((inst->table_maps = hashtable_alloc(1000, table_id_hash, table_id_cmp)) &&
+    if ((inst->table_maps = hashtable_alloc(1000, simple_str_hash, strcmp)) &&
         (inst->open_tables = hashtable_alloc(1000, simple_str_hash, strcmp)) &&
         (inst->created_tables = hashtable_alloc(1000, simple_str_hash, strcmp)))
     {

@@ -30,6 +30,8 @@
 #define AVRO_DEFAULT_BLOCK_TRX_COUNT 50
 #define AVRO_DEFAULT_BLOCK_ROW_COUNT 1000
 
+#define MAX_MAPPED_TABLES 1024
+
 /** Avro filename maxlen */
 #define AVRO_MAX_FILENAME_LEN 255
 
@@ -145,6 +147,7 @@ typedef struct avro_instance
     uint8_t event_types;
     uint8_t event_type_hdr_lens[MAX_EVENT_TYPE_END];
     char    current_gtid[GTID_MAX_LEN + 1];
+    TABLE_MAP     *active_maps[MAX_MAPPED_TABLES];
     HASHTABLE     *table_maps;
     HASHTABLE     *open_tables;
     HASHTABLE     *created_tables;
@@ -170,7 +173,7 @@ extern avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router);
 extern AVRO_TABLE* avro_table_alloc(const char* filepath, const char* json_schema);
 extern void* avro_table_free(AVRO_TABLE *table);
 extern void avro_flush_all_tables(AVRO_INSTANCE *router);
-extern char* json_new_schema_from_table(TABLE_MAP *map, TABLE_CREATE *create);
+extern char* json_new_schema_from_table(TABLE_MAP *map);
 extern void save_avro_schema(const char *path, const char* schema, TABLE_MAP *map);
 bool handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr);
 bool handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr);
