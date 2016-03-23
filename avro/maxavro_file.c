@@ -34,11 +34,11 @@ bool maxavro_verify_block(MAXAVRO_FILE *file)
     {
         if (rc == -1)
         {
-            printf("Failed to read file: %d %s\n", errno, strerror(errno));
+            MXS_ERROR("Failed to read file: %d %s", errno, strerror(errno));
         }
         else
         {
-            printf("Short read when reading sync marker. Read %d bytes instead of %d\n",
+            MXS_ERROR("Short read when reading sync marker. Read %d bytes instead of %d",
                    rc, SYNC_MARKER_SIZE);
         }
         return false;
@@ -46,7 +46,7 @@ bool maxavro_verify_block(MAXAVRO_FILE *file)
 
     if (memcmp(file->sync, sync, SYNC_MARKER_SIZE))
     {
-        printf("Sync marker mismatch.\n");
+        MXS_ERROR("Sync marker mismatch.");
         return false;
     }
 
@@ -70,7 +70,7 @@ bool maxavro_read_datablock_start(MAXAVRO_FILE* file)
     }
     else if (maxavro_get_error(file) != MAXAVRO_ERR_NONE)
     {
-        printf("Failed to read data block start.\n");
+        MXS_ERROR("Failed to read data block start.");
     }
     return rval;
 }
@@ -97,7 +97,7 @@ static char* read_schema(MAXAVRO_FILE* file)
 
     if (rval == NULL)
     {
-        printf("No schema found from Avro header.\n");
+        MXS_ERROR("No schema found from Avro header.");
     }
 
     maxavro_map_free(head);
@@ -118,7 +118,7 @@ MAXAVRO_FILE* maxavro_file_open(const char* filename)
     FILE *file = fopen(filename, "rb");
     if (!file)
     {
-        printf("Failed to open file '%s': %d, %s", filename, errno, strerror(errno));
+        MXS_ERROR("Failed to open file '%s': %d, %s", filename, errno, strerror(errno));
         return NULL;
     }
 
@@ -127,14 +127,14 @@ MAXAVRO_FILE* maxavro_file_open(const char* filename)
     if (fread(magic, 1, AVRO_MAGIC_SIZE, file) != AVRO_MAGIC_SIZE)
     {
         fclose(file);
-        printf("Failed to read file magic marker from '%s'\n", filename);
+        MXS_ERROR("Failed to read file magic marker from '%s'", filename);
         return NULL;
     }
 
     if (memcmp(magic, avro_magic, AVRO_MAGIC_SIZE) != 0)
     {
         fclose(file);
-        printf("Error: Avro magic marker bytes are not correct.\n");
+        MXS_ERROR("Error: Avro magic marker bytes are not correct.");
         return NULL;
     }
 
@@ -152,7 +152,7 @@ MAXAVRO_FILE* maxavro_file_open(const char* filename)
             !maxavro_read_sync(file, avrofile->sync) ||
             !maxavro_read_datablock_start(avrofile))
         {
-            printf("Failed to initialize avrofile.\n");
+            MXS_ERROR("Failed to initialize avrofile.");
             free(avrofile->schema);
             free(avrofile);
             avrofile = NULL;

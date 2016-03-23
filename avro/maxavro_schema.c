@@ -82,12 +82,6 @@ static enum maxavro_value_type unpack_to_type(json_t *object,
     enum maxavro_value_type rval = MAXAVRO_TYPE_UNKNOWN;
     json_t* type = NULL;
 
-#ifdef SS_DEBUG
-    char *js = json_dumps(object, JSON_PRESERVE_ORDER);
-    printf("%s\n", js);
-    free(js);
-#endif
-
     if (json_is_object(object))
     {
         json_t *tmp = NULL;
@@ -156,12 +150,12 @@ MAXAVRO_SCHEMA* maxavro_schema_alloc(const char* json)
         }
         else
         {
-            printf("Failed to read JSON schema: %s\n", json);
+            MXS_ERROR("Failed to read JSON schema: %s", json);
         }
     }
     else
     {
-        printf("Memory allocation failed.\n");
+        MXS_ERROR("Memory allocation failed.");
     }
     return rval;
 }
