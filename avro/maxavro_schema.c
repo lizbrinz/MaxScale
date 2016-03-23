@@ -20,6 +20,7 @@
 #include <jansson.h>
 #include <string.h>
 #include <skygw_debug.h>
+#include <log_manager.h>
 
 static const MAXAVRO_SCHEMA_FIELD types[MAXAVRO_TYPE_MAX] =
 {
