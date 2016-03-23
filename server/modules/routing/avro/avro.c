@@ -773,51 +773,54 @@ diagnostics(ROUTER *router, DCB *dcb)
             min10 /= 10.0;
             min5 /= 5.0;
 
-            dcb_printf(dcb, "\t\tClient UUID:					%s\n", session->uuid);
+            dcb_printf(dcb, "\t\tClient UUID:				%s\n", session->uuid);
             dcb_printf(dcb,
-                       "\t\tClient_host_port:				%s:%d\n",
+                       "\t\tClient_host_port:			%s:%d\n",
                        session->dcb->remote, ntohs((session->dcb->ipv4).sin_port));
             dcb_printf(dcb,
-                       "\t\tUsername:					%s\n",
+                       "\t\tUsername:				%s\n",
                        session->dcb->user);
             dcb_printf(dcb,
-                       "\t\tClient DCB:					%p\n",
+                       "\t\tClient DCB:				%p\n",
                        session->dcb);
             dcb_printf(dcb,
-                       "\t\tState:    					%s\n",
+                       "\t\tClient protocol:			%s\n",
+                       session->dcb->service->ports->protocol);
+            dcb_printf(dcb,
+                       "\t\tState:    				%s\n",
                        avro_client_states[session->state]);
             dcb_printf(dcb,
-                       "\t\tAvro file:					%s\n",
+                       "\t\tAvro file:				%s\n",
                        session->avro_binfile);
 
             gw_bin2hex(sync_marker_hex, session->avro_file.sync, SYNC_MARKER_SIZE);
 
             dcb_printf(dcb,
-                       "\t\tAvro file SyncMarker:					%s\n",
+                       "\t\tAvro file SyncMarker:			%s\n",
                        sync_marker_hex);
             dcb_printf(dcb,
-                       "\t\tAvro file last read block:					%lu\n",
+                       "\t\tAvro file last read block:		%lu\n",
                        session->avro_file.blocks_read);
             dcb_printf(dcb,
-                       "\t\tAvro file last read record:					%lu\n",
+                       "\t\tAvro file last read record:		%lu\n",
                        session->avro_file.records_read);
             dcb_printf(dcb,
-                       "\t\tAvro Schema ID:					%lu\n",
+                       "\t\tAvro Schema ID:				%lu\n",
                        0);
             dcb_printf(dcb,
-                       "\t\tAvro Transaction ID:					%lu\n",
+                       "\t\tAvro Transaction ID:			%lu\n",
                        0);
             dcb_printf(dcb,
-                       "\t\tAvro N.MaxTransactions:					%lu\n",
+                       "\t\tAvro N.MaxTransactions:			%lu\n",
                        0);
             dcb_printf(dcb,
-                       "\t\tNo. requests:   				%u\n",
+                       "\t\tNo. requests:   			%u\n",
                        session->stats.n_requests);
             dcb_printf(dcb,
-                       "\t\tNo. events sent:				%u\n",
+                       "\t\tNo. events sent:			%u\n",
                        session->stats.n_events);
             dcb_printf(dcb,
-                       "\t\tNo. bytes sent:					%u\n",
+                       "\t\tNo. bytes sent:				%u\n",
                        session->stats.n_bytes);
 
             minno = session->stats.minno - 1;
@@ -840,14 +843,9 @@ diagnostics(ROUTER *router, DCB *dcb)
             dcb_printf(dcb, "\t\tNo. of distribute action 3			%u\n", session->stats.n_actions[2]);
 #endif
 
-            if (session->state == 0)
-            {
-                dcb_printf(dcb, "\t\tSlave_mode:					connected\n");
-            }
-            else
-            {
-                dcb_printf(dcb, "\t\tSlave_mode:					follow\n");
-            }
+            dcb_printf(dcb, "\t\tClient_mode:				%s\n",
+                       avro_client_client_mode[session->cstate]);
+
 #if SPINLOCK_PROFILE
             dcb_printf(dcb, "\tSpinlock statistics (catch_lock):\n");
             spinlock_stats(&session->catch_lock, spin_reporter, dcb);

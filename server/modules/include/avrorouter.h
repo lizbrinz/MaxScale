@@ -36,6 +36,7 @@
 #define AVRO_MAX_FILENAME_LEN 255
 
 static char *avro_client_states[] = { "Unregistered", "Registered", "Processing", "Errored" };
+static char *avro_client_client_mode[] = { "Catch-up", "Busy", "Wait_for_data"};
 
 /** How a binlog file is closed */
 typedef enum avro_binlog_end
