@@ -983,7 +983,7 @@ void handle_query_event(AVRO_INSTANCE *router, REP_HEADER *hdr, int *pending_tra
         char full_ident[MYSQL_TABLE_MAXLEN + MYSQL_DATABASE_MAXLEN + 2];
         read_alter_identifier(sql, sql + len, ident, sizeof(ident));
 
-        if (strnlen(db, 1))
+        if (strnlen(db, 1) && strchr(ident, '.') == NULL)
         {
             snprintf(full_ident, sizeof(full_ident), "%s.%s", db, ident);
         }

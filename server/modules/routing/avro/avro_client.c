@@ -68,8 +68,9 @@ int avro_client_callback(DCB *dcb, DCB_REASON reason, void *data);
 static void avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *queue);
 static void avro_client_avro_to_json_output(AVRO_INSTANCE *router, AVRO_CLIENT *client,
                                             char *avro_file, uint64_t offset);
-
+void avro_notify_client(AVRO_CLIENT *client);
 void poll_fake_write_event(DCB *dcb);
+GWBUF* read_avro_schema(const char *avrofile, const char* dir);
 
 /**
  * Process a request packet from the slave server.
@@ -99,7 +100,7 @@ avro_client_handle_request(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *qu
             if (reg_ret == 0)
             {
                 client->state = AVRO_CLIENT_ERRORED;
-                dcb_printf(client->dcb, "ERR, code 12, msg: abcd");
+                dcb_printf(client->dcb, "ERR, code 12, msg: Registration failed");
                 /* force disconnection */
                 dcb_close(client->dcb);
                 return 0;
@@ -111,7 +112,7 @@ avro_client_handle_request(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *qu
                 dcb_printf(client->dcb, "OK");
 
                 client->state = AVRO_CLIENT_REGISTERED;
-                MXS_INFO("%s: Client [%s] has completd REGISTRATION action",
+                MXS_INFO("%s: Client [%s] has completed REGISTRATION action",
                          client->dcb->service->name,
                          client->dcb->remote != NULL ? client->dcb->remote : "");
 
@@ -266,12 +267,16 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
                 }
             }
 
-            strncpy(client->avro_binfile, avro_file, AVRO_MAX_FILENAME_LEN);
-            client->avro_binfile[AVRO_MAX_FILENAME_LEN] = '\0';
-
+            snprintf(client->avro_binfile, AVRO_MAX_FILENAME_LEN, "%s.avro", avro_file);
 
             /* set callback routine for data sending */
             dcb_add_callback(client->dcb, DCB_REASON_DRAINED, avro_client_callback, client);
+
+            GWBUF *schema = read_avro_schema(client->avro_binfile, router->avrodir);
+            if (schema)
+            {
+                client->dcb->func.write(client->dcb, schema);
+            }
 
             /* Add fake event that will call the avro_client_callback() routine */
             poll_fake_write_event(client->dcb);
@@ -309,7 +314,7 @@ avro_client_avro_to_json_output(AVRO_INSTANCE *router, AVRO_CLIENT *client,
     if (strnlen(avro_file, 1))
     {
         char filename[PATH_MAX + 1];
-        snprintf(filename, PATH_MAX, "%s/%s.avro", router->avrodir, avro_file);
+        snprintf(filename, PATH_MAX, "%s/%s", router->avrodir, avro_file);
 
         MAXAVRO_FILE *file = maxavro_file_open(filename);
 
@@ -364,6 +369,95 @@ avro_client_avro_to_json_output(AVRO_INSTANCE *router, AVRO_CLIENT *client,
     }
 }
 
+GWBUF* read_avro_schema(const char *avrofile, const char* dir)
+{
+    GWBUF* rval = NULL;
+    const char *suffix = strrchr(avrofile, '.');
+
+    if (suffix)
+    {
+        char buffer[PATH_MAX + 1];
+        snprintf(buffer, sizeof(buffer), "%s/%.*s.avsc", dir, (int)(suffix - avrofile),
+                 avrofile);
+        FILE *file = fopen(buffer, "rb");
+
+        if (file)
+        {
+            int nread;
+            while ((nread = fread(buffer, 1, sizeof(buffer), file)) > 0)
+            {
+                while (isspace(buffer[nread - 1]))
+                {
+                    nread--;
+                }
+
+                GWBUF * newbuf = gwbuf_alloc_and_load(nread, buffer);
+
+                if (newbuf)
+                {
+                    rval = gwbuf_append(rval, newbuf);
+                }
+            }
+
+            fclose(file);
+        }
+        else
+        {
+            char err[STRERROR_BUFLEN];
+            MXS_ERROR("Failed to open file '%s': %d, %s", buffer, errno,
+                      strerror_r(errno, err, sizeof(err)));
+        }
+    }
+    return rval;
+}
+
+/**
+ * Rotate to a new Avro file
+ * @param client Avro client session
+ * @param fullname Absolute path to the file to rotate to
+ */
+static void rotate_avro_file(AVRO_CLIENT *client, char *fullname)
+{
+    char *filename = strrchr(fullname, '/') + 1;
+    strncpy(client->avro_binfile, filename, sizeof(client->avro_binfile));
+    client->last_sent_pos = 0;
+
+    GWBUF *schema = read_avro_schema(client->avro_binfile, client->router->avrodir);
+
+    if (schema)
+    {
+        client->dcb->func.write(client->dcb, schema);
+    }
+}
+
+/**
+ * Print the name of the next Avro file
+ * @param file Current filename
+ * @param dir Directory where the files exist
+ * @param dest Destination where the full path to the file is printed
+ * @param len Size of @p dest
+ */
+static void print_next_filename(const char *file, const char *dir, char *dest, size_t len)
+{
+    char buffer[strlen(file) + 1];
+    strncpy(buffer, file, sizeof(buffer));
+    char *ptr = strrchr(buffer, '.');
+
+    if (ptr)
+    {
+        ptr--;
+        while (ptr > buffer && *(ptr) != '.')
+        {
+            ptr--;
+        }
+
+        int filenum = strtol(ptr + 1, NULL, 10);
+        *ptr = '\0';
+        snprintf(dest, len, "%s/%s.%06d.avro",
+                 dir, buffer, filenum + 1);
+    }
+}
+
 int avro_client_callback(DCB *dcb, DCB_REASON reason, void *userdata)
 {
     /* Notes:
@@ -389,21 +483,31 @@ int avro_client_callback(DCB *dcb, DCB_REASON reason, void *userdata)
         client->cstate |= AVRO_CS_BUSY;
         spinlock_release(&client->catch_lock);
 
-        spinlock_acquire(&client->router->lock);
-        uint64_t last_pos = client->router->current_pos;
-        spinlock_release(&client->router->lock);
+        bool next_file = false;
 
-        /* send current file content */
-        if (last_pos > client->last_sent_pos)
+        avro_client_avro_to_json_output(client->router, client,
+                                        client->avro_binfile,
+                                        client->last_sent_pos);
+
+
+        char filename[PATH_MAX + 1];
+        print_next_filename(client->avro_binfile, client->router->avrodir,
+                            filename, sizeof(filename));
+
+        /** If the next file is available, send it to the client */
+        if ((next_file = (access(filename, R_OK) == 0)))
         {
-            avro_client_avro_to_json_output(client->router, client,
-                                            client->avro_binfile,
-                                            client->last_sent_pos);
+            rotate_avro_file(client, filename);
         }
 
         spinlock_acquire(&client->catch_lock);
         client->cstate &= ~AVRO_CS_BUSY;
         client->cstate |= AVRO_WAIT_DATA;
+
+        if (next_file)
+        {
+            avro_notify_client(client);
+        }
         spinlock_release(&client->catch_lock);
     }
 

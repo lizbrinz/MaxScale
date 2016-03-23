@@ -46,6 +46,49 @@ typedef enum avro_binlog_end
     AVRO_BINLOG_ERROR /*< An error occurred while processing the binlog file */
 } avro_binlog_end_t;
 
+/** How many numbers each table version has (db.table.000001.avro) */
+#define TABLE_MAP_VERSION_DIGITS 6
+
+/** Maximum version number*/
+#define TABLE_MAP_VERSION_MAX 999999
+
+/** Maximum column name length */
+#define TABLE_MAP_MAX_NAME_LEN 64
+
+/** A CREATE TABLE abstraction */
+typedef struct table_create
+{
+    uint64_t columns;
+    char **column_names;
+    char *table;
+    char *database;
+    char *table_definition;
+    char gtid[GTID_MAX_LEN]; /*< the current GTID event or NULL if GTID is not enabled */
+    int version; /*< How many versions of this table have been used */
+    bool was_used; /*< Has this schema been persisted to disk */
+} TABLE_CREATE;
+
+/** A representation of a table map event read from a binary log. A table map
+ * maps a table to a unique ID which can be used to match row events to table map
+ * events. The table map event tells us how the table is laid out and gives us
+ * some meta information on the columns. */
+typedef struct table_map
+{
+    uint64_t id;
+    uint64_t columns;
+    uint16_t flags;
+    uint8_t *column_types;
+    uint8_t *null_bitmap;
+    uint8_t *column_metadata;
+    size_t column_metadata_size;
+    TABLE_CREATE *table_create; /*< The definition of the table */
+    int version;
+    char version_string[TABLE_MAP_VERSION_DIGITS + 1];
+    char *table;
+    char *database;
+    char gtid[GTID_MAX_LEN + 1]; /*< the current GTID event or NULL if GTID is not enabled */
+} TABLE_MAP;
+
 /**
  * The statistics for this AVRO router instance
  */
@@ -165,6 +208,16 @@ typedef struct avro_instance
     struct avro_instance  *next;
 } AVRO_INSTANCE;
 
+extern void read_table_info(uint8_t *ptr, uint8_t post_header_len, uint64_t *table_id,
+                     char* dest, size_t len);
+extern TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t hdr_len, TABLE_CREATE* create,
+                           const char* gtid);
+extern void* table_map_free(TABLE_MAP *map);
+extern TABLE_CREATE* table_create_alloc(const char* sql, const char* db, const char* gtid);
+extern void* table_create_free(TABLE_CREATE* value);
+extern bool table_create_save(TABLE_CREATE *create, const char *filename);
+extern bool table_create_alter(TABLE_CREATE *create, const char *sql, const char *end);
+extern void read_alter_identifier(const char *sql, const char *end, char *dest, int size);
 extern int avro_client_handle_request(AVRO_INSTANCE *, AVRO_CLIENT *, GWBUF *);
 extern void avro_client_rotate(AVRO_INSTANCE *router, AVRO_CLIENT *client, uint8_t *ptr);
 extern bool avro_open_binlog(const char *binlogdir, const char *file, int *fd);
@@ -175,8 +228,8 @@ extern void* avro_table_free(AVRO_TABLE *table);
 extern void avro_flush_all_tables(AVRO_INSTANCE *router);
 extern char* json_new_schema_from_table(TABLE_MAP *map);
 extern void save_avro_schema(const char *path, const char* schema, TABLE_MAP *map);
-bool handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr);
-bool handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr);
+extern bool handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr);
+extern bool handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr);
 
 #define AVRO_CLIENT_UNREGISTERED 0x0000
 #define AVRO_CLIENT_REGISTERED   0x0001

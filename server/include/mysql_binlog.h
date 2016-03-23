@@ -73,59 +73,6 @@
 /** The table ID used for end of statement row events */
 #define TABLE_DUMMY_ID 0x00ffffff
 
-/** How many numbers each table version has (db.table.000001.avro) */
-#define TABLE_MAP_VERSION_DIGITS 6
-
-/** Maximum version number*/
-#define TABLE_MAP_VERSION_MAX 999999
-
-/** Maximum column name length */
-#define TABLE_MAP_MAX_NAME_LEN 64
-
-/** A CREATE TABLE abstraction */
-typedef struct table_create
-{
-    uint64_t columns;
-    char **column_names;
-    char *table;
-    char *database;
-    char *table_definition;
-    char gtid[GTID_MAX_LEN]; /*< the current GTID event or NULL if GTID is not enabled */
-    int version; /*< How many times this table has changed */
-} TABLE_CREATE;
-
-/** A representation of a table map event read from a binary log. A table map
- * maps a table to a unique ID which can be used to match row events to table map
- * events. The table map event tells us how the table is laid out and gives us
- * some meta information on the columns. */
-typedef struct table_map
-{
-    uint64_t id;
-    uint64_t columns;
-    uint16_t flags;
-    uint8_t *column_types;
-    uint8_t *null_bitmap;
-    uint8_t *column_metadata;
-    size_t column_metadata_size;
-    TABLE_CREATE *table_create; /*< The definition of the table */
-    int version;
-    char version_string[TABLE_MAP_VERSION_DIGITS + 1];
-    char *table;
-    char *database;
-    char gtid[GTID_MAX_LEN + 1]; /*< the current GTID event or NULL if GTID is not enabled */
-} TABLE_MAP;
-
-void read_table_info(uint8_t *ptr, uint8_t post_header_len, uint64_t *table_id,
-                     char* dest, size_t len);
-TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t hdr_len, TABLE_CREATE* create,
-                           const char* gtid);
-void* table_map_free(TABLE_MAP *map);
-
-TABLE_CREATE* table_create_alloc(const char* sql, const char* db, const char* gtid);
-void* table_create_free(TABLE_CREATE* value);
-bool table_create_save(TABLE_CREATE *create, const char *filename);
-bool table_create_alter(TABLE_CREATE *create, const char *sql, const char *end);
-void read_alter_identifier(const char *sql, const char *end, char *dest, int size);
 
 const char* column_type_to_string(uint8_t type);
 

@@ -31,6 +31,7 @@
 uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create,
                                 avro_value_t *record, uint8_t *ptr,
                                 uint8_t *columns_present);
+void notify_all_clients(AVRO_INSTANCE *router);
 
 /**
  * @brief Get row event name
@@ -101,6 +102,8 @@ bool handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr
                     AVRO_TABLE *avro_table = avro_table_alloc(filepath, json_schema);
                     if (avro_table)
                     {
+                        bool notify = old != NULL;
+
                         if (old)
                         {
                             router->active_maps[old->id % sizeof(router->active_maps)] = NULL;
@@ -112,6 +115,11 @@ bool handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr
                         save_avro_schema(router->avrodir, json_schema, map);
                         router->active_maps[map->id % sizeof(router->active_maps)] = map;
                         rval = true;
+
+                        if (notify)
+                        {
+                            notify_all_clients(router);
+                        }
                     }
                     else
                     {
