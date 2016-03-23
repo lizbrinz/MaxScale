@@ -1034,26 +1034,34 @@ static bool ensure_dir_ok(const char* path, int mode)
     bool rval = false;
     char resolved[PATH_MAX + 1];
     char err[STRERROR_BUFLEN];
+
     if (path)
     {
-        if (realpath(path, resolved))
+        const char *rp = realpath(path, resolved);
+
+        if (rp == NULL && errno == ENOENT)
+        {
+            rp = path;
+        }
+
+        if (rp)
         {
             /** Make sure the directory exists */
-            if (mkdir(resolved, 0774) == 0 || errno == EEXIST)
+            if (mkdir(rp, 0774) == 0 || errno == EEXIST)
             {
-                if (access(resolved, mode) == 0)
+                if (access(rp, mode) == 0)
                 {
                     rval = true;
                 }
                 else
                 {
-                    MXS_ERROR("Failed to access directory '%s': %d, %s", resolved,
+                    MXS_ERROR("Failed to access directory '%s': %d, %s", rp,
                               errno, strerror_r(errno, err, sizeof(err)));
                 }
             }
             else
             {
-                MXS_ERROR("Failed to create directory '%s': %d, %s", resolved,
+                MXS_ERROR("Failed to create directory '%s': %d, %s", rp,
                           errno, strerror_r(errno, err, sizeof(err)));
             }
         }
@@ -1063,5 +1071,6 @@ static bool ensure_dir_ok(const char* path, int mode)
                       errno, strerror_r(errno, err, sizeof(err)));
         }
     }
+
     return rval;
 }
