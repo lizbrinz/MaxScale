@@ -417,7 +417,8 @@ uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value
                 {
                     uint8_t bytes = *ptr;
                     char str[bytes + 1];
-                    strncpy(str, (char*)ptr + 1, bytes);
+                    memcpy(str, ptr + 1, bytes);
+                    str[bytes] = '\0';
                     avro_value_set_string(&field, str);
                     ptr += bytes + 1;
                 }
@@ -439,8 +440,9 @@ uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value
                 size_t sz;
                 char *str = lestr_consume(&ptr, &sz);
                 char buf[sz + 1];
-                strncpy(buf,str, sz);
-                avro_value_set_string(&field, str);
+                memcpy(buf, str, sz);
+                buf[sz] = '\0';
+                avro_value_set_string(&field, buf);
             }
             else if (column_is_blob(map->column_types[i]))
             {
