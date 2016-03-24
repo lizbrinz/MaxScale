@@ -129,7 +129,9 @@ char* json_new_schema_from_table(TABLE_MAP *map)
                                               column_type_to_avro_type(map->column_types[i])));
     }
     json_object_set_new(schema, "fields", array);
-    return json_dumps(schema, JSON_PRESERVE_ORDER);
+    char* rval = json_dumps(schema, JSON_PRESERVE_ORDER);
+    json_decref(schema);
+    return rval;
 }
 
 /**
