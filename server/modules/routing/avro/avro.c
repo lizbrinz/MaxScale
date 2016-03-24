@@ -316,8 +316,8 @@ createInstance(SERVICE *service, char **options)
         (inst->open_tables = hashtable_alloc(1000, simple_str_hash, strcmp)) &&
         (inst->created_tables = hashtable_alloc(1000, simple_str_hash, strcmp)))
     {
-        hashtable_memory_fns(inst->table_maps, i64dup, NULL, safe_key_free,
-                             (HASHMEMORYFN)table_map_free);
+        hashtable_memory_fns(inst->table_maps, (HASHMEMORYFN)strdup, NULL,
+                             safe_key_free, (HASHMEMORYFN)table_map_free);
         hashtable_memory_fns(inst->open_tables, (HASHMEMORYFN)strdup, NULL,
                              safe_key_free, (HASHMEMORYFN)avro_table_free);
         hashtable_memory_fns(inst->created_tables, (HASHMEMORYFN)strdup, NULL,

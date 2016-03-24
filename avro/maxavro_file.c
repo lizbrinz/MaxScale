@@ -40,7 +40,7 @@ bool maxavro_verify_block(MAXAVRO_FILE *file)
         else
         {
             MXS_ERROR("Short read when reading sync marker. Read %d bytes instead of %d",
-                   rc, SYNC_MARKER_SIZE);
+                      rc, SYNC_MARKER_SIZE);
         }
         return false;
     }

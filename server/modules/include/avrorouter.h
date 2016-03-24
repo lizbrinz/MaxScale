@@ -33,7 +33,11 @@
 #define MAX_MAPPED_TABLES 1024
 
 /** Avro filename maxlen */
+#ifdef NAME_MAX
+#define AVRO_MAX_FILENAME_LEN NAME_MAX
+#else
 #define AVRO_MAX_FILENAME_LEN 255
+#endif
 
 static char *avro_client_states[] = { "Unregistered", "Registered", "Processing", "Errored" };
 static char *avro_client_client_mode[] = { "Catch-up", "Busy", "Wait_for_data"};

@@ -76,11 +76,19 @@ int check_file(const char* filename)
             while (num_rows != 0 && (row = maxavro_record_read(file)))
             {
                 char *json = json_dumps(row, JSON_PRESERVE_ORDER);
-                printf("%s\n", json);
-                json_decref(row);
-                if (num_rows > 0)
+                if (json)
                 {
-                    num_rows--;
+                    printf("%s\n", json);
+                    json_decref(row);
+                    if (num_rows > 0)
+                    {
+                        num_rows--;
+                    }
+                }
+                else
+                {
+                    printf("Failed to read JSON value.\n");
+                    return 1;
                 }
             }
         }

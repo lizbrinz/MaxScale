@@ -145,14 +145,17 @@ void save_avro_schema(const char *path, const char* schema, TABLE_MAP *map)
     snprintf(filepath, sizeof(filepath), "%s/%s.%s.%06d.avsc", path, map->database,
              map->table, map->version);
 
-    if (access(filepath, F_OK) != 0 && !map->table_create->was_used)
+    if (access(filepath, F_OK) != 0)
     {
-        FILE *file = fopen(filepath, "wb");
-        if (file)
+        if (!map->table_create->was_used)
         {
-            fprintf(file, "%s\n", schema);
-            map->table_create->was_used = true;
-            fclose(file);
+            FILE *file = fopen(filepath, "wb");
+            if (file)
+            {
+                fprintf(file, "%s\n", schema);
+                map->table_create->was_used = true;
+                fclose(file);
+            }
         }
     }
     else
@@ -812,7 +815,8 @@ TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t hdr_len, TABLE_CREATE* create,
         map->flags = flags;
         map->columns = column_count;
         map->column_types = malloc(column_count);
-        map->column_metadata = malloc(metadata_size);
+        /** Allocate at least one byte for the metadata */
+        map->column_metadata = calloc(1, metadata_size + 1);
         map->column_metadata_size = metadata_size;
         map->null_bitmap = malloc(nullmap_size);
         map->database = strdup(schema_name);
