@@ -71,6 +71,8 @@ static void avro_client_avro_to_json_output(AVRO_INSTANCE *router, AVRO_CLIENT *
 void avro_notify_client(AVRO_CLIENT *client);
 void poll_fake_write_event(DCB *dcb);
 GWBUF* read_avro_schema(const char *avrofile, const char* dir);
+void get_avrofile_name(const char *file_ptr, int data_len, char *dest);
+bool file_in_dir(const char *dir, const char *file);
 
 /**
  * Process a request packet from the slave server.
@@ -250,36 +252,27 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
 
         if (data_len > 1)
         {
-            char *cmd_sep;
+            get_avrofile_name(file_ptr, data_len, client->avro_binfile);
 
-            strncpy(avro_file, file_ptr + 1, data_len - 1);
-            avro_file[data_len - 1] = '\0';
-            cmd_sep = strchr(avro_file, ' ');
-
-            if (cmd_sep)
+            if (file_in_dir(router->avrodir, client->avro_binfile))
             {
-                *cmd_sep++ = '\0';
-                cmd_sep = strchr(cmd_sep, ' ');
-
-                if (cmd_sep)
+                /** Send the first schema */
+                GWBUF *schema = read_avro_schema(client->avro_binfile, router->avrodir);
+                if (schema)
                 {
-                    *cmd_sep = '\0';
+                    client->dcb->func.write(client->dcb, schema);
                 }
+
+                /* set callback routine for data sending */
+                dcb_add_callback(client->dcb, DCB_REASON_DRAINED, avro_client_callback, client);
+
+                /* Add fake event that will call the avro_client_callback() routine */
+                poll_fake_write_event(client->dcb);
             }
-
-            snprintf(client->avro_binfile, AVRO_MAX_FILENAME_LEN, "%s.avro", avro_file);
-
-            /* set callback routine for data sending */
-            dcb_add_callback(client->dcb, DCB_REASON_DRAINED, avro_client_callback, client);
-
-            GWBUF *schema = read_avro_schema(client->avro_binfile, router->avrodir);
-            if (schema)
+            else
             {
-                client->dcb->func.write(client->dcb, schema);
+                dcb_printf(client->dcb, "ERR NO-FILE File '%s' not found.", client->avro_binfile);
             }
-
-            /* Add fake event that will call the avro_client_callback() routine */
-            poll_fake_write_event(client->dcb);
         }
         else
         {
@@ -293,6 +286,62 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
         memcpy(ptr, "ECHO:", 5);
         reply = gwbuf_append(reply, queue);
         client->dcb->func.write(client->dcb, reply);
+    }
+}
+
+/**
+ * @brief Check if a file exists in a directory
+ *
+ * @param dir Directory where the file is searched
+ * @param file File to search
+ * @return True if file exists
+ */
+bool file_in_dir(const char *dir, const char *file)
+{
+    char path[PATH_MAX + 1];
+
+    snprintf(path, sizeof(path), "%s/%s", dir, file);
+
+    return access(path, F_OK) == 0;
+}
+
+/**
+ * @brief Form the full Avro file name
+ *
+ * @param file_ptr Requested file
+ * @param data_len Length of string pointed by @p file_ptr
+ * @param dest Destination where the file name is stored. Must be at least
+ * @p data_len + 1 bytes.
+ */
+void get_avrofile_name(const char *file_ptr, int data_len, char *dest)
+{
+    while (isspace(*file_ptr))
+    {
+        file_ptr++;
+        data_len--;
+    }
+
+    char avro_file[data_len + 1];
+    memcpy(avro_file, file_ptr, data_len);
+    avro_file[data_len] = '\0';
+
+    char *cmd_sep = strchr(avro_file, ' ');
+
+    if (cmd_sep)
+    {
+        *cmd_sep++ = '\0';
+    }
+
+    /** Exact file version specified */
+    if ((cmd_sep = strchr(avro_file, '.')) && (cmd_sep = strchr(cmd_sep + 1, '.')) &&
+        strlen(cmd_sep + 1) > 0)
+    {
+        snprintf(dest, AVRO_MAX_FILENAME_LEN, "%s.avro", avro_file);
+    }
+    /** No version specified, send all files */
+    else
+    {
+        snprintf(dest, AVRO_MAX_FILENAME_LEN, "%s.000001.avro", avro_file);
     }
 }
 
