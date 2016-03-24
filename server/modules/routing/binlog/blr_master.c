@@ -2665,10 +2665,13 @@ bool blr_send_event(blr_thread_role_t role,
     if ((strcmp(slave->lsi_binlog_name, binlog_name) == 0) &&
         (slave->lsi_binlog_pos == binlog_pos))
     {
-        MXS_ERROR("The event %s:%u sent by thread %lu in the role of a %s "
+        MXS_ERROR("The event %s:%u for slave %d@%s"
+                  "sent by thread %lu in the role of a %s "
                   "was already sent by thread %lu in the role of a %s.",
                   binlog_name,
                   binlog_pos,
+                  slave->serverid,
+                  slave->hostname ? slave->hostname : "unknown",
                   THREAD_SHELF(),
                   role == BLR_THREAD_ROLE_MASTER ? "MASTER" : "SLAVE",
                   slave->lsi_sender_tid,
