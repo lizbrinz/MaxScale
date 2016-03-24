@@ -951,6 +951,17 @@ bool save_and_replace_table_create(AVRO_INSTANCE *router, TABLE_CREATE *created)
     return true;
 }
 
+void unify_whitespace(char *sql, int len)
+{
+    for (int i = 0; i < len; i++)
+    {
+        if (isspace(sql[i]) && sql[i] != ' ')
+        {
+            sql[i] = ' ';
+        }
+    }
+}
+
 /**
  * @brief Simple detection of CREATE TABLE statements
  *
@@ -967,6 +978,8 @@ void handle_query_event(AVRO_INSTANCE *router, REP_HEADER *hdr, int *pending_tra
     char *sql = (char *) ptr + PHDR_OFF + vblklen + 1 + dblen;
     char db[dblen + 1];
     strncpy(db, (char*) ptr + PHDR_OFF + vblklen, sizeof(db));
+
+    unify_whitespace(sql, len);
 
     if (is_create_table_statement(router, sql, len))
     {

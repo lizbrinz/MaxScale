@@ -157,7 +157,7 @@ void save_avro_schema(const char *path, const char* schema, TABLE_MAP *map)
     }
     else
     {
-        MXS_ERROR("Schema version %d already exists: %s", map->version, filepath);
+        MXS_NOTICE("Schema version %d already exists: %s", map->version, filepath);
     }
 }
 
