@@ -91,7 +91,7 @@ static json_t* read_and_pack_value(MAXAVRO_FILE *file, MAXAVRO_SCHEMA_FIELD *fie
             char *str = maxavro_read_string(file);
             if (str)
             {
-                value = json_string_nocheck(str);
+                value = json_string(str);
                 free(str);
             }
         }
@@ -161,6 +161,11 @@ json_t* maxavro_record_read(MAXAVRO_FILE *file)
                 if (value)
                 {
                     json_object_set_new(object, file->schema->fields[i].name, value);
+                }
+                else
+                {
+                    json_decref(object);
+                    return NULL;
                 }
             }
         }
