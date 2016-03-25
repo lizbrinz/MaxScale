@@ -43,6 +43,7 @@
 #include <maxscale_pcre2.h>
 #include <ini.h>
 #include <dirent.h>
+#include <stdlib.h>
 
 static const char *statefile_section = "avro-conversion";
 static const char *ddl_list_name = "table-ddl.list";
@@ -170,7 +171,8 @@ static bool avro_save_conversion_state(AVRO_INSTANCE *router)
 
     fprintf(config_file, "[%s]\n", statefile_section);
     fprintf(config_file, "position=%lu\n", router->current_pos);
-    fprintf(config_file, "gtid=%s\n", router->current_gtid);
+    fprintf(config_file, "gtid=%d-%d-%lu:%lu\n", router->gtid.domain,
+            router->gtid.server_id, router->gtid.seq, router->gtid.event_num);
     fprintf(config_file, "file=%s\n", router->binlog_name);
     fclose(config_file);
 
@@ -206,7 +208,19 @@ static int conv_state_handler(void* data, const char* section, const char* key, 
     {
         if (strcmp(key, "gtid") == 0)
         {
-            strncpy(router->current_gtid, value, sizeof(router->current_gtid));
+            char tempval[strlen(value) + 1];
+            memcpy(tempval, value, sizeof(tempval));
+            char *saved, *domain = strtok_r(tempval, ":-\n", &saved);
+            char *serv_id = strtok_r(NULL, ":-\n", &saved);
+            char *seq = strtok_r(NULL, ":-\n", &saved);
+            char *subseq = strtok_r(NULL, ":-\n", &saved);
+            if (domain && serv_id && seq)
+            {
+                router->gtid.domain = strtol(domain, NULL, 10);
+                router->gtid.server_id = strtol(serv_id, NULL, 10);
+                router->gtid.seq = strtol(seq, NULL, 10);
+                router->gtid.event_num = strtol(subseq, NULL, 10);
+            }
         }
         else if (strcmp(key, "position") == 0)
         {
@@ -250,8 +264,9 @@ bool avro_load_conversion_state(AVRO_INSTANCE *router)
     {
         case 0:
             rval = true;
-            MXS_NOTICE("Loaded stored binary log conversion state: File: [%s] Position: [%ld] GTID: [%s]",
-                       router->binlog_name, router->current_pos, router->current_gtid);
+            MXS_NOTICE("Loaded stored binary log conversion state: File: [%s] Position: [%ld] GTID: [%d-%d-%lu:%lu]",
+                       router->binlog_name, router->current_pos, router->gtid.domain,
+                       router->gtid.server_id, router->gtid.seq, router->gtid.event_num);
             break;
 
         case -1:
@@ -583,6 +598,8 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
         /* get event content */
         ptr = GWBUF_DATA(result);
 
+        MXS_DEBUG("%s(%x) - %llu", binlog_event_name(hdr.event_type), hdr.event_type, pos);
+
         /* check for FORMAT DESCRIPTION EVENT */
         if (hdr.event_type == FORMAT_DESCRIPTION_EVENT)
         {
@@ -672,8 +689,11 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             n_sequence = extract_field(ptr, 64);
             domainid = extract_field(ptr + 8, 32);
             flags = *(ptr + 8 + 4);
-            snprintf(router->current_gtid, sizeof(router->current_gtid), "%u-%u-%lu", domainid,
-                     hdr.serverid, n_sequence);
+            router->gtid.domain = domainid;
+            router->gtid.server_id = hdr.serverid;
+            router->gtid.seq = n_sequence;
+            router->gtid.event_num = 1;
+
             if (flags == 0)
             {
                 pending_transaction = 1;
@@ -812,7 +832,7 @@ bool avro_load_created_tables(AVRO_INSTANCE *router)
                 {
                     if (is_create_table_statement(router, tok, strlen(tok)))
                     {
-                        TABLE_CREATE *created = table_create_alloc(tok, "", router->current_gtid);
+                        TABLE_CREATE *created = table_create_alloc(tok, "");
 
                         if (created)
                         {
@@ -983,7 +1003,7 @@ void handle_query_event(AVRO_INSTANCE *router, REP_HEADER *hdr, int *pending_tra
 
     if (is_create_table_statement(router, sql, len))
     {
-        TABLE_CREATE *created = table_create_alloc(sql, db, router->current_gtid);
+        TABLE_CREATE *created = table_create_alloc(sql, db);
 
         if (created && !save_and_replace_table_create(router, created))
         {

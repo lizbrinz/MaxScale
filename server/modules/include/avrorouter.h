@@ -42,6 +42,14 @@
 static char *avro_client_states[] = { "Unregistered", "Registered", "Processing", "Errored" };
 static char *avro_client_client_mode[] = { "Catch-up", "Busy", "Wait_for_data"};
 
+static const char *avro_domain = "domain";
+static const char *avro_server_id = "server_id";
+static const char *avro_sequence = "sequence";
+static const char *avro_event_number = "event_number";
+static const char *avro_event_type = "event_type";
+static const char *avro_timestamp = "timestamp";
+
+
 /** How a binlog file is closed */
 typedef enum avro_binlog_end
 {
@@ -68,7 +76,6 @@ typedef struct table_create
     char *table;
     char *database;
     char *table_definition;
-    char gtid[GTID_MAX_LEN]; /*< the current GTID event or NULL if GTID is not enabled */
     int version; /*< How many versions of this table have been used */
     bool was_used; /*< Has this schema been persisted to disk */
 } TABLE_CREATE;
@@ -91,7 +98,6 @@ typedef struct table_map
     char version_string[TABLE_MAP_VERSION_DIGITS + 1];
     char *table;
     char *database;
-    char gtid[GTID_MAX_LEN + 1]; /*< the current GTID event or NULL if GTID is not enabled */
 } TABLE_MAP;
 
 /**
@@ -194,7 +200,16 @@ typedef struct avro_instance
     pcre2_code              *alter_table_re;
     uint8_t event_types;
     uint8_t event_type_hdr_lens[MAX_EVENT_TYPE_END];
-    char    current_gtid[GTID_MAX_LEN + 1];
+    struct gtid_pos_t
+    {
+        int domain; /*< Replication domain */
+        int server_id; /*< Server ID */
+        uint64_t seq; /*< Sequence number */
+        uint64_t event_num; /*< Subsequence number, increases monotonically. This
+                          * is an internal representation of the position of
+                          * an event inside a GTID event and it is used to
+                          * rebuild GTID events in the correct order. */
+    } gtid;
     TABLE_MAP     *active_maps[MAX_MAPPED_TABLES];
     HASHTABLE     *table_maps;
     HASHTABLE     *open_tables;
@@ -215,10 +230,9 @@ typedef struct avro_instance
 
 extern void read_table_info(uint8_t *ptr, uint8_t post_header_len, uint64_t *table_id,
                      char* dest, size_t len);
-extern TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t hdr_len, TABLE_CREATE* create,
-                           const char* gtid);
+extern TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t hdr_len, TABLE_CREATE* create);
 extern void* table_map_free(TABLE_MAP *map);
-extern TABLE_CREATE* table_create_alloc(const char* sql, const char* db, const char* gtid);
+extern TABLE_CREATE* table_create_alloc(const char* sql, const char* db);
 extern void* table_create_free(TABLE_CREATE* value);
 extern bool table_create_save(TABLE_CREATE *create, const char *filename);
 extern bool table_create_alter(TABLE_CREATE *create, const char *sql, const char *end);

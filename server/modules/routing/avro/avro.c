@@ -667,8 +667,9 @@ diagnostics(ROUTER *router, DCB *dcb)
                router_inst->binlog_name);
     dcb_printf(dcb, "\tCurrent binlog position:	  		%lu\n",
                router_inst->current_pos);
-    dcb_printf(dcb, "\tCurrent GTID:	  		%s\n",
-               router_inst->current_gtid);
+    dcb_printf(dcb, "\tCurrent GTID:	  		%d-%d-%lu:%lu\n",
+               router_inst->gtid.domain, router_inst->gtid.server_id,
+               router_inst->gtid.seq, router_inst->gtid.event_num);
     dcb_printf(dcb, "\tNumber of AVRO clients:	   		%u\n",
                router_inst->stats.n_clients);
 

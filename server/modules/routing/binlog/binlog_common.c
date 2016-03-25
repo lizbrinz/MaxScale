@@ -94,7 +94,7 @@ bool binlog_next_file_exists(const char* binlogdir, const char* binlog)
             /* Next file in sequence doesn't exist */
             if (access(filename, R_OK) == -1)
             {
-                MXS_DEBUG("This file is still being written.");
+                MXS_DEBUG("File '%s' is the last binlog file.", filename);
             }
             else
             {
@@ -123,4 +123,96 @@ uint32_t extract_field(uint8_t *src, int bits)
         bits -= 8;
     }
     return rval;
+}
+
+/**
+ * Convert binlog event type to string
+ * @param type Event type
+ * @return Event type in string format
+ */
+const char* binlog_event_name(int type)
+{
+    switch (type)
+    {
+        case START_EVENT_V3:
+            return "START_EVENT_V3";
+        case QUERY_EVENT:
+            return "QUERY_EVENT";
+        case STOP_EVENT:
+            return "STOP_EVENT";
+        case ROTATE_EVENT:
+            return "ROTATE_EVENT";
+        case INTVAR_EVENT:
+            return "INTVAR_EVENT";
+        case LOAD_EVENT:
+            return "LOAD_EVENT";
+        case SLAVE_EVENT:
+            return "SLAVE_EVENT";
+        case CREATE_FILE_EVENT:
+            return "CREATE_FILE_EVENT";
+        case APPEND_BLOCK_EVENT:
+            return "APPEND_BLOCK_EVENT";
+        case EXEC_LOAD_EVENT:
+            return "EXEC_LOAD_EVENT";
+        case DELETE_FILE_EVENT:
+            return "DELETE_FILE_EVENT";
+        case NEW_LOAD_EVENT:
+            return "NEW_LOAD_EVENT";
+        case RAND_EVENT:
+            return "RAND_EVENT";
+        case USER_VAR_EVENT:
+            return "USER_VAR_EVENT";
+        case FORMAT_DESCRIPTION_EVENT:
+            return "FORMAT_DESCRIPTION_EVENT";
+        case XID_EVENT:
+            return "XID_EVENT";
+        case BEGIN_LOAD_QUERY_EVENT:
+            return "BEGIN_LOAD_QUERY_EVENT";
+        case EXECUTE_LOAD_QUERY_EVENT:
+            return "EXECUTE_LOAD_QUERY_EVENT";
+        case TABLE_MAP_EVENT:
+            return "TABLE_MAP_EVENT";
+        case WRITE_ROWS_EVENTv0:
+            return "WRITE_ROWS_EVENTv0";
+        case UPDATE_ROWS_EVENTv0:
+            return "UPDATE_ROWS_EVENTv0";
+        case DELETE_ROWS_EVENTv0:
+            return "DELETE_ROWS_EVENTv0";
+        case WRITE_ROWS_EVENTv1:
+            return "WRITE_ROWS_EVENTv1";
+        case UPDATE_ROWS_EVENTv1:
+            return "UPDATE_ROWS_EVENTv1";
+        case DELETE_ROWS_EVENTv1:
+            return "DELETE_ROWS_EVENTv1";
+        case INCIDENT_EVENT:
+            return "INCIDENT_EVENT";
+        case HEARTBEAT_EVENT:
+            return "HEARTBEAT_EVENT";
+        case IGNORABLE_EVENT:
+            return "IGNORABLE_EVENT";
+        case ROWS_QUERY_EVENT:
+            return "ROWS_QUERY_EVENT";
+        case WRITE_ROWS_EVENTv2:
+            return "WRITE_ROWS_EVENTv2";
+        case UPDATE_ROWS_EVENTv2:
+            return "UPDATE_ROWS_EVENTv2";
+        case DELETE_ROWS_EVENTv2:
+            return "DELETE_ROWS_EVENTv2";
+        case GTID_EVENT:
+            return "GTID_EVENT";
+        case ANONYMOUS_GTID_EVENT:
+            return "ANONYMOUS_GTID_EVENT";
+        case PREVIOUS_GTIDS_EVENT:
+            return "PREVIOUS_GTIDS_EVENT";
+        case MARIADB_ANNOTATE_ROWS_EVENT:
+            return "MARIADB_ANNOTATE_ROWS_EVENT";
+        case MARIADB10_BINLOG_CHECKPOINT_EVENT:
+            return "MARIADB10_BINLOG_CHECKPOINT_EVENT";
+        case MARIADB10_GTID_EVENT:
+            return "MARIADB10_GTID_EVENT";
+        case MARIADB10_GTID_GTID_LIST_EVENT:
+            return "MARIADB10_GTID_GTID_LIST_EVENT";
+        default:
+            return "UNKNOWN_EVENT";
+    }
 }

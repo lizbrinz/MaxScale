@@ -88,7 +88,7 @@ bool handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr
 
         if (old == NULL || old->version != create->version)
         {
-            TABLE_MAP *map = table_map_alloc(ptr, ev_len, create, router->current_gtid);
+            TABLE_MAP *map = table_map_alloc(ptr, ev_len, create);
 
             if (map)
             {
@@ -114,6 +114,7 @@ bool handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr
                         hashtable_add(router->open_tables, table_ident, avro_table);
                         save_avro_schema(router->avrodir, json_schema, map);
                         router->active_maps[map->id % sizeof(router->active_maps)] = map;
+                        MXS_DEBUG("Table %s mapped to %lu", table_ident, map->id);
                         rval = true;
 
                         if (notify)
@@ -152,17 +153,34 @@ bool handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr
     return rval;
 }
 
-static void set_common_fields(AVRO_INSTANCE *router, REP_HEADER *hdr,
-                              int event_type, avro_value_t *record)
+/**
+ * Set common field values and update the GTID subsequence counter
+ * @param router Avro router instance
+ * @param hdr Replication header
+ * @param event_type Event type
+ * @param record Record to prepare
+ */
+static void prepare_record(AVRO_INSTANCE *router, REP_HEADER *hdr,
+                           int event_type, avro_value_t *record)
 {
     avro_value_t field;
-    avro_value_get_by_name(record, "GTID", &field, NULL);
-    avro_value_set_string(&field, router->current_gtid);
+    avro_value_get_by_name(record, avro_domain, &field, NULL);
+    avro_value_set_int(&field, router->gtid.domain);
 
-    avro_value_get_by_name(record, "timestamp", &field, NULL);
+    avro_value_get_by_name(record, avro_server_id, &field, NULL);
+    avro_value_set_int(&field, router->gtid.server_id);
+
+    avro_value_get_by_name(record, avro_sequence, &field, NULL);
+    avro_value_set_int(&field, router->gtid.seq);
+
+    avro_value_get_by_name(record, avro_event_number, &field, NULL);
+    avro_value_set_int(&field, router->gtid.event_num);
+    router->gtid.event_num++;
+
+    avro_value_get_by_name(record, avro_timestamp, &field, NULL);
     avro_value_set_int(&field, hdr->timestamp);
 
-    avro_value_get_by_name(record, "event_type", &field, NULL);
+    avro_value_get_by_name(record, avro_event_type, &field, NULL);
     avro_value_set_enum(&field, event_type);
 }
 
@@ -241,7 +259,7 @@ bool handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
             {
                 /** Add the current GTID and timestamp */
                 int event_type = get_event_type(hdr->event_type);
-                set_common_fields(router, hdr, event_type, &record);
+                prepare_record(router, hdr, event_type, &record);
                 ptr = process_row_event_data(map, create, &record, ptr, col_present);
                 avro_file_writer_append_value(table->avro_file, &record);
 
@@ -250,7 +268,7 @@ bool handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
                  * a different type */
                 if (event_type == UPDATE_EVENT)
                 {
-                    set_common_fields(router, hdr, UPDATE_EVENT_AFTER, &record);
+                    prepare_record(router, hdr, UPDATE_EVENT_AFTER, &record);
                     ptr = process_row_event_data(map, create, &record, ptr, col_present);
                     avro_file_writer_append_value(table->avro_file, &record);
                 }

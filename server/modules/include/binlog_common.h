@@ -49,5 +49,6 @@ typedef struct binlog_event_desc
 int blr_file_get_next_binlogname(const char *binlog_name);
 bool binlog_next_file_exists(const char* binlogdir, const char* binlog);
 uint32_t extract_field(uint8_t *src, int bits);
+const char* binlog_event_name(int type);
 
 #endif /* BINLOG_COMMON_H */

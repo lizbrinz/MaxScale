@@ -109,9 +109,15 @@ char* json_new_schema_from_table(TABLE_MAP *map)
 
     json_t *array = json_array();
     json_array_append(array, json_pack_ex(&err, 0, "{s:s, s:s}", "name",
-                                          "GTID", "type", "string"));
+                                          avro_domain, "type", "int"));
     json_array_append(array, json_pack_ex(&err, 0, "{s:s, s:s}", "name",
-                                          "timestamp", "type", "int"));
+                                          avro_server_id, "type", "int"));
+    json_array_append(array, json_pack_ex(&err, 0, "{s:s, s:s}", "name",
+                                          avro_sequence, "type", "int"));
+    json_array_append(array, json_pack_ex(&err, 0, "{s:s, s:s}", "name",
+                                          avro_event_number, "type", "int"));
+    json_array_append(array, json_pack_ex(&err, 0, "{s:s, s:s}", "name",
+                                          avro_timestamp, "type", "int"));
 
     /** Enums and other complex types are defined with complete JSON objects
      * instead of string values */
@@ -119,7 +125,7 @@ char* json_new_schema_from_table(TABLE_MAP *map)
                                        "name", "EVENT_TYPES", "symbols", "insert",
                                        "update_before", "update_after", "delete");
 
-    json_array_append(array, json_pack_ex(&err, 0, "{s:s, s:o}", "name", "event_type",
+    json_array_append(array, json_pack_ex(&err, 0, "{s:s, s:o}", "name", avro_event_type,
                                           "type", event_types));
 
     for (uint64_t i = 0; i < map->columns; i++)
@@ -446,8 +452,7 @@ static int process_column_definition(const char *nameptr, char*** dest)
  * @param db Database where this query was executed
  * @return New CREATE_TABLE object or NULL if an error occurred
  */
-TABLE_CREATE* table_create_alloc(const char* sql, const char* event_db,
-                                 const char* gtid)
+TABLE_CREATE* table_create_alloc(const char* sql, const char* event_db)
 {
     /** Extract the table definition so we can get the column names from it */
     int stmt_len = 0;
@@ -497,7 +502,6 @@ TABLE_CREATE* table_create_alloc(const char* sql, const char* event_db,
             rval->columns = n_columns;
             rval->database = strdup(db);
             rval->table = strdup(table);
-            strncpy(rval->gtid, gtid, sizeof(rval->gtid));
         }
 
         if (rval == NULL || rval->database == NULL || rval->table == NULL)
@@ -771,8 +775,7 @@ void read_table_info(uint8_t *ptr, uint8_t post_header_len, uint64_t *tbl_id, ch
  * @param post_header_len Length of the event specific header, 8 or 6 bytes
  * @return New TABLE_MAP or NULL if memory allocation failed
  */
-TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t hdr_len, TABLE_CREATE* create,
-                           const char* gtid)
+TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t hdr_len, TABLE_CREATE* create)
 {
     uint64_t table_id = 0;
     size_t id_size = hdr_len == 6 ? 4 : 6;
@@ -824,7 +827,6 @@ TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t hdr_len, TABLE_CREATE* create,
         map->database = strdup(schema_name);
         map->table = strdup(table_name);
         map->table_create = create;
-        strncpy(map->gtid, gtid, sizeof(map->gtid));
         if (map->column_types && map->database && map->table &&
             map->column_metadata && map->null_bitmap)
         {
