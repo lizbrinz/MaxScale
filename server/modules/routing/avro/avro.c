@@ -840,7 +840,7 @@ diagnostics(ROUTER *router, DCB *dcb)
                        session->stats.minavgs[minno], min5, min10,
                        min15, min30);
 
-            dcb_printf(dcb, "\t\tNo. of failed reads				%u\n", session->stats.n_failed_read);
+            dcb_printf(dcb, "\t\tNo. of failed reads			%u\n", session->stats.n_failed_read);
 
 #if DETAILED_DIAG
             dcb_printf(dcb, "\t\tNo. of nested distribute events			%u\n", session->stats.n_overrun);
