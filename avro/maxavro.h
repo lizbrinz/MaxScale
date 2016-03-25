@@ -24,6 +24,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <jansson.h>
+#include <buffer.h>
 
 /** File magic and sync marker sizes block sizes */
 #define AVRO_MAGIC_SIZE 4
@@ -82,6 +83,8 @@ typedef struct
     uint64_t block_size; /*< Size of the block in bytes */
 
     /** The position @c ftell returns before the first record is read  */
+    long header_end_pos;
+    long data_start_pos;
     long block_start_pos;
     enum maxavro_error last_error; /*< Last error */
     uint8_t sync[SYNC_MARKER_SIZE];
@@ -149,12 +152,16 @@ void maxavro_map_free(MAXAVRO_MAP *value);
 
 /** Reading and seeking records */
 json_t* maxavro_record_read(MAXAVRO_FILE *file);
+GWBUF* maxavro_record_read_binary(MAXAVRO_FILE *file);
 bool maxavro_record_seek(MAXAVRO_FILE *file, uint64_t offset);
 bool maxavro_next_block(MAXAVRO_FILE *file);
 
 /** File operations */
 MAXAVRO_FILE* maxavro_file_open(const char* filename);
 void maxavro_file_close(MAXAVRO_FILE *file);
+GWBUF* maxavro_file_binary_header(MAXAVRO_FILE *file);
+
+/** File error functions */
 enum maxavro_error maxavro_get_error(MAXAVRO_FILE *file);
 const char* maxavro_get_error_string(MAXAVRO_FILE *file);
 

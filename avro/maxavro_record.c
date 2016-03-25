@@ -17,9 +17,11 @@
  */
 
 #include "maxavro.h"
+#include "skygw_utils.h"
 #include <string.h>
 #include <skygw_debug.h>
 #include <log_manager.h>
+#include <errno.h>
 
 bool maxavro_read_datablock_start(MAXAVRO_FILE *file, uint64_t *records,
                                   uint64_t *bytes);
@@ -204,7 +206,7 @@ bool maxavro_next_block(MAXAVRO_FILE *file)
         {
             file->records_read += file->records_in_block - file->records_read_from_block;
             long curr_pos = ftell(file->file);
-            long offset = (long) file->block_size - (curr_pos - file->block_start_pos);
+            long offset = (long) file->block_size - (curr_pos - file->data_start_pos);
             fseek(file->file, offset, SEEK_CUR);
         }
 
@@ -214,9 +216,10 @@ bool maxavro_next_block(MAXAVRO_FILE *file)
 }
 
 /**
- * @brief Seek to a position in the avro file
+ * @brief Seek to a position in the Avro file
  *
- * This moves the current position of the file
+ * This moves the current position of the file, skipping data blocks if necessary.
+ *
  * @param file
  * @param position
  * @return
@@ -257,5 +260,49 @@ bool maxavro_record_seek(MAXAVRO_FILE *file, uint64_t offset)
         }
     }
 
+    return rval;
+}
+
+/**
+ * @brief Read native Avro data
+ *
+ * This function reads a complete Avro data block from the disk and returns
+ * the read data in its native Avro format.
+ *
+ * @param file File to read from
+ * @return Buffer containing the complete binary data block or NULL if an error
+ * occurred. Consult maxavro_get_error for more details.
+ */
+GWBUF* maxavro_record_read_binary(MAXAVRO_FILE *file)
+{
+    long data_size = (file->data_start_pos - file->block_start_pos) + file->block_size;
+    char err[STRERROR_BUFLEN];
+    GWBUF *rval = gwbuf_alloc(data_size);
+
+    if (rval)
+    {
+        fseek(file->file, file->block_start_pos, SEEK_SET);
+
+        if (fread(GWBUF_DATA(rval), 1, data_size, file->file) == data_size)
+        {
+            GWBUF *sync = gwbuf_alloc_and_load(SYNC_MARKER_SIZE, file->sync);
+            if (sync)
+            {
+                rval = gwbuf_append(rval, sync);
+                maxavro_next_block(file);
+            }
+        }
+        else
+        {
+            if (ferror(file->file))
+            {
+                MXS_ERROR("Failed to read %ld bytes: %d, %s", data_size, errno,
+                          strerror_r(errno, err, sizeof(err)));
+                file->last_error = MAXAVRO_ERR_IO;
+            }
+            gwbuf_free(rval);
+            rval = NULL;
+        }
+    }
     return rval;
 }

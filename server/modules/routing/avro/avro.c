@@ -430,6 +430,8 @@ newSession(ROUTER *instance, SESSION *session)
     spinlock_init(&client->catch_lock);
     client->dcb = session->client_dcb;
     client->router = inst;
+    client->format = AVRO_FORMAT_UNDEFINED;
+
 #ifdef BLFILE_IN_SLAVE
     client->file = NULL;
 #endif

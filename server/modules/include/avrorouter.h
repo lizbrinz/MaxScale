@@ -141,6 +141,13 @@ typedef struct avro_table_t
     avro_schema_t avro_schema; /*< Native Avro schema of the table */
 } AVRO_TABLE;
 
+enum avro_data_format
+{
+    AVRO_FORMAT_UNDEFINED,
+    AVRO_FORMAT_JSON,
+    AVRO_FORMAT_AVRO,
+};
+
 /**
  * The client structure used within this router.
  * This represents the clients that are requesting AVRO files from MaxScale.
@@ -152,6 +159,7 @@ typedef struct avro_client
 #endif
     DCB             *dcb;           /*< The client DCB */
     int             state;          /*< The state of this client */
+    enum avro_data_format  format;          /*< Stream JSON or Avro data */
     char            *gtid;          /*< GTID the client requests */
     char            *schemaid;      /*< SchemaID the client requests */
     char            *uuid;          /*< Client UUID */

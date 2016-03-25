@@ -70,7 +70,8 @@ static void avro_client_avro_to_json_output(AVRO_INSTANCE *router, AVRO_CLIENT *
                                             char *avro_file, uint64_t offset);
 void avro_notify_client(AVRO_CLIENT *client);
 void poll_fake_write_event(DCB *dcb);
-GWBUF* read_avro_schema(const char *avrofile, const char* dir);
+GWBUF* read_avro_json_schema(const char *avrofile, const char* dir);
+GWBUF* read_avro_binary_schema(const char *avrofile, const char* dir);
 void get_avrofile_name(const char *file_ptr, int data_len, char *dest);
 bool file_in_dir(const char *dir, const char *file);
 
@@ -208,6 +209,13 @@ avro_client_do_registration(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *d
                 {
                     ret = 1;
                     client->state = AVRO_CLIENT_REGISTERED;
+                    client->format = AVRO_FORMAT_AVRO;
+                }
+                else if (memcmp(tmp_ptr + 5, "JSON", 4) == 0)
+                {
+                    ret = 1;
+                    client->state = AVRO_CLIENT_REGISTERED;
+                    client->format = AVRO_FORMAT_JSON;
                 }
                 else
                 {
@@ -246,7 +254,6 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
 
     if (command_ptr != NULL)
     {
-        char avro_file[AVRO_MAX_FILENAME_LEN + 1];
         char *file_ptr = command_ptr + req_data_len;
         int data_len = GWBUF_LENGTH(queue) - req_data_len;
 
@@ -257,7 +264,22 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
             if (file_in_dir(router->avrodir, client->avro_binfile))
             {
                 /** Send the first schema */
-                GWBUF *schema = read_avro_schema(client->avro_binfile, router->avrodir);
+                GWBUF *schema = NULL;
+
+                switch (client->format)
+                {
+                    case AVRO_FORMAT_JSON:
+                        schema = read_avro_json_schema(client->avro_binfile, router->avrodir);
+                        break;
+
+                    case AVRO_FORMAT_AVRO:
+                        schema = read_avro_binary_schema(client->avro_binfile, router->avrodir);
+                        break;
+
+                    default:
+                        MXS_ERROR("Unknown client format: %d", client->format);
+                }
+
                 if (schema)
                 {
                     client->dcb->func.write(client->dcb, schema);
@@ -346,6 +368,62 @@ void get_avrofile_name(const char *file_ptr, int data_len, char *dest)
 }
 
 /**
+ * @brief Stream Avro data in JSON format
+ *
+ * @param file File to stream from
+ * @param dcb DCB to stream to
+ * @return True if streaming was successful, false if an error occurred
+ */
+static bool stream_json(MAXAVRO_FILE *file, DCB *dcb)
+{
+    bool rval = true;
+    do
+    {
+        json_t *row;
+        int rc = 1;
+        while (rc > 0 && (row = maxavro_record_read(file)))
+        {
+            char *json = json_dumps(row, JSON_PRESERVE_ORDER);
+            GWBUF *buf;
+            if (json && (buf = gwbuf_alloc_and_load(strlen(json), (void*)json)))
+            {
+                rc = dcb->func.write(dcb, buf);
+            }
+            else
+            {
+                MXS_ERROR("Failed to dump JSON value.");
+                rval = false;
+            }
+            free(json);
+            json_decref(row);
+        }
+    }
+    while (maxavro_next_block(file));
+
+    return rval;
+}
+
+/**
+ * @brief Stream Avro data in native Avro format
+ *
+ * @param file File to stream from
+ * @param dcb DCB to stream to
+ * @return True if streaming was successful, false if an error occurred
+ */
+static bool stream_binary(MAXAVRO_FILE *file, DCB *dcb)
+{
+    GWBUF *buffer;
+    int rc = 1;
+
+    while (rc > 0 && (buffer = maxavro_record_read_binary(file)))
+    {
+        rc = dcb->func.write(dcb, buffer);
+    }
+
+    return true;
+}
+
+/**
  * Print JSON output from selected AVRO file
  *
  * @param router     The router instance
@@ -374,27 +452,21 @@ avro_client_avro_to_json_output(AVRO_INSTANCE *router, AVRO_CLIENT *client,
                 maxavro_record_seek(file, offset);
             }
 
-            do
+            switch (client->format)
             {
-                json_t *row;
-                int rc = 1;
-                while (rc > 0 && (row = maxavro_record_read(file)))
-                {
-                    char *json = json_dumps(row, JSON_PRESERVE_ORDER);
-                    GWBUF *buf;
-                    if (json && (buf = gwbuf_alloc_and_load(strlen(json), (void*)json)))
-                    {
-                        rc = client->dcb->func.write(client->dcb, buf);
-                    }
-                    else
-                    {
-                        MXS_ERROR("Failed to dump JSON value.");
-                    }
-                    free(json);
-                    json_decref(row);
-                }
+                case AVRO_FORMAT_JSON:
+                    stream_json(file, client->dcb);
+                    break;
+
+                case AVRO_FORMAT_AVRO:
+                    stream_binary(file, client->dcb);
+                    break;
+
+                default:
+                    MXS_ERROR("Unexpected format: %d", client->format);
+                    break;
             }
-            while (maxavro_next_block(file));
+
 
             if (maxavro_get_error(file) != MAXAVRO_ERR_NONE)
             {
@@ -418,7 +490,7 @@ avro_client_avro_to_json_output(AVRO_INSTANCE *router, AVRO_CLIENT *client,
     }
 }
 
-GWBUF* read_avro_schema(const char *avrofile, const char* dir)
+GWBUF* read_avro_json_schema(const char *avrofile, const char* dir)
 {
     GWBUF* rval = NULL;
     const char *suffix = strrchr(avrofile, '.');
@@ -460,6 +532,26 @@ GWBUF* read_avro_schema(const char *avrofile, const char* dir)
     return rval;
 }
 
+GWBUF* read_avro_binary_schema(const char *avrofile, const char* dir)
+{
+    GWBUF* rval = NULL;
+    char buffer[PATH_MAX + 1];
+    snprintf(buffer, sizeof(buffer), "%s/%s", dir, avrofile);
+    MAXAVRO_FILE *file = maxavro_file_open(buffer);
+
+    if (file)
+    {
+        rval = maxavro_file_binary_header(file);
+        maxavro_file_close(file);
+    }
+    else
+    {
+        MXS_ERROR("Failed to open file '%s'.", buffer);
+    }
+
+    return rval;
+}
+
 /**
  * Rotate to a new Avro file
  * @param client Avro client session
@@ -471,7 +563,7 @@ static void rotate_avro_file(AVRO_CLIENT *client, char *fullname)
     strncpy(client->avro_binfile, filename, sizeof(client->avro_binfile));
     client->last_sent_pos = 0;
 
-    GWBUF *schema = read_avro_schema(client->avro_binfile, client->router->avrodir);
+    GWBUF *schema = read_avro_json_schema(client->avro_binfile, client->router->avrodir);
 
     if (schema)
     {

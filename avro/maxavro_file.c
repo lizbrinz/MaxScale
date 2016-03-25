@@ -59,6 +59,8 @@ bool maxavro_verify_block(MAXAVRO_FILE *file)
 
 bool maxavro_read_datablock_start(MAXAVRO_FILE* file)
 {
+    /** The actual start of the binary block */
+    file->block_start_pos = ftell(file->file);
     uint64_t records, bytes;
     bool rval = maxavro_read_integer(file, &records) && maxavro_read_integer(file, &bytes);
 
@@ -67,7 +69,7 @@ bool maxavro_read_datablock_start(MAXAVRO_FILE* file)
         file->block_size = bytes;
         file->records_in_block = records;
         file->records_read_from_block = 0;
-        file->block_start_pos = ftell(file->file);
+        file->data_start_pos = ftell(file->file);
     }
     else if (maxavro_get_error(file) != MAXAVRO_ERR_NONE)
     {
@@ -158,6 +160,7 @@ MAXAVRO_FILE* maxavro_file_open(const char* filename)
             free(avrofile);
             avrofile = NULL;
         }
+        avrofile->header_end_pos = avrofile->block_start_pos;
         free(schema);
     }
     else
@@ -216,4 +219,33 @@ void maxavro_file_close(MAXAVRO_FILE *file)
     free(file->filename);
     maxavro_schema_free(file->schema);
     free(file);
+}
+
+/**
+ * @brief Read binary Avro header
+ *
+ * This reads the binary format Avro header from an Avro file. The header is the
+ * start of the Avro file so it also includes the Avro magic marker bytes.
+ *
+ * @param file File to read from
+ * @return Binary header or NULL if an error occurred
+ */
+GWBUF* maxavro_file_binary_header(MAXAVRO_FILE *file)
+{
+    long pos = file->header_end_pos;
+    fseek(file->file, 0, SEEK_SET);
+    GWBUF *rval = gwbuf_alloc(pos);
+    if (rval)
+    {
+        if (fread(GWBUF_DATA(rval), 1, pos, file->file) != pos)
+        {
+            gwbuf_free(rval);
+            rval = NULL;
+        }
+    }
+    else
+    {
+        MXS_ERROR("Memory allocation failed when allocating %ld bytes.", pos);
+    }
+    return rval;
 }
