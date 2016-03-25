@@ -48,6 +48,7 @@ static const char *avro_sequence = "sequence";
 static const char *avro_event_number = "event_number";
 static const char *avro_event_type = "event_type";
 static const char *avro_timestamp = "timestamp";
+static char *avro_client_ouput[] = { "UNDEFINED", "JSON_OUT", "AVRO_OUT" };
 
 
 /** How a binlog file is closed */

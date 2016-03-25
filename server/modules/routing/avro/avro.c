@@ -790,6 +790,9 @@ diagnostics(ROUTER *router, DCB *dcb)
                        "\t\tClient protocol:			%s\n",
                        session->dcb->service->ports->protocol);
             dcb_printf(dcb,
+                       "\t\tClient Ouput Format:			%s\n",
+                       avro_client_ouput[session->format]);
+            dcb_printf(dcb,
                        "\t\tState:    				%s\n",
                        avro_client_states[session->state]);
             dcb_printf(dcb,
