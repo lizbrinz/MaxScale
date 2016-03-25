@@ -418,11 +418,11 @@ static int process_column_definition(const char *nameptr, char*** dest)
             names = tmp;
         }
 
-        char colname[128 + 1];
         const char *end = get_field_name_end(nameptr);
 
         if (end)
         {
+            char colname[128 + 1];
             snprintf(colname, sizeof(colname), "%.*s", (int) (end - nameptr), nameptr);
 
             if ((names[i++] = strdup(colname)) == NULL)
@@ -644,8 +644,6 @@ bool table_create_alter(TABLE_CREATE *create, const char *sql, const char *end)
     {
         int len = 0;
         const char *tok = get_tok(def, &len, end);
-        const char *table = tok;
-        int tbllen = len;
 
         if (tok)
         {
@@ -760,7 +758,6 @@ void read_table_info(uint8_t *ptr, uint8_t post_header_len, uint64_t *tbl_id, ch
 
     /** Copy the NULL byte after the table name */
     memcpy(table_name, ptr, table_name_len + 1);
-    ptr += table_name_len + 1;
 
     snprintf(dest, len, "%s.%s", schema_name, table_name);
     *tbl_id = table_id;

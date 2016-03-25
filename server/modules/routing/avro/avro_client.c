@@ -107,7 +107,6 @@ avro_client_handle_request(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *qu
                 /* force disconnection */
                 dcb_close(client->dcb);
                 return 0;
-                break;
             }
             else
             {
@@ -156,15 +155,14 @@ avro_client_do_registration(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *d
     const int reg_uuid_len = strlen(reg_uuid);
     int data_len = GWBUF_LENGTH(data) - reg_uuid_len;
     char *request = GWBUF_DATA(data);
-    /* 36 +1 */
-    char uuid[CDC_UUID_LEN + 1];
     int ret = 0;
 
     if (strstr(request, reg_uuid) != NULL)
     {
-        char *tmp_ptr;
         char *sep_ptr;
         int uuid_len = (data_len > CDC_UUID_LEN) ? CDC_UUID_LEN : data_len;
+        /* 36 +1 */
+        char uuid[CDC_UUID_LEN + 1];
         strncpy(uuid, request + reg_uuid_len, uuid_len);
         uuid[uuid_len] = '\0';
 
@@ -193,18 +191,9 @@ avro_client_do_registration(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *d
         if (data_len > 0)
         {
             /* Check for CDC request type */
-            tmp_ptr = strstr(request + sizeof(reg_uuid) + uuid_len, "TYPE=");
+            char *tmp_ptr = strstr(request + sizeof(reg_uuid) + uuid_len, "TYPE=");
             if (tmp_ptr)
             {
-                int cdc_type_len = (data_len > CDC_TYPE_LEN) ? CDC_TYPE_LEN : data_len;
-                int typelen = strnlen(tmp_ptr, GWBUF_LENGTH(data) - (tmp_ptr - request));
-                if (typelen < data_len)
-                {
-                    cdc_type_len -= (data_len - typelen);
-                }
-
-                cdc_type_len -= strlen("TYPE=");
-
                 if (memcmp(tmp_ptr + 5, "AVRO", 4) == 0)
                 {
                     ret = 1;
@@ -249,7 +238,6 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
     const char req_data[] = "REQUEST-DATA";
     const size_t req_data_len = sizeof(req_data) - 1;
     uint8_t *data = GWBUF_DATA(queue);
-    uint8_t *ptr;
     char *command_ptr = strstr((char *)data, req_data);
 
     if (command_ptr != NULL)
@@ -304,8 +292,7 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
     else
     {
         GWBUF *reply = gwbuf_alloc(5);
-        ptr = GWBUF_DATA(reply);
-        memcpy(ptr, "ECHO:", 5);
+        memcpy(GWBUF_DATA(reply), "ECHO:", 5);
         reply = gwbuf_append(reply, queue);
         client->dcb->func.write(client->dcb, reply);
     }

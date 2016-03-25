@@ -46,7 +46,6 @@ bool maxavro_read_integer(MAXAVRO_FILE* file, uint64_t *dest)
     uint64_t rval = 0;
     uint8_t nread = 0;
     uint8_t byte;
-    size_t rdsz;
     do
     {
         if (nread >= MAX_INTEGER_SIZE)
@@ -54,7 +53,8 @@ bool maxavro_read_integer(MAXAVRO_FILE* file, uint64_t *dest)
             file->last_error = MAXAVRO_ERR_VALUE_OVERFLOW;
             return false;
         }
-        if ((rdsz = fread(&byte, sizeof(byte), 1, file->file)) != sizeof(byte))
+        size_t rdsz = fread(&byte, sizeof(byte), 1, file->file);
+        if (rdsz != sizeof(byte))
         {
             // TODO: Integrate log_manager
             if (rdsz != 0)

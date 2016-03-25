@@ -317,11 +317,11 @@ void* avro_table_free(AVRO_TABLE *table)
  */
 static avro_binlog_end_t rotate_to_next_file_if_exists(AVRO_INSTANCE* router, uint64_t pos, bool stop_seen)
 {
-    char next_binlog[BINLOG_FNAMELEN + 1];
     avro_binlog_end_t rval = AVRO_LAST_FILE;
 
     if (binlog_next_file_exists(router->binlogdir, router->binlog_name))
     {
+        char next_binlog[BINLOG_FNAMELEN + 1];
         snprintf(next_binlog, sizeof(next_binlog),
                  BINLOG_NAMEFMT, router->fileroot,
                  blr_file_get_next_binlogname(router->binlog_name));
@@ -457,19 +457,16 @@ void notify_all_clients(AVRO_INSTANCE *router)
 avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
 {
     uint8_t hdbuf[BINLOG_EVENT_HDR_LEN];
-    GWBUF *result;
     unsigned long long pos = router->current_pos;
     unsigned long long last_known_commit = 4;
     char next_binlog[BINLOG_FNAMELEN + 1];
     REP_HEADER hdr;
     int pending_transaction = 0;
-    int n;
     uint8_t *ptr;
     bool found_chksum = false;
 
     /** For statistics */
     unsigned long events = 0;
-    unsigned long total_bytes = 0;
     unsigned long event_bytes = 0;
     unsigned long max_bytes = 0;
 
@@ -486,6 +483,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
 
     while (1)
     {
+        int n;
         /* Read the header information from the file */
         if ((n = pread(router->binlog_fd, hdbuf, BINLOG_EVENT_HDR_LEN, pos)) != BINLOG_EVENT_HDR_LEN)
         {
@@ -579,7 +577,9 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             return AVRO_BINLOG_ERROR;
         }
 
-        if ((result = read_event_data(router, &hdr, pos)) == NULL)
+        GWBUF *result = read_event_data(router, &hdr, pos);
+
+        if (result == NULL)
         {
             router->binlog_position = last_known_commit;
             router->current_pos = pos;
@@ -606,8 +606,6 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             int event_header_length;
             int event_header_ntypes;
             int n_events;
-            int check_alg;
-            uint8_t *checksum;
 
             /** Extract the event header lengths */
             event_header_length = ptr[2 + 50 + 4];
@@ -634,7 +632,7 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
 
             if (event_header_ntypes < n_events)
             {
-                checksum = ptr + hdr.event_size - event_header_length - event_header_ntypes;
+                uint8_t *checksum = ptr + hdr.event_size - event_header_length - event_header_ntypes;
                 if (checksum[0] == 1)
                 {
                     found_chksum = true;
@@ -765,7 +763,6 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
 
             if (pending_transaction)
             {
-                total_bytes += hdr.event_size;
                 event_bytes += hdr.event_size;
 
                 if (event_bytes > max_bytes)

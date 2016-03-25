@@ -29,6 +29,7 @@ const char *testschema = "";
 void write_file()
 {
     FILE *file = fopen(testfile, "wb");
+    fclose(file);
 }
 
 int main(int argc, char** argv)

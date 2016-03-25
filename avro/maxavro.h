@@ -110,7 +110,7 @@ typedef struct
 
 typedef struct
 {
-    void *buffer; /*< Buffer memory */
+    uint8_t *buffer; /*< Buffer memory */
     size_t buffersize; /*< Size of the buffer */
     size_t datasize; /*< size of written data */
     uint64_t records; /*< Number of successfully written records */

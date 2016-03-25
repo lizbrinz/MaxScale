@@ -191,7 +191,6 @@ static ROUTER *
 createInstance(SERVICE *service, char **options)
 {
     AVRO_INSTANCE *inst;
-    char *value;
     int i;
     char task_name[BLRM_TASK_NAME_LEN + 1] = "";
 
@@ -249,6 +248,7 @@ createInstance(SERVICE *service, char **options)
 
     for (i = 0; options[i]; i++)
     {
+        char *value;
         if ((value = strchr(options[i], '=')))
         {
             *value++ = '\0';
@@ -877,8 +877,8 @@ diagnostics(ROUTER *router, DCB *dcb)
 static void
 clientReply(ROUTER *instance, void *router_session, GWBUF *queue, DCB *backend_dcb)
 {
-    AVRO_INSTANCE *router = (AVRO_INSTANCE *) instance;
-    ;
+    /** We should never end up here */
+    ss_dassert(false);
 }
 
 static char *
@@ -918,24 +918,8 @@ static void
 errorReply(ROUTER *instance, void *router_session, GWBUF *message, DCB *backend_dcb, error_action_t action,
            bool *succp)
 {
-    AVRO_INSTANCE *router = (AVRO_INSTANCE *) instance;
-    int error;
-    char msg[STRERROR_BUFLEN + 1 + 5] = "";
-    char *errmsg;
-    unsigned long mysql_errno;
-
-    /** Don't handle same error twice on same DCB */
-    if (backend_dcb->dcb_errhandle_called)
-    {
-        /** we optimistically assume that previous call succeed */
-        *succp = true;
-        return;
-    }
-    else
-    {
-        backend_dcb->dcb_errhandle_called = true;
-    }
-
+    /** We should never end up here */
+    ss_dassert(false);
 }
 
 static int getCapabilities()
@@ -1033,11 +1017,11 @@ void converter_func(void* data)
 static bool ensure_dir_ok(const char* path, int mode)
 {
     bool rval = false;
-    char resolved[PATH_MAX + 1];
-    char err[STRERROR_BUFLEN];
 
     if (path)
     {
+        char err[STRERROR_BUFLEN];
+        char resolved[PATH_MAX + 1];
         const char *rp = realpath(path, resolved);
 
         if (rp == NULL && errno == ENOENT)

@@ -56,8 +56,6 @@ int check_file(const char* filename)
         printf("\n");
     }
 
-    uint64_t total_records = 0, total_bytes = 0, data_blocks = 0;
-
     /** After the header come the data blocks. Each data block has the number of records
      * in this block and the size of the compressed block encoded as Avro long values
      * followed by the actual data. Each data block ends with an identical, 16 byte sync marker
