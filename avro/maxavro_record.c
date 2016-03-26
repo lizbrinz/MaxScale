@@ -25,6 +25,7 @@
 
 bool maxavro_read_datablock_start(MAXAVRO_FILE *file);
 bool maxavro_verify_block(MAXAVRO_FILE *file);
+const char* type_to_string(enum maxavro_value_type type);
 
 /**
  * @brief Read a single value from a file
@@ -134,7 +135,7 @@ static void skip_value(MAXAVRO_FILE *file, enum maxavro_value_type type)
         break;
 
         default:
-            MXS_ERROR("Unimplemented type: %d", type);
+            MXS_ERROR("Unimplemented type: %d - %s", type, type_to_string(type));
             break;
     }
 }
@@ -172,7 +173,7 @@ json_t* maxavro_record_read_json(MAXAVRO_FILE *file)
                 {
                     long pos = ftell(file->file);
                     MXS_ERROR("Failed to read field value '%s', type '%s' at "
-                              "file offset %l, record numer %lu.",
+                              "file offset %ld, record numer %lu.",
                               file->schema->fields[i].name,
                               type_to_string(file->schema->fields[i].type),
                               pos, file->records_read);
@@ -243,10 +244,9 @@ bool maxavro_record_seek(MAXAVRO_FILE *file, uint64_t offset)
     if (offset < file->records_in_block - file->records_read_from_block)
     {
         /** Seek to the end of the block or to the position we want */
-        while (offset > 0)
+        while (offset-- > 0)
         {
             skip_record(file);
-            offset--;
         }
     }
     else
@@ -265,10 +265,9 @@ bool maxavro_record_seek(MAXAVRO_FILE *file, uint64_t offset)
 
         ss_dassert(offset <= file->records_in_block);
 
-        while (offset > 0)
+        while (offset-- > 0)
         {
             skip_record(file);
-            offset--;
         }
     }
 
@@ -315,6 +314,10 @@ GWBUF* maxavro_record_read_binary(MAXAVRO_FILE *file)
                 gwbuf_free(rval);
                 rval = NULL;
             }
+        }
+        else
+        {
+            MXS_ERROR("Failed to allocate %ld bytes for data block.", data_size);
         }
     }
     return rval;

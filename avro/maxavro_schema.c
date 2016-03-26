@@ -41,7 +41,7 @@ static const MAXAVRO_SCHEMA_FIELD types[MAXAVRO_TYPE_MAX] =
  * @param type Value string
  * @return Avro value type
  */
-static enum maxavro_value_type string_to_type(const char *str)
+enum maxavro_value_type string_to_type(const char *str)
 {
     for (int i = 0; types[i].name; i++)
     {
@@ -59,7 +59,7 @@ static enum maxavro_value_type string_to_type(const char *str)
  * @param type Type of the value
  * @return String representation of the value
  */
-static const char* type_to_string(enum maxavro_value_type type)
+const char* type_to_string(enum maxavro_value_type type)
 {
     for (int i = 0; types[i].name; i++)
     {
