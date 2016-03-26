@@ -86,6 +86,10 @@ typedef struct
     long header_end_pos;
     long data_start_pos;
     long block_start_pos;
+    bool metadata_read; /*< If datablock metadata has been read. This is kept
+                         * in memory if EOF is reached but an attempt to read
+                         * is made later when new data is available. We need
+                         * to know when to read it and when not to.  */
     enum maxavro_error last_error; /*< Last error */
     uint8_t sync[SYNC_MARKER_SIZE];
 } MAXAVRO_FILE;
@@ -151,7 +155,7 @@ MAXAVRO_MAP* maxavro_map_read(MAXAVRO_FILE *file);
 void maxavro_map_free(MAXAVRO_MAP *value);
 
 /** Reading and seeking records */
-json_t* maxavro_record_read(MAXAVRO_FILE *file);
+json_t* maxavro_record_read_json(MAXAVRO_FILE *file);
 GWBUF* maxavro_record_read_binary(MAXAVRO_FILE *file);
 bool maxavro_record_seek(MAXAVRO_FILE *file, uint64_t offset);
 bool maxavro_next_block(MAXAVRO_FILE *file);

@@ -71,7 +71,7 @@ int check_file(const char* filename)
         if (verbose > 1 || dump)
         {
             json_t* row;
-            while (num_rows != 0 && (row = maxavro_record_read(file)))
+            while (num_rows != 0 && (row = maxavro_record_read_json(file)))
             {
                 char *json = json_dumps(row, JSON_PRESERVE_ORDER);
                 if (json)

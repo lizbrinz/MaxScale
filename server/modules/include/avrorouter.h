@@ -7,6 +7,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <blr_constants.h>
+#include <gw.h>
 #include <dcb.h>
 #include <service.h>
 #include <spinlock.h>
@@ -68,6 +69,9 @@ typedef enum avro_binlog_end
 
 /** Maximum column name length */
 #define TABLE_MAP_MAX_NAME_LEN 64
+
+/** How many bytes each thread tries to send */
+#define AVRO_DATA_BURST_SIZE MAX_BUFFER_SIZE
 
 /** A CREATE TABLE abstraction */
 typedef struct table_create
@@ -142,12 +146,24 @@ typedef struct avro_table_t
     avro_schema_t avro_schema; /*< Native Avro schema of the table */
 } AVRO_TABLE;
 
+/** Data format used when streaming data to the clients */
 enum avro_data_format
 {
     AVRO_FORMAT_UNDEFINED,
     AVRO_FORMAT_JSON,
     AVRO_FORMAT_AVRO,
 };
+
+typedef struct gtid_pos
+{
+    uint64_t domain; /*< Replication domain */
+    uint64_t server_id; /*< Server ID */
+    uint64_t seq; /*< Sequence number */
+    uint64_t event_num; /*< Subsequence number, increases monotonically. This
+                         * is an internal representation of the position of
+                         * an event inside a GTID event and it is used to
+                         * rebuild GTID events in the correct order. */
+} gtid_pos_t;
 
 /**
  * The client structure used within this router.
@@ -161,22 +177,19 @@ typedef struct avro_client
     DCB             *dcb;           /*< The client DCB */
     int             state;          /*< The state of this client */
     enum avro_data_format  format;          /*< Stream JSON or Avro data */
-    char            *gtid;          /*< GTID the client requests */
-    char            *schemaid;      /*< SchemaID the client requests */
     char            *uuid;          /*< Client UUID */
-    char            *user;          /*< Username if given */
-    char            *passwd;        /*< Password if given */
     SPINLOCK        catch_lock;     /*< Event catchup lock */
-    SPINLOCK        rses_lock;      /*< Protects rses_deleted */
+    SPINLOCK        file_lock;      /*< Protects rses_deleted */
     struct avro_instance *router;   /*< Pointer to the owning router */
     struct avro_client *next;
-    MAXAVRO_FILE  *read_handle;   /*< Current open file handle */
-    uint64_t         requested_pos; /*< The last record we sent */
+    MAXAVRO_FILE  *file_handle;   /*< Current open file handle */
     uint64_t         last_sent_pos; /*< The last record we sent */
     AVRO_CLIENT_STATS  stats;       /*< Slave statistics */
     time_t          connect_time;   /*< Connect time of slave */
     MAXAVRO_FILE    avro_file;     /*< Avro file struct */
     char avro_binfile[AVRO_MAX_FILENAME_LEN + 1];
+    bool            requested_gtid; /*< If the client requested */
+    gtid_pos_t      gtid;
     unsigned int    cstate;         /*< Catch up state */
 #if defined(SS_DEBUG)
     skygw_chk_t     rses_chk_tail;
@@ -209,16 +222,7 @@ typedef struct avro_instance
     pcre2_code              *alter_table_re;
     uint8_t event_types;
     uint8_t event_type_hdr_lens[MAX_EVENT_TYPE_END];
-    struct gtid_pos_t
-    {
-        int domain; /*< Replication domain */
-        int server_id; /*< Server ID */
-        uint64_t seq; /*< Sequence number */
-        uint64_t event_num; /*< Subsequence number, increases monotonically. This
-                          * is an internal representation of the position of
-                          * an event inside a GTID event and it is used to
-                          * rebuild GTID events in the correct order. */
-    } gtid;
+    gtid_pos_t              gtid;
     TABLE_MAP     *active_maps[MAX_MAPPED_TABLES];
     HASHTABLE     *table_maps;
     HASHTABLE     *open_tables;

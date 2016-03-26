@@ -56,10 +56,14 @@ bool maxavro_read_integer(MAXAVRO_FILE* file, uint64_t *dest)
         size_t rdsz = fread(&byte, sizeof(byte), 1, file->file);
         if (rdsz != sizeof(byte))
         {
-            // TODO: Integrate log_manager
             if (rdsz != 0)
             {
+                MXS_ERROR("Failed to read %lu bytes from '%s'", sizeof(byte), file->filename);
                 file->last_error = MAXAVRO_ERR_IO;
+            }
+            else
+            {
+                MXS_DEBUG("Read 0 bytes from file '%s'", file->filename);
             }
             return false;
         }

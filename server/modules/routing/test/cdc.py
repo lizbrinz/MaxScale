@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import time
 import json
@@ -8,47 +8,43 @@ import socket
 import hashlib
 import argparse
 import subprocess
+import selectors
+import binascii
+import os
 
 # Read data as JSON
 def read_json():
-    nodata = 0
-    rbuf = ""
     decoder = json.JSONDecoder()
+    rbuf = bytes()
+    ep = selectors.EpollSelector()
+    ep.register(sock, selectors.EVENT_READ)
 
     while True:
-        if nodata > 5:
-            exit(1)
-
+        pollrc = ep.select(timeout=int(opts.read_timeout) if int(opts.read_timeout) > 0 else None)
         try:
-            data = decoder.raw_decode(rbuf)
-            rbuf = rbuf[data[1]:]
-            print(json.dumps(data[0]))
-
-        except Exception as ex:
-            buf = sock.recv(1024)
-            if len(buf) > 0:
-                rbuf += buf
-            else:
-                nodata += 1
+            buf = sock.recv(4096, socket.MSG_DONTWAIT)
+            rbuf += buf
+            while True:
+                data = decoder.raw_decode(rbuf.decode('ascii'))
+                rbuf = rbuf[data[1]:]
+                print(json.dumps(data[0]))
+        except ValueError as err:
+            pass
+        except Exception:
+            break
 
 # Read data as Avro
 def read_avro():
-    nodata = 0
+    ep = selectors.EpollSelector()
+    ep.register(sock, selectors.EVENT_READ)
 
     while True:
-        if nodata > 5:
-            exit(1)
-
+        pollrc = ep.select(timeout=int(opts.read_timeout) if int(opts.read_timeout) > 0 else None)
         try:
-            buf = sock.recv(1024, socket.MSG_DONTWAIT)
-
-            if len(buf) > 0:
-                nodata = 0
-                sys.stdout.write(buf)
-
-        except:
-            nodata += 1
-            time.sleep(1)
+            buf = sock.recv(4096, socket.MSG_DONTWAIT)
+            os.write(sys.stdout.fileno(), buf)
+        except Exception:
+            break
 
 parser = argparse.ArgumentParser(description = "CDC Binary consumer")
 parser.add_argument("--host", dest="host", help="Network address where the connection is made", default="localhost")
@@ -56,26 +52,30 @@ parser.add_argument("-P", "--port", dest="port", help="Port where the connection
 parser.add_argument("-u", "--user", dest="user", help="Username used when connecting", default="")
 parser.add_argument("-p", "--password", dest="password", help="Password used when connecting", default="")
 parser.add_argument("-f", "--format", dest="format", help="Data transmission format", default="JSON", choices=["AVRO", "JSON"])
-parser.add_argument("FILE", help="Requested table name. Must be in the following format: DATABASE.TABLE[.VERSION]")
+parser.add_argument("-t", "--timeout", dest="read_timeout", help="Read timeout", default=2)
+parser.add_argument("FILE", help="Requested table name in the following format: DATABASE.TABLE[.VERSION]")
+parser.add_argument("GTID", help="Requested GTID position", default=None, nargs='?')
+
 opts = parser.parse_args(sys.argv[1:])
 
 sock = socket.create_connection([opts.host, opts.port])
 
 # Authentication
-auth_string = str(opts.user + ":").encode('hex') + hashlib.sha1(opts.password).hexdigest()
+auth_string = binascii.b2a_hex((opts.user + ":").encode())
+auth_string += bytes(hashlib.sha1(opts.password.encode("utf_8")).hexdigest().encode())
 sock.send(auth_string)
 
 # Discard the response
-response = sock.recv(1024).encode('utf_8')
+response = str(sock.recv(1024)).encode('utf_8')
 
 # Register as a client as request Avro format data
-sock.send("REGISTER UUID=XXX-YYY_YYY, TYPE=" + opts.format)
+sock.send(bytes(("REGISTER UUID=XXX-YYY_YYY, TYPE=" + opts.format).encode()))
 
 # Discard the response again
-response = sock.recv(1024).encode('utf_8')
+response = str(sock.recv(1024)).encode('utf_8')
 
 # Request a data stream
-sock.send("REQUEST-DATA " + opts.FILE)
+sock.send(bytes(("REQUEST-DATA " + opts.FILE + (" " + opts.GTID if opts.GTID else "")).encode()))
 
 if opts.format == "JSON":
     read_json()

@@ -66,13 +66,12 @@ static int avro_client_do_registration(AVRO_INSTANCE *, AVRO_CLIENT *, GWBUF *);
 static int avro_client_binlog_dump(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, GWBUF *queue);
 int avro_client_callback(DCB *dcb, DCB_REASON reason, void *data);
 static void avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *queue);
-static void avro_client_avro_to_json_output(AVRO_INSTANCE *router, AVRO_CLIENT *client,
-                                            char *avro_file, uint64_t offset);
+static bool avro_client_stream_data(AVRO_CLIENT *client);
 void avro_notify_client(AVRO_CLIENT *client);
 void poll_fake_write_event(DCB *dcb);
 GWBUF* read_avro_json_schema(const char *avrofile, const char* dir);
 GWBUF* read_avro_binary_schema(const char *avrofile, const char* dir);
-void get_avrofile_name(const char *file_ptr, int data_len, char *dest);
+const char* get_avrofile_name(const char *file_ptr, int data_len, char *dest);
 bool file_in_dir(const char *dir, const char *file);
 
 /**
@@ -225,6 +224,44 @@ avro_client_do_registration(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *d
 }
 
 /**
+ * Extract the GTID the client requested
+ * @param gtid
+ * @param start
+ * @param end
+ */
+void extract_gtid_request(gtid_pos_t *gtid, const char *start, int len)
+{
+    const char *ptr = start;
+    int read = 0;
+
+    while (ptr < start + len)
+    {
+        if (!isdigit(*ptr))
+        {
+            ptr++;
+        }
+        else
+        {
+            char *end;
+            switch (read)
+            {
+                case 0:
+                    gtid->domain = strtol(ptr, &end, 10);
+                    break;
+                case 1:
+                    gtid->server_id = strtol(ptr, &end, 10);
+                    break;
+                case 2:
+                    gtid->seq = strtol(ptr, &end, 10);
+                    break;
+            }
+            read++;
+            ptr = end;
+        }
+    }
+}
+
+/**
  * Process command from client
  *
  * @param router     The router instance
@@ -247,7 +284,13 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
 
         if (data_len > 1)
         {
-            get_avrofile_name(file_ptr, data_len, client->avro_binfile);
+            const char *gtid_ptr = get_avrofile_name(file_ptr, data_len, client->avro_binfile);
+
+            if (gtid_ptr)
+            {
+                client->requested_gtid = true;
+                extract_gtid_request(&client->gtid, gtid_ptr, data_len - (gtid_ptr - file_ptr));
+            }
 
             if (file_in_dir(router->avrodir, client->avro_binfile))
             {
@@ -322,7 +365,7 @@ bool file_in_dir(const char *dir, const char *file)
  * @param dest Destination where the file name is stored. Must be at least
  * @p data_len + 1 bytes.
  */
-void get_avrofile_name(const char *file_ptr, int data_len, char *dest)
+const char* get_avrofile_name(const char *file_ptr, int data_len, char *dest)
 {
     while (isspace(*file_ptr))
     {
@@ -335,10 +378,13 @@ void get_avrofile_name(const char *file_ptr, int data_len, char *dest)
     avro_file[data_len] = '\0';
 
     char *cmd_sep = strchr(avro_file, ' ');
+    const char *rval = NULL;
 
     if (cmd_sep)
     {
         *cmd_sep++ = '\0';
+        rval = file_ptr + (cmd_sep - avro_file);
+        ss_dassert(rval < file_ptr + data_len);
     }
 
     /** Exact file version specified */
@@ -352,6 +398,27 @@ void get_avrofile_name(const char *file_ptr, int data_len, char *dest)
     {
         snprintf(dest, AVRO_MAX_FILENAME_LEN, "%s.000001.avro", avro_file);
     }
+
+    return rval;
+}
+
+static int send_row(DCB *dcb, json_t* row)
+{
+    char *json = json_dumps(row, JSON_PRESERVE_ORDER);
+    GWBUF *buf;
+    int rc = 0;
+
+    if (json && (buf = gwbuf_alloc_and_load(strlen(json), (void*)json)))
+    {
+        rc = dcb->func.write(dcb, buf);
+    }
+    else
+    {
+        MXS_ERROR("Failed to dump JSON value.");
+        rc = 0;
+    }
+    free(json);
+    return rc;
 }
 
 /**
@@ -359,35 +426,26 @@ void get_avrofile_name(const char *file_ptr, int data_len, char *dest)
  *
  * @param file File to stream from
  * @param dcb DCB to stream to
- * @return True if streaming was successful, false if an error occurred
+ * @return True if more data is readable, false if all data was sent
  */
 static bool stream_json(MAXAVRO_FILE *file, DCB *dcb)
 {
-    bool rval = true;
+    int bytes = 0;
+
     do
     {
         json_t *row;
         int rc = 1;
-        while (rc > 0 && (row = maxavro_record_read(file)))
+        while (rc > 0 && (row = maxavro_record_read_json(file)))
         {
-            char *json = json_dumps(row, JSON_PRESERVE_ORDER);
-            GWBUF *buf;
-            if (json && (buf = gwbuf_alloc_and_load(strlen(json), (void*)json)))
-            {
-                rc = dcb->func.write(dcb, buf);
-            }
-            else
-            {
-                MXS_ERROR("Failed to dump JSON value.");
-                rval = false;
-            }
-            free(json);
+            rc = send_row(dcb, row);
             json_decref(row);
         }
+        bytes += file->block_size;
     }
-    while (maxavro_next_block(file));
+    while (maxavro_next_block(file) && bytes < AVRO_DATA_BURST_SIZE);
 
-    return rval;
+    return bytes >= AVRO_DATA_BURST_SIZE;
 }
 
 /**
@@ -400,14 +458,74 @@ static bool stream_json(MAXAVRO_FILE *file, DCB *dcb)
 static bool stream_binary(MAXAVRO_FILE *file, DCB *dcb)
 {
     GWBUF *buffer;
+    uint64_t bytes = 0;
     int rc = 1;
 
-    while (rc > 0 && (buffer = maxavro_record_read_binary(file)))
+    while (rc > 0 && bytes < AVRO_DATA_BURST_SIZE)
     {
-        rc = dcb->func.write(dcb, buffer);
+        bytes += file->block_size;
+        if ((buffer = maxavro_record_read_binary(file)))
+        {
+            rc = dcb->func.write(dcb, buffer);
+        }
+        else
+        {
+            rc = 0;
+        }
     }
 
-    return true;
+    return bytes >= AVRO_DATA_BURST_SIZE;
+}
+
+/**
+ *
+ * @param client
+ * @param file
+ */
+static bool seek_to_gtid(AVRO_CLIENT *client, MAXAVRO_FILE* file)
+{
+    json_t *row;
+    bool seeking = true;
+
+    while (seeking && (row = maxavro_record_read_json(file)))
+    {
+        json_t *obj = json_object_get(row, avro_sequence);
+        ss_dassert(json_is_integer(obj));
+        uint64_t value = json_integer_value(obj);
+
+        /** If a larger GTID is found, use that */
+        if (value >= client->gtid.seq)
+        {
+            obj = json_object_get(row, avro_server_id);
+            ss_dassert(json_is_integer(obj));
+            value = json_integer_value(obj);
+
+            if (value == client->gtid.server_id)
+            {
+                obj = json_object_get(row, avro_domain);
+                ss_dassert(json_is_integer(obj));
+                value = json_integer_value(obj);
+
+                if (value == client->gtid.domain)
+                {
+                    /** Clear the request so that we don't process it again */
+                    memset(&client->gtid, 0, sizeof(client->gtid));
+                    seeking = false;
+                }
+            }
+        }
+
+        /** We'll send the first found row immediately since we have already
+         * read the row into memory */
+        if (!seeking)
+        {
+            send_row(client->dcb, row);
+        }
+
+        json_decref(row);
+    }
+
+    return !seeking;
 }
 
 /**
@@ -416,65 +534,68 @@ static bool stream_binary(MAXAVRO_FILE *file, DCB *dcb)
  * @param router     The router instance
  * @param client     The specific client data
  * @param avro_file  The requested AVRO file
- *
+ * @return True if more data needs to be read
  */
-static void
-avro_client_avro_to_json_output(AVRO_INSTANCE *router, AVRO_CLIENT *client,
-                                char *avro_file, uint64_t start_record)
+static bool avro_client_stream_data(AVRO_CLIENT *client)
 {
-    uint64_t offset = start_record;
-    ss_dassert(router && client && avro_file);
+    bool read_more = false;
+    AVRO_INSTANCE *router = client->router;
 
-    if (strnlen(avro_file, 1))
+    if (strnlen(client->avro_binfile, 1))
     {
         char filename[PATH_MAX + 1];
-        snprintf(filename, PATH_MAX, "%s/%s", router->avrodir, avro_file);
+        snprintf(filename, PATH_MAX, "%s/%s", router->avrodir, client->avro_binfile);
 
-        MAXAVRO_FILE *file = maxavro_file_open(filename);
-
-        if (file)
+        spinlock_acquire(&client->file_lock);
+        if (client->file_handle == NULL)
         {
-            if (offset > 0)
-            {
-                maxavro_record_seek(file, offset);
-            }
-
-            switch (client->format)
-            {
-                case AVRO_FORMAT_JSON:
-                    stream_json(file, client->dcb);
-                    break;
-
-                case AVRO_FORMAT_AVRO:
-                    stream_binary(file, client->dcb);
-                    break;
-
-                default:
-                    MXS_ERROR("Unexpected format: %d", client->format);
-                    break;
-            }
-
-
-            if (maxavro_get_error(file) != MAXAVRO_ERR_NONE)
-            {
-                MXS_ERROR("Reading Avro file failed with error '%s'.",
-                          maxavro_get_error_string(file));
-            }
-
-            /* update client struct */
-            memcpy(&client->avro_file, file, sizeof(client->avro_file));
-
-            /* may be just use client->avro_file->records_read and remove this var */
-            client->last_sent_pos = client->avro_file.records_read;
-
-            maxavro_file_close(file);
+            client->file_handle = maxavro_file_open(filename);
         }
+        spinlock_release(&client->file_lock);
+
+        if (client->requested_gtid)
+        {
+            if (seek_to_gtid(client, client->file_handle))
+            {
+                client->requested_gtid = false;
+            }
+        }
+
+        switch (client->format)
+        {
+            case AVRO_FORMAT_JSON:
+                read_more = stream_json(client->file_handle, client->dcb);
+                break;
+
+            case AVRO_FORMAT_AVRO:
+                read_more = stream_binary(client->file_handle, client->dcb);
+                break;
+
+            default:
+                MXS_ERROR("Unexpected format: %d", client->format);
+                break;
+        }
+
+
+        if (maxavro_get_error(client->file_handle) != MAXAVRO_ERR_NONE)
+        {
+            MXS_ERROR("Reading Avro file failed with error '%s'.",
+                      maxavro_get_error_string(client->file_handle));
+        }
+
+        /* update client struct */
+        memcpy(&client->avro_file, client->file_handle, sizeof(client->avro_file));
+
+        /* may be just use client->avro_file->records_read and remove this var */
+        client->last_sent_pos = client->avro_file.records_read;
     }
     else
     {
         fprintf(stderr, "No file specified\n");
         dcb_printf(client->dcb, "ERR avro file not specified");
     }
+
+    return read_more;
 }
 
 GWBUF* read_avro_json_schema(const char *avrofile, const char* dir)
@@ -556,6 +677,17 @@ static void rotate_avro_file(AVRO_CLIENT *client, char *fullname)
     {
         client->dcb->func.write(client->dcb, schema);
     }
+
+    spinlock_acquire(&client->file_lock);
+    maxavro_file_close(client->file_handle);
+    client->file_handle = maxavro_file_open(client->avro_binfile);
+
+    if (client->file_handle == NULL)
+    {
+        MXS_ERROR("Failed to open file: %s", filename);
+    }
+
+    spinlock_release(&client->file_lock);
 }
 
 /**
@@ -586,17 +718,16 @@ static void print_next_filename(const char *file, const char *dir, char *dest, s
     }
 }
 
+/**
+ * @brief The client callback for sending data
+ *
+ * @param dcb Client DCB
+ * @param reason Why the callback was called
+ * @param userdata Data provided when the callback was added
+ * @return Always 0
+ */
 int avro_client_callback(DCB *dcb, DCB_REASON reason, void *userdata)
 {
-    /* Notes:
-     * 1 - Currently not following next file, aka kind of rotate.
-     * 2 - As there is no live distribution to clients, for new events,
-     * the routine is continuosly checking last record in AVRO file.
-     * Kind of last event time check could be done in order to avoid file
-     * reading.
-     * Or we could add in avro.c the current avro file being written, with last record.
-     * The routine could also check this.
-     */
     if (reason == DCB_REASON_DRAINED)
     {
         AVRO_CLIENT *client = (AVRO_CLIENT*)userdata;
@@ -611,17 +742,14 @@ int avro_client_callback(DCB *dcb, DCB_REASON reason, void *userdata)
         client->cstate |= AVRO_CS_BUSY;
         spinlock_release(&client->catch_lock);
 
-        bool next_file = false;
-
-        avro_client_avro_to_json_output(client->router, client,
-                                        client->avro_binfile,
-                                        client->last_sent_pos);
-
+        /** Stream the data to the client */
+        bool read_more = avro_client_stream_data(client);
 
         char filename[PATH_MAX + 1];
         print_next_filename(client->avro_binfile, client->router->avrodir,
                             filename, sizeof(filename));
 
+        bool next_file;
         /** If the next file is available, send it to the client */
         if ((next_file = (access(filename, R_OK) == 0)))
         {
@@ -632,8 +760,14 @@ int avro_client_callback(DCB *dcb, DCB_REASON reason, void *userdata)
         client->cstate &= ~AVRO_CS_BUSY;
         client->cstate |= AVRO_WAIT_DATA;
 
-        if (next_file)
+        if (next_file || read_more)
         {
+#ifdef SS_DEBUG
+            if (read_more)
+            {
+                MXS_DEBUG("Burst limit hit, need to read more data.");
+            }
+#endif
             avro_notify_client(client);
         }
         spinlock_release(&client->catch_lock);
@@ -646,6 +780,7 @@ int avro_client_callback(DCB *dcb, DCB_REASON reason, void *userdata)
  * @brief Notify a client that new data is available
  *
  * The client catch_lock must be held when calling this function.
+ *
  * @param client Client to notify
  */
 void avro_notify_client(AVRO_CLIENT *client)

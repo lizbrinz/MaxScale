@@ -152,7 +152,7 @@ AVRO_TABLE* avro_table_alloc(const char* filepath, const char* json_schema)
  * @return True if the file was written successfully to disk
  *
  */
-static bool avro_save_conversion_state(AVRO_INSTANCE *router)
+bool avro_save_conversion_state(AVRO_INSTANCE *router)
 {
     FILE *config_file;
     char filename[PATH_MAX + 1];
@@ -171,7 +171,7 @@ static bool avro_save_conversion_state(AVRO_INSTANCE *router)
 
     fprintf(config_file, "[%s]\n", statefile_section);
     fprintf(config_file, "position=%lu\n", router->current_pos);
-    fprintf(config_file, "gtid=%d-%d-%lu:%lu\n", router->gtid.domain,
+    fprintf(config_file, "gtid=%lu-%lu-%lu:%lu\n", router->gtid.domain,
             router->gtid.server_id, router->gtid.seq, router->gtid.event_num);
     fprintf(config_file, "file=%s\n", router->binlog_name);
     fclose(config_file);
@@ -264,7 +264,7 @@ bool avro_load_conversion_state(AVRO_INSTANCE *router)
     {
         case 0:
             rval = true;
-            MXS_NOTICE("Loaded stored binary log conversion state: File: [%s] Position: [%ld] GTID: [%d-%d-%lu:%lu]",
+            MXS_NOTICE("Loaded stored binary log conversion state: File: [%s] Position: [%ld] GTID: [%lu-%lu-%lu:%lu]",
                        router->binlog_name, router->current_pos, router->gtid.domain,
                        router->gtid.server_id, router->gtid.seq, router->gtid.event_num);
             break;
@@ -440,7 +440,10 @@ void notify_all_clients(AVRO_INSTANCE *router)
         client = client->next;
     }
 
-    MXS_INFO("Notified %d clients about new data.", notified);
+    if (notified > 0)
+    {
+        MXS_INFO("Notified %d clients about new data.", notified);
+    }
 }
 
 /**

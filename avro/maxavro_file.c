@@ -47,7 +47,17 @@ bool maxavro_verify_block(MAXAVRO_FILE *file)
 
     if (memcmp(file->sync, sync, SYNC_MARKER_SIZE))
     {
-        MXS_ERROR("Sync marker mismatch.");
+        long pos = ftell(file->file);
+        long expected = file->data_start_pos + file->block_size + SYNC_MARKER_SIZE;
+        if (pos != expected)
+        {
+            MXS_ERROR("Sync marker mismatch due to wrong file offset. file is at %ld "
+                      "when it should be at %ld.", pos, expected);
+        }
+        else
+        {
+            MXS_ERROR("Sync marker mismatch.");
+        }
         return false;
     }
 
@@ -61,6 +71,7 @@ bool maxavro_read_datablock_start(MAXAVRO_FILE* file)
 {
     /** The actual start of the binary block */
     file->block_start_pos = ftell(file->file);
+    file->metadata_read = false;
     uint64_t records, bytes;
     bool rval = maxavro_read_integer(file, &records) && maxavro_read_integer(file, &bytes);
 
@@ -70,6 +81,7 @@ bool maxavro_read_datablock_start(MAXAVRO_FILE* file)
         file->records_in_block = records;
         file->records_read_from_block = 0;
         file->data_start_pos = ftell(file->file);
+        file->metadata_read = true;
     }
     else if (maxavro_get_error(file) != MAXAVRO_ERR_NONE)
     {

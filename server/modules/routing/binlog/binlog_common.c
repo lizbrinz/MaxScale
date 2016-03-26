@@ -94,7 +94,7 @@ bool binlog_next_file_exists(const char* binlogdir, const char* binlog)
             /* Next file in sequence doesn't exist */
             if (access(filename, R_OK) == -1)
             {
-                MXS_DEBUG("File '%s' is the last binlog file.", filename);
+                MXS_DEBUG("File '%s' does not yet exist.", filename);
             }
             else
             {

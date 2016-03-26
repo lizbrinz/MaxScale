@@ -23,8 +23,7 @@
 #include <log_manager.h>
 #include <errno.h>
 
-bool maxavro_read_datablock_start(MAXAVRO_FILE *file, uint64_t *records,
-                                  uint64_t *bytes);
+bool maxavro_read_datablock_start(MAXAVRO_FILE *file);
 bool maxavro_verify_block(MAXAVRO_FILE *file);
 
 /**
@@ -147,8 +146,13 @@ static void skip_value(MAXAVRO_FILE *file, enum maxavro_value_type type)
  * @return JSON value or NULL if an error occurred. The caller must call
  * json_decref() on the returned value to free the allocated memory.
  */
-json_t* maxavro_record_read(MAXAVRO_FILE *file)
+json_t* maxavro_record_read_json(MAXAVRO_FILE *file)
 {
+    if (!file->metadata_read && !maxavro_read_datablock_start(file))
+    {
+        return NULL;
+    }
+
     json_t* object = NULL;
 
     if (file->records_read_from_block < file->records_in_block)
@@ -166,6 +170,12 @@ json_t* maxavro_record_read(MAXAVRO_FILE *file)
                 }
                 else
                 {
+                    long pos = ftell(file->file);
+                    MXS_ERROR("Failed to read field value '%s', type '%s' at "
+                              "file offset %l, record numer %lu.",
+                              file->schema->fields[i].name,
+                              type_to_string(file->schema->fields[i].type),
+                              pos, file->records_read);
                     json_decref(object);
                     return NULL;
                 }
@@ -200,17 +210,19 @@ bool maxavro_next_block(MAXAVRO_FILE *file)
 {
     if (file->last_error == MAXAVRO_ERR_NONE)
     {
-        uint64_t rec, size;
-
         if (file->records_read_from_block < file->records_in_block)
         {
             file->records_read += file->records_in_block - file->records_read_from_block;
             long curr_pos = ftell(file->file);
             long offset = (long) file->block_size - (curr_pos - file->data_start_pos);
-            fseek(file->file, offset, SEEK_CUR);
+
+            if (offset > 0)
+            {
+                fseek(file->file, offset, SEEK_CUR);
+            }
         }
 
-        return maxavro_verify_block(file) && maxavro_read_datablock_start(file, &rec, &size);
+        return maxavro_verify_block(file) && maxavro_read_datablock_start(file);
     }
     return false;
 }
@@ -275,33 +287,34 @@ bool maxavro_record_seek(MAXAVRO_FILE *file, uint64_t offset)
  */
 GWBUF* maxavro_record_read_binary(MAXAVRO_FILE *file)
 {
-    long data_size = (file->data_start_pos - file->block_start_pos) + file->block_size;
-    char err[STRERROR_BUFLEN];
-    GWBUF *rval = gwbuf_alloc(data_size);
+    GWBUF *rval = NULL;
 
-    if (rval)
+    if (file->last_error == MAXAVRO_ERR_NONE && !feof(file->file))
     {
-        fseek(file->file, file->block_start_pos, SEEK_SET);
+        long data_size = (file->data_start_pos - file->block_start_pos) + file->block_size;
+        rval = gwbuf_alloc(data_size + SYNC_MARKER_SIZE);
 
-        if (fread(GWBUF_DATA(rval), 1, data_size, file->file) == data_size)
+        if (rval)
         {
-            GWBUF *sync = gwbuf_alloc_and_load(SYNC_MARKER_SIZE, file->sync);
-            if (sync)
+            fseek(file->file, file->block_start_pos, SEEK_SET);
+
+            if (fread(GWBUF_DATA(rval), 1, data_size, file->file) == data_size)
             {
-                rval = gwbuf_append(rval, sync);
+                memcpy(((uint8_t*) GWBUF_DATA(rval)) + data_size, file->sync, sizeof(file->sync));
                 maxavro_next_block(file);
             }
-        }
-        else
-        {
-            if (ferror(file->file))
+            else
             {
-                MXS_ERROR("Failed to read %ld bytes: %d, %s", data_size, errno,
-                          strerror_r(errno, err, sizeof(err)));
-                file->last_error = MAXAVRO_ERR_IO;
+                if (ferror(file->file))
+                {
+                    char err[STRERROR_BUFLEN];
+                    MXS_ERROR("Failed to read %ld bytes: %d, %s", data_size, errno,
+                              strerror_r(errno, err, sizeof(err)));
+                    file->last_error = MAXAVRO_ERR_IO;
+                }
+                gwbuf_free(rval);
+                rval = NULL;
             }
-            gwbuf_free(rval);
-            rval = NULL;
         }
     }
     return rval;

@@ -93,6 +93,7 @@ bool avro_load_conversion_state(AVRO_INSTANCE *router);
 bool avro_load_created_tables(AVRO_INSTANCE *router);
 int avro_client_callback(DCB *dcb, DCB_REASON reason, void *userdata);
 static bool ensure_dir_ok(const char* path, int mode);
+bool avro_save_conversion_state(AVRO_INSTANCE *router);
 
 /** The module object definition */
 static ROUTER_OBJECT MyObject =
@@ -175,6 +176,28 @@ GetModuleObject()
 }
 
 /**
+ * Trim whitespace from string
+ * @param str String to trim
+ * @return Trimmed string
+ */
+static char* trim(char *str)
+{
+    char *end = strchr(str, '\0');
+
+    while (isspace(*end))
+    {
+        *end++ = '\0';
+    }
+
+    while (isspace(*str))
+    {
+        str++;
+    }
+
+    return str;
+}
+
+/**
  * Create an instance of the router for a particular service
  * within MaxScale.
  *
@@ -249,45 +272,45 @@ createInstance(SERVICE *service, char **options)
     for (i = 0; options[i]; i++)
     {
         char *value;
-        if ((value = strchr(options[i], '=')))
+        if ((value = trim(strchr(options[i], '='))))
         {
             *value++ = '\0';
 
-            if (strcmp(options[i], "binlogdir") == 0)
+            if (strcmp(trim(options[i]), "binlogdir") == 0)
             {
                 inst->binlogdir = strdup(value);
                 MXS_INFO("Reading MySQL binlog files from %s", inst->binlogdir);
             }
-            else if (strcmp(options[i], "avrodir") == 0)
+            else if (strcmp(trim(options[i]), "avrodir") == 0)
             {
                 inst->avrodir = strdup(value);
                 MXS_INFO("AVRO files stored in %s", inst->avrodir);
             }
-            else if (strcmp(options[i], "filestem") == 0)
+            else if (strcmp(trim(options[i]), "filestem") == 0)
             {
                 inst->fileroot = strdup(value);
             }
-            else if (strcmp(options[i], "group_rows") == 0)
+            else if (strcmp(trim(options[i]), "group_rows") == 0)
             {
                 inst->row_target = atoi(value);
             }
-            else if (strcmp(options[i], "group_trx") == 0)
+            else if (strcmp(trim(options[i]), "group_trx") == 0)
             {
                 inst->trx_target = atoi(value);
             }
-            else if (strcmp(options[i], "start_index") == 0)
+            else if (strcmp(trim(options[i]), "start_index") == 0)
             {
                 first_file = MAX(1, atoi(value));
             }
             else
             {
-                MXS_WARNING("[avrorouter] Unknown router option: '%s'", options[i]);
+                MXS_WARNING("[avrorouter] Unknown router option: '%s'", trim(options[i]));
                 err = true;
             }
         }
         else
         {
-            MXS_WARNING("[avrorouter] Unknown router option: '%s'", options[i]);
+            MXS_WARNING("[avrorouter] Unknown router option: '%s'", trim(options[i]));
             err = true;
         }
     }
@@ -439,9 +462,8 @@ newSession(ROUTER *instance, SESSION *session)
     client->cstate = 0;
 
     client->connect_time = time(0);
-    client->requested_pos = 0;
     client->last_sent_pos = 0;
-
+    memset(&client->gtid, 0, sizeof(client->gtid));
     /* Set initial state of the slave */
     client->state = AVRO_CLIENT_UNREGISTERED;
 
@@ -513,28 +535,28 @@ static void freeSession(
  * Close a session with the router, this is the mechanism
  * by which a router may cleanup data structure etc.
  *
- * @param instance      The router instance data
+ * @param instance          The router instance data
  * @param router_session    The session being closed
  */
-static void
-closeSession(ROUTER *instance, void *router_session)
+static void closeSession(ROUTER *instance, void *router_session)
 {
     AVRO_INSTANCE *router = (AVRO_INSTANCE *) instance;
     AVRO_CLIENT *client = (AVRO_CLIENT *) router_session;
 
     CHK_CLIENT_RSES(client);
 
-    spinlock_acquire(&client->rses_lock);
+    spinlock_acquire(&client->catch_lock);
+    spinlock_acquire(&client->file_lock);
+
+    client->state = AVRO_CLIENT_UNREGISTERED;
+    maxavro_file_close(client->file_handle);
+    client->file_handle = NULL;
+
+    spinlock_release(&client->file_lock);
+    spinlock_release(&client->catch_lock);
 
     /* decrease server registered slaves counter */
     atomic_add(&router->stats.n_clients, -1);
-
-    /*
-     * Mark the slave as unregistered to prevent the forwarding
-     * of any more binlog records to this slave.
-     */
-    client->state = BLRS_UNREGISTERED;
-    spinlock_release(&client->rses_lock);
 }
 
 /**
@@ -856,7 +878,7 @@ diagnostics(ROUTER *router, DCB *dcb)
             dcb_printf(dcb, "\tSpinlock statistics (catch_lock):\n");
             spinlock_stats(&session->catch_lock, spin_reporter, dcb);
             dcb_printf(dcb, "\tSpinlock statistics (rses_lock):\n");
-            spinlock_stats(&session->rses_lock, spin_reporter, dcb);
+            spinlock_stats(&session->file_lock, spin_reporter, dcb);
 #endif
             dcb_printf(dcb, "\t\t--------------------\n\n");
             session = session->next;
@@ -999,6 +1021,7 @@ void converter_func(void* data)
     if (router->task_delay == 1)
     {
         avro_flush_all_tables(router);
+        avro_save_conversion_state(router);
     }
 
     if (binlog_end == AVRO_LAST_FILE)
