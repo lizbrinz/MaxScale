@@ -533,7 +533,7 @@ static bool seek_to_gtid(AVRO_CLIENT *client, MAXAVRO_FILE* file)
                     {
                         MXS_INFO("Found GTID %lu-%lu-%lu for %s@%s",
                                  client->gtid.domain, client->gtid.server_id,
-                                 client->gtid.seq, dcb->user, dcb->remote);
+                                 client->gtid.seq, client->dcb->user, client->dcb->remote);
                         seeking = false;
                     }
                 }
@@ -704,7 +704,7 @@ static void rotate_avro_file(AVRO_CLIENT *client, char *fullname)
 
     spinlock_acquire(&client->file_lock);
     maxavro_file_close(client->file_handle);
-    client->file_handle = maxavro_file_open(client->avro_binfile);
+    client->file_handle = maxavro_file_open(fullname);
 
     if (client->file_handle == NULL)
     {
