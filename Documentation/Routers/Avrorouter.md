@@ -39,11 +39,11 @@ and it defines where the module will read binlog files from.
 If used in conjunction with the binlogrouter, the value of this option should
 be the same for both the binlogrouter and the avrorouter.
 
-### `avordir`
+### `avrodir`
 
 The location where the Avro files are stored. This is the second mandatory
 parameter and it governs where the converted files are stored. This directory
-will be used to store the Avro files, plaintext Avro schemas and other files
+will be used to store the Avro files, plain-text Avro schemas and other files
 needed by the avrorouter.
 
 ### `filestem`
@@ -61,7 +61,7 @@ you need to set the value of this option to the correct index.
 
 ### Avro file options
 
-These options control how large the Avro file datablocks can get.
+These options control how large the Avro file data blocks can get.
 Increasing or lowering the block size could have a positive effect
 depending on your use case. For more information about the Avro file
 format and how it organizes data, refer to the [Avro documentation](https://avro.apache.org/docs/current/).
