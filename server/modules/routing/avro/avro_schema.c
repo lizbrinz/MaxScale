@@ -35,6 +35,7 @@
 #include <skygw_utils.h>
 #include <skygw_debug.h>
 #include <string.h>
+#include <strings.h>
 
 /**
  * @brief Convert the MySQL column type to a compatible Avro type
@@ -425,7 +426,8 @@ static int process_column_definition(const char *nameptr, char*** dest)
             char colname[128 + 1];
             snprintf(colname, sizeof(colname), "%.*s", (int) (end - nameptr), nameptr);
 
-            if ((names[i++] = strdup(colname)) == NULL)
+            if (strcasecmp(colname, "constraint") != 0 &&
+                (names[i++] = strdup(colname)) == NULL)
             {
                 for (int x = 0; x < i; x++)
                 {
