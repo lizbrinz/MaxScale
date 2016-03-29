@@ -710,6 +710,11 @@ static void rotate_avro_file(AVRO_CLIENT *client, char *fullname)
     {
         MXS_ERROR("Failed to open file: %s", filename);
     }
+    else
+    {
+        MXS_INFO("Rotated '%s'@'%s' to file: %s", client->dcb->user,
+                 client->dcb->remote, fullname);
+    }
 
     spinlock_release(&client->file_lock);
 }

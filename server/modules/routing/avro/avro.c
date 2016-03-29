@@ -802,8 +802,8 @@ diagnostics(ROUTER *router, DCB *dcb)
                        "\t\tAvro file last read record:		%lu\n",
                        session->avro_file.records_read);
 
-            if (session->gtid.domain > 0 || session->gtid.server_id > 0 ||
-                session->gtid.seq > 0)
+            if (session->gtid_start.domain > 0 || session->gtid_start.server_id > 0 ||
+                session->gtid_start.seq > 0)
             {
                 dcb_printf(dcb, "\t\tRequested GTID:				%lu-%lu-%lu\n",
                            session->gtid_start.domain, session->gtid_start.server_id,
