@@ -156,7 +156,7 @@ version()
 void
 ModuleInit()
 {
-    MXS_NOTICE("Initialise binlog router module %s.\n", version_str);
+    MXS_NOTICE("Initialise avrorouter module %s.\n", version_str);
     spinlock_init(&instlock);
     instances = NULL;
 }
@@ -217,26 +217,9 @@ createInstance(SERVICE *service, char **options)
     int i;
     char task_name[BLRM_TASK_NAME_LEN + 1] = "";
 
-    if (service->credentials.name == NULL ||
-        service->credentials.authdata == NULL)
-    {
-        MXS_ERROR("%s: Error: Service is missing user credentials."
-                  " Add the missing username or passwd parameter to the service.",
-                  service->name);
-        return NULL;
-    }
-
     if (options == NULL || options[0] == NULL)
     {
-        MXS_ERROR("%s: Error: No router options supplied for binlogrouter",
-                  service->name);
-        return NULL;
-    }
-
-    /* Check for listeners associated to this service */
-    if (service->ports == NULL)
-    {
-        MXS_ERROR("%s: Error: No listener configured for binlogrouter. Add a listener section in config file.",
+        MXS_ERROR("%s: Error: No router options supplied for avrorouter",
                   service->name);
         return NULL;
     }
@@ -415,7 +398,7 @@ createInstance(SERVICE *service, char **options)
 /**
  * Associate a new session with this instance of the router.
  *
- * In the case of the binlog router a new session equates to a new slave
+ * In the case of the avrorouter a new session equates to a new slave
  * connecting to MaxScale and requesting binlog records. We need to go
  * through the slave registration process for this new slave.
  *
@@ -429,12 +412,8 @@ newSession(ROUTER *instance, SESSION *session)
     AVRO_INSTANCE *inst = (AVRO_INSTANCE *) instance;
     AVRO_CLIENT *client;
 
-    MXS_DEBUG("binlog router: %lu [newSession] new router session with "
-              "session %p, and inst %p.",
-              pthread_self(),
-              session,
-              inst);
-
+    MXS_DEBUG("avrorouter: %lu [newSession] new router session with "
+              "session %p, and inst %p.", pthread_self(), session, inst);
 
     if ((client = (AVRO_CLIENT *) calloc(1, sizeof(AVRO_CLIENT))) == NULL)
     {
@@ -454,10 +433,6 @@ newSession(ROUTER *instance, SESSION *session)
     client->dcb = session->client_dcb;
     client->router = inst;
     client->format = AVRO_FORMAT_UNDEFINED;
-
-#ifdef BLFILE_IN_SLAVE
-    client->file = NULL;
-#endif
 
     client->cstate = 0;
 
@@ -741,13 +716,6 @@ diagnostics(ROUTER *router, DCB *dcb)
         dcb_printf(dcb, "\tNo events received from master yet\n");
     }
     spinlock_release(&router_inst->lock);
-    /*
-        dcb_printf(dcb, "\tEvents received:\n");
-        for (i = 0; i <= MAX_EVENT_TYPE; i++)
-        {
-            dcb_printf(dcb, "\t\t%-38s   %u\n", event_names[i], router_inst->stats.events[i]);
-        }
-    */
 
 #if SPINLOCK_PROFILE
     dcb_printf(dcb, "\tSpinlock statistics (instlock):\n");
