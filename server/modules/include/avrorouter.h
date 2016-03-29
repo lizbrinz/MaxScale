@@ -49,7 +49,7 @@ static const char *avro_sequence = "sequence";
 static const char *avro_event_number = "event_number";
 static const char *avro_event_type = "event_type";
 static const char *avro_timestamp = "timestamp";
-static char *avro_client_ouput[] = { "UNDEFINED", "JSON_OUT", "AVRO_OUT" };
+static char *avro_client_ouput[] = { "Undefined", "JSON", "Avro" };
 
 
 /** How a binlog file is closed */
@@ -189,7 +189,8 @@ typedef struct avro_client
     MAXAVRO_FILE    avro_file;     /*< Avro file struct */
     char avro_binfile[AVRO_MAX_FILENAME_LEN + 1];
     bool            requested_gtid; /*< If the client requested */
-    gtid_pos_t      gtid;
+    gtid_pos_t      gtid; /*< Current/requested GTID */
+    gtid_pos_t      gtid_start; /*< First sent GTID */
     unsigned int    cstate;         /*< Catch up state */
 #if defined(SS_DEBUG)
     skygw_chk_t     rses_chk_tail;

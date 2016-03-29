@@ -439,6 +439,7 @@ newSession(ROUTER *instance, SESSION *session)
     client->connect_time = time(0);
     client->last_sent_pos = 0;
     memset(&client->gtid, 0, sizeof(client->gtid));
+    memset(&client->gtid_start, 0, sizeof(client->gtid_start));
     /* Set initial state of the slave */
     client->state = AVRO_CLIENT_UNREGISTERED;
 
@@ -780,7 +781,7 @@ diagnostics(ROUTER *router, DCB *dcb)
                        "\t\tClient protocol:			%s\n",
                        session->dcb->service->ports->protocol);
             dcb_printf(dcb,
-                       "\t\tClient Ouput Format:			%s\n",
+                       "\t\tClient Output Format:			%s\n",
                        avro_client_ouput[session->format]);
             dcb_printf(dcb,
                        "\t\tState:    				%s\n",
@@ -800,9 +801,19 @@ diagnostics(ROUTER *router, DCB *dcb)
             dcb_printf(dcb,
                        "\t\tAvro file last read record:		%lu\n",
                        session->avro_file.records_read);
-            dcb_printf(dcb,
-                       "\t\tAvro Schema ID:				%lu\n",
-                       0);
+
+            if (session->gtid.domain > 0 || session->gtid.server_id > 0 ||
+                session->gtid.seq > 0)
+            {
+                dcb_printf(dcb, "\t\tRequested GTID:				%lu-%lu-%lu\n",
+                           session->gtid_start.domain, session->gtid_start.server_id,
+                           session->gtid_start.seq);
+            }
+
+            dcb_printf(dcb, "\t\tCurrent GTID:				%lu-%lu-%lu\n",
+                       session->gtid.domain, session->gtid.server_id,
+                       session->gtid.seq);
+
             dcb_printf(dcb,
                        "\t\tAvro Transaction ID:			%lu\n",
                        0);

@@ -290,6 +290,7 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
             {
                 client->requested_gtid = true;
                 extract_gtid_request(&client->gtid, gtid_ptr, data_len - (gtid_ptr - file_ptr));
+                memcpy(&client->gtid_start, &client->gtid, sizeof(client->gtid_start));
             }
 
             if (file_in_dir(router->avrodir, client->avro_binfile))
@@ -421,6 +422,21 @@ static int send_row(DCB *dcb, json_t* row)
     return rc;
 }
 
+static void set_current_gtid(AVRO_CLIENT *client, json_t *row)
+{
+    json_t *obj = json_object_get(row, avro_sequence);
+    ss_dassert(json_is_integer(obj));
+    client->gtid.seq = json_integer_value(obj);
+
+    obj = json_object_get(row, avro_server_id);
+    ss_dassert(json_is_integer(obj));
+    client->gtid.server_id = json_integer_value(obj);
+
+    obj = json_object_get(row, avro_domain);
+    ss_dassert(json_is_integer(obj));
+    client->gtid.domain = json_integer_value(obj);
+}
+
 /**
  * @brief Stream Avro data in JSON format
  *
@@ -428,9 +444,11 @@ static int send_row(DCB *dcb, json_t* row)
  * @param dcb DCB to stream to
  * @return True if more data is readable, false if all data was sent
  */
-static bool stream_json(MAXAVRO_FILE *file, DCB *dcb)
+static bool stream_json(AVRO_CLIENT *client)
 {
     int bytes = 0;
+    MAXAVRO_FILE *file = client->file_handle;
+    DCB *dcb = client->dcb;
 
     do
     {
@@ -439,6 +457,7 @@ static bool stream_json(MAXAVRO_FILE *file, DCB *dcb)
         while (rc > 0 && (row = maxavro_record_read_json(file)))
         {
             rc = send_row(dcb, row);
+            set_current_gtid(client, row);
             json_decref(row);
         }
         bytes += file->block_size;
@@ -455,11 +474,13 @@ static bool stream_json(MAXAVRO_FILE *file, DCB *dcb)
  * @param dcb DCB to stream to
  * @return True if streaming was successful, false if an error occurred
  */
-static bool stream_binary(MAXAVRO_FILE *file, DCB *dcb)
+static bool stream_binary(AVRO_CLIENT *client)
 {
     GWBUF *buffer;
     uint64_t bytes = 0;
     int rc = 1;
+    MAXAVRO_FILE *file = client->file_handle;
+    DCB *dcb = client->dcb;
 
     while (rc > 0 && bytes < AVRO_DATA_BURST_SIZE)
     {
@@ -484,46 +505,51 @@ static bool stream_binary(MAXAVRO_FILE *file, DCB *dcb)
  */
 static bool seek_to_gtid(AVRO_CLIENT *client, MAXAVRO_FILE* file)
 {
-    json_t *row;
     bool seeking = true;
 
-    while (seeking && (row = maxavro_record_read_json(file)))
+    do
     {
-        json_t *obj = json_object_get(row, avro_sequence);
-        ss_dassert(json_is_integer(obj));
-        uint64_t value = json_integer_value(obj);
-
-        /** If a larger GTID is found, use that */
-        if (value >= client->gtid.seq)
+        json_t *row;
+        while ((row = maxavro_record_read_json(file)))
         {
-            obj = json_object_get(row, avro_server_id);
+            json_t *obj = json_object_get(row, avro_sequence);
             ss_dassert(json_is_integer(obj));
-            value = json_integer_value(obj);
+            uint64_t value = json_integer_value(obj);
 
-            if (value == client->gtid.server_id)
+            /** If a larger GTID is found, use that */
+            if (value >= client->gtid.seq)
             {
-                obj = json_object_get(row, avro_domain);
+                obj = json_object_get(row, avro_server_id);
                 ss_dassert(json_is_integer(obj));
                 value = json_integer_value(obj);
 
-                if (value == client->gtid.domain)
+                if (value == client->gtid.server_id)
                 {
-                    /** Clear the request so that we don't process it again */
-                    memset(&client->gtid, 0, sizeof(client->gtid));
-                    seeking = false;
+                    obj = json_object_get(row, avro_domain);
+                    ss_dassert(json_is_integer(obj));
+                    value = json_integer_value(obj);
+
+                    if (value == client->gtid.domain)
+                    {
+                        MXS_INFO("Found GTID %lu-%lu-%lu for %s@%s",
+                                 client->gtid.domain, client->gtid.server_id,
+                                 client->gtid.seq, dcb->user, dcb->remote);
+                        seeking = false;
+                    }
                 }
             }
-        }
 
-        /** We'll send the first found row immediately since we have already
-         * read the row into memory */
-        if (!seeking)
-        {
-            send_row(client->dcb, row);
-        }
+            /** We'll send the first found row immediately since we have already
+             * read the row into memory */
+            if (!seeking)
+            {
+                send_row(client->dcb, row);
+            }
 
-        json_decref(row);
+            json_decref(row);
+        }
     }
+    while (seeking && maxavro_next_block(file));
 
     return !seeking;
 }
@@ -553,22 +579,20 @@ static bool avro_client_stream_data(AVRO_CLIENT *client)
         }
         spinlock_release(&client->file_lock);
 
-        if (client->requested_gtid)
-        {
-            if (seek_to_gtid(client, client->file_handle))
-            {
-                client->requested_gtid = false;
-            }
-        }
-
         switch (client->format)
         {
             case AVRO_FORMAT_JSON:
-                read_more = stream_json(client->file_handle, client->dcb);
+                /** Currently only JSON format supports seeking to a GTID */
+                if (client->requested_gtid && seek_to_gtid(client, client->file_handle))
+                {
+                    client->requested_gtid = false;
+                }
+
+                read_more = stream_json(client);
                 break;
 
             case AVRO_FORMAT_AVRO:
-                read_more = stream_binary(client->file_handle, client->dcb);
+                read_more = stream_binary(client);
                 break;
 
             default:
