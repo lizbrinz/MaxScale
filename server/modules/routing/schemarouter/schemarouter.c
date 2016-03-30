@@ -1061,13 +1061,13 @@ static void* newSession(ROUTER* router_inst, SESSION* session)
     }
 
     client_rses->shardmap = map;
-    client_rses->dcb_reply = dcb_alloc(DCB_ROLE_REQUEST_HANDLER);
+    client_rses->dcb_reply = dcb_alloc(DCB_ROLE_INTERNAL, NULL);
     client_rses->dcb_reply->func.read = internalReply;
     client_rses->dcb_reply->state = DCB_STATE_POLLING;
     client_rses->dcb_reply->session = session;
     memcpy(&client_rses->rses_config, &router->schemarouter_config, sizeof(schemarouter_config_t));
     client_rses->n_sescmd = 0;
-    client_rses->dcb_route = dcb_alloc(DCB_ROLE_REQUEST_HANDLER);
+    client_rses->dcb_route = dcb_alloc(DCB_ROLE_INTERNAL, NULL);
     client_rses->dcb_route->func.read = internalRoute;
     client_rses->dcb_route->state = DCB_STATE_POLLING;
     client_rses->dcb_route->session = session;
@@ -3914,7 +3914,7 @@ static void handleError(ROUTER*        instance,
     {
         *succp = false;
     }
-    else if (dcb_isclient(problem_dcb))
+    else if (DCB_ROLE_CLIENT_HANDLER == problem_dcb->dcb_role)
     {
         *succp = false;
     }

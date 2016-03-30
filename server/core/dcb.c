@@ -86,9 +86,12 @@
 #include <skygw_utils.h>
 #include <log_manager.h>
 #include <hashtable.h>
+#include <listener.h>
 #include <hk_heartbeat.h>
-
-#define SSL_ERRBUF_LEN 140
+#include <netinet/tcp.h>
+#include <sys/stat.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 static  DCB             *allDCBs = NULL;        /* Diagnostics need a list of DCBs */
 static  int             nDCBs = 0;
@@ -101,9 +104,7 @@ static  SPINLOCK        zombiespin = SPINLOCK_INIT;
 
 static void dcb_final_free(DCB *dcb);
 static void dcb_call_callback(DCB *dcb, DCB_REASON reason);
-static DCB * dcb_get_next (DCB *dcb);
 static int  dcb_null_write(DCB *dcb, GWBUF *buf);
-static int  dcb_null_close(DCB *dcb);
 static int  dcb_null_auth(DCB *dcb, SERVER *server, SESSION *session, GWBUF *buf);
 static inline int  dcb_isvalid_nolock(DCB *dcb);
 static inline DCB * dcb_find_in_list(DCB *dcb);
@@ -125,6 +126,10 @@ static inline void dcb_write_tidy_up(DCB *dcb, bool below_water);
 static int gw_write(DCB *dcb, bool *stop_writing);
 static int gw_write_SSL(DCB *dcb, bool *stop_writing);
 static void dcb_log_errors_SSL (DCB *dcb, const char *called_by, int ret);
+static int dcb_accept_one_connection(DCB *listener, struct sockaddr *client_conn);
+static int dcb_listen_create_socket_inet(const char *config_bind);
+static int dcb_listen_create_socket_unix(const char *config_bind);
+static int dcb_set_socket_option(int sockfd, int level, int optname, void *optval, socklen_t optlen);
 
 size_t dcb_get_session_id(
     DCB *dcb)
@@ -179,7 +184,7 @@ dcb_get_zombies(void)
  * @return A newly allocated DCB or NULL if non could be allocated.
  */
 DCB *
-dcb_alloc(dcb_role_t role)
+dcb_alloc(dcb_role_t role, SERV_LISTENER *listener)
 {
     DCB *newdcb;
 
@@ -196,6 +201,8 @@ dcb_alloc(dcb_role_t role)
     spinlock_init(&newdcb->writeqlock);
     spinlock_init(&newdcb->delayqlock);
     spinlock_init(&newdcb->authlock);
+    spinlock_init(&newdcb->back_auth_lock1);
+    spinlock_init(&newdcb->back_auth_lock2);
     spinlock_init(&newdcb->cb_lock);
     spinlock_init(&newdcb->pollinlock);
     spinlock_init(&newdcb->polloutlock);
@@ -226,7 +233,7 @@ dcb_alloc(dcb_role_t role)
     newdcb->callbacks = NULL;
     newdcb->data = NULL;
 
-    newdcb->listen_ssl = NULL;
+    newdcb->listener = listener;
     newdcb->ssl_state = SSL_HANDSHAKE_UNKNOWN;
 
     newdcb->remote = NULL;
@@ -279,13 +286,12 @@ dcb_clone(DCB *orig)
 {
     DCB *clonedcb;
 
-    if ((clonedcb = dcb_alloc(DCB_ROLE_REQUEST_HANDLER)))
+    if ((clonedcb = dcb_alloc(orig->dcb_role, orig->listener)))
     {
         clonedcb->fd = DCBFD_CLOSED;
         clonedcb->flags |= DCBF_CLONE;
         clonedcb->state = orig->state;
         clonedcb->data = orig->data;
-        clonedcb->listen_ssl = orig->listen_ssl;
         clonedcb->ssl_state = orig->ssl_state;
         if (orig->remote)
         {
@@ -368,13 +374,13 @@ dcb_final_free(DCB *dcb)
         CHK_SESSION(local_session);
         if (SESSION_STATE_DUMMY != local_session->state)
         {
-            bool is_dcb_client = (local_session->client_dcb == dcb);
+            bool is_client_dcb = (DCB_ROLE_CLIENT_HANDLER == dcb->dcb_role);
 
             session_free(local_session);
 
-            if (is_dcb_client)
+            if (is_client_dcb)
             {
-                /** The client DCB is freed once all other DCBs that the session
+                /** The client DCB is only freed once all other DCBs that the session
                  * uses have been freed. This will guarantee that the authentication
                  * data will be usable for all DCBs even if the client DCB has already
                  * been closed. */
@@ -609,11 +615,11 @@ dcb_process_victim_queue(DCB *listofdcb)
                 }
                 else
                 {
-                    DCB *nextdcb;
+                    DCB *next2dcb;
                     dcb_stop_polling_and_shutdown(dcb);
                     spinlock_acquire(&zombiespin);
                     bitmask_copy(&dcb->memdata.bitmask, poll_bitmask());
-                    nextdcb = dcb->memdata.next;
+                    next2dcb = dcb->memdata.next;
                     dcb->memdata.next = zombies;
                     zombies = dcb;
                     nzombies++;
@@ -622,7 +628,7 @@ dcb_process_victim_queue(DCB *listofdcb)
                         maxzombies = nzombies;
                     }
                     spinlock_release(&zombiespin);
-                    dcb = nextdcb;
+                    dcb = next2dcb;
                     continue;
                 }
             }
@@ -753,7 +759,7 @@ dcb_connect(SERVER *server, SESSION *session, const char *protocol)
         }
     }
 
-    if ((dcb = dcb_alloc(DCB_ROLE_REQUEST_HANDLER)) == NULL)
+    if ((dcb = dcb_alloc(DCB_ROLE_BACKEND_HANDLER, NULL)) == NULL)
     {
         return NULL;
     }
@@ -907,14 +913,14 @@ int dcb_read(DCB   *dcb,
             {
                 nreadtotal += nsingleread;
                 /* <editor-fold defaultstate="collapsed" desc=" Debug Logging "> */
-        MXS_DEBUG("%lu [dcb_read] Read %d bytes from dcb %p in state %s "
+                MXS_DEBUG("%lu [dcb_read] Read %d bytes from dcb %p in state %s "
                   "fd %d.",
                   pthread_self(),
                   nsingleread,
                   dcb,
                   STRDCBSTATE(dcb->state),
                   dcb->fd);
-        /* </editor-fold> */
+                /* </editor-fold> */
                 /*< Append read data to the gwbuf */
                 *head = gwbuf_append(*head, buffer);
             }
@@ -971,11 +977,11 @@ static int
 dcb_read_no_bytes_available(DCB *dcb, int nreadtotal)
 {
     /** Handle closed client socket */
-    if (nreadtotal == 0 && dcb_isclient(dcb))
+    if (nreadtotal == 0 && DCB_ROLE_CLIENT_HANDLER == dcb->dcb_role)
     {
         char c;
         int l_errno = 0;
-        int r = -1;
+        long r = -1;
 
         /* try to read 1 byte, without consuming the socket buffer */
         r = recv(dcb->fd, &c, sizeof(char), MSG_PEEK);
@@ -1072,7 +1078,7 @@ dcb_basic_read(DCB *dcb, int bytesavailable, int maxbytes, int nreadtotal, int *
 static int
 dcb_read_SSL(DCB *dcb, GWBUF **head)
 {
-    GWBUF *buffer = NULL;
+    GWBUF *buffer;
     int nsingleread = 0, nreadtotal = 0;
 
     CHK_DCB(dcb);
@@ -1286,9 +1292,9 @@ int
 dcb_write(DCB *dcb, GWBUF *queue)
 {
     bool empty_queue;
-    int below_water;
+    bool below_water;
 
-    below_water = (dcb->high_water && dcb->writeqlen < dcb->high_water) ? 1 : 0;
+    below_water = (dcb->high_water && dcb->writeqlen < dcb->high_water);
     // The following guarantees that queue is not NULL
     if (!dcb_write_parameter_check(dcb, queue))
     {
@@ -1330,15 +1336,15 @@ dcb_write(DCB *dcb, GWBUF *queue)
 static inline void
 dcb_write_fake_code(DCB *dcb)
 {
-    if (dcb->dcb_role == DCB_ROLE_REQUEST_HANDLER && dcb->session != NULL)
+    if (dcb->session != NULL)
     {
-        if (dcb_isclient(dcb) && fail_next_client_fd)
+        if (dcb->dcb_role == DCB_ROLE_CLIENT_HANDLER && fail_next_client_fd)
         {
             dcb_fake_write_errno[dcb->fd] = 32;
             dcb_fake_write_ev[dcb->fd] = 29;
             fail_next_client_fd = false;
         }
-        else if (!dcb_isclient(dcb) && fail_next_backend_fd)
+        else if (dcb->dcb_role == DCB_ROLE_BACKEND_HANDLER && fail_next_backend_fd)
         {
             dcb_fake_write_errno[dcb->fd] = 32;
             dcb_fake_write_ev[dcb->fd] = 29;
@@ -1468,7 +1474,7 @@ dcb_log_write_failure(DCB *dcb, GWBUF *queue, int eno)
             char errbuf[STRERROR_BUFLEN];
             MXS_DEBUG("%lu [dcb_write] Writing to %s socket failed due %d, %s.",
                       pthread_self(),
-                      dcb_isclient(dcb) ? "client" : "backend server",
+                      DCB_ROLE_CLIENT_HANDLER == dcb->dcb_role ? "client" : "backend server",
                       eno,
                       strerror_r(eno, errbuf, sizeof(errbuf)));
         }
@@ -1614,7 +1620,8 @@ dcb_close(DCB *dcb)
     spinlock_acquire(&zombiespin);
     if (!dcb->dcb_is_zombie)
     {
-        if (0 == dcb->persistentstart && dcb->server && DCB_STATE_POLLING == dcb->state)
+        if (DCB_ROLE_BACKEND_HANDLER == dcb->dcb_role && 0 == dcb->persistentstart
+            && dcb->server && DCB_STATE_POLLING == dcb->state)
         {
             /* May be a candidate for persistence, so save user name */
             char *user;
@@ -1964,7 +1971,7 @@ dListClients(DCB *pdcb)
     dcb_printf(pdcb, "-----------------+------------------+----------------------+------------\n");
     while (dcb)
     {
-        if (dcb_isclient(dcb) && dcb->dcb_role == DCB_ROLE_REQUEST_HANDLER)
+        if (dcb->dcb_role == DCB_ROLE_CLIENT_HANDLER)
         {
             dcb_printf(pdcb, " %-15s | %16p | %-20s | %10p\n",
                        (dcb->remote ? dcb->remote : ""),
@@ -2084,7 +2091,7 @@ dprintDCB(DCB *pdcb, DCB *dcb)
  *
  */
 const char *
-gw_dcb_state2string(int state)
+gw_dcb_state2string(dcb_state_t state)
 {
     switch(state) {
     case DCB_STATE_ALLOC:
@@ -2128,28 +2135,8 @@ dcb_printf(DCB *dcb, const char *fmt, ...)
     vsnprintf(GWBUF_DATA(buf), 10240, fmt, args);
     va_end(args);
 
-    buf->end = GWBUF_DATA(buf) + strlen(GWBUF_DATA(buf));
+    buf->end = (void *)((char *)GWBUF_DATA(buf) + strlen(GWBUF_DATA(buf)));
     dcb->func.write(dcb, buf);
-}
-
-/**
- * Determine the role that a DCB plays within a session.
- *
- * @param dcb
- * @return Non-zero if the DCB is the client of the session
- */
-int
-dcb_isclient(DCB *dcb)
-{
-    if (dcb->state != DCB_STATE_LISTENING && dcb->session)
-    {
-        if (dcb->session->client_dcb)
-        {
-            return (dcb->session && dcb == dcb->session->client_dcb);
-        }
-    }
-
-    return 0;
 }
 
 /**
@@ -2196,7 +2183,6 @@ static int
 gw_write_SSL(DCB *dcb, bool *stop_writing)
 {
     int written;
-    char errbuf[STRERROR_BUFLEN];
 
     written = SSL_write(dcb->ssl, GWBUF_DATA(dcb->writeq), GWBUF_LENGTH(dcb->writeq));
 
@@ -2388,8 +2374,7 @@ dcb_add_callback(DCB *dcb,
                  int (*callback)(struct dcb *, DCB_REASON, void *),
                  void *userdata)
 {
-    DCB_CALLBACK *cb, *ptr;
-    int          rval = 1;
+    DCB_CALLBACK *cb, *ptr, *lastcb = NULL;
 
     if ((ptr = (DCB_CALLBACK *)malloc(sizeof(DCB_CALLBACK))) == NULL)
     {
@@ -2401,32 +2386,29 @@ dcb_add_callback(DCB *dcb,
     ptr->next = NULL;
     spinlock_acquire(&dcb->cb_lock);
     cb = dcb->callbacks;
-    if (cb == NULL)
+    while (cb)
+    {
+        if (cb->reason == reason && cb->cb == callback &&
+            cb->userdata == userdata)
+        {
+            /* Callback is a duplicate, abandon it */
+            free(ptr);
+            spinlock_release(&dcb->cb_lock);
+            return 0;
+        }
+        lastcb = cb;
+        cb = cb->next;
+    }
+    if (NULL == lastcb)
     {
         dcb->callbacks = ptr;
-        spinlock_release(&dcb->cb_lock);
     }
     else
     {
-        while (cb)
-        {
-            if (cb->reason == reason && cb->cb == callback &&
-                cb->userdata == userdata)
-            {
-                free(ptr);
-                spinlock_release(&dcb->cb_lock);
-                return 0;
-            }
-            if (cb->next == NULL)
-            {
-                cb->next = ptr;
-                break;
-            }
-            cb = cb->next;
-        }
-        spinlock_release(&dcb->cb_lock);
+        lastcb->next = ptr;
     }
-    return rval;
+    spinlock_release(&dcb->cb_lock);
+    return 1;
 }
 
 /**
@@ -2579,26 +2561,6 @@ dcb_isvalid_nolock(DCB *dcb)
     return (dcb == dcb_find_in_list(dcb));
 }
 
-
-/**
- * Get the next DCB in the list of all DCB's
- *
- * @param dcb           The current DCB
- * @return      The pointer to the next DCB or NULL if this is the last
- */
-static DCB *
-dcb_get_next(DCB *dcb)
-{
-    spinlock_acquire(&dcbspin);
-    if (dcb) {
-        dcb = dcb_isvalid_nolock(dcb) ? dcb->next : NULL;
-    }
-    else dcb = allDCBs;
-    spinlock_release(&dcbspin);
-
-    return dcb;
-}
-
 /**
  * Call all the callbacks on all DCB's that match the server and the reason given
  *
@@ -2690,17 +2652,6 @@ dcb_null_write(DCB *dcb, GWBUF *buf)
     dcb->flags |= DCBF_REPLIED;
 
     return 1;
-}
-
-/**
- * Null protocol close operation for use by cloned DCB's.
- *
- * @param dcb           The DCB being closed.
- */
-static int
-dcb_null_close(DCB *dcb)
-{
-    return 0;
 }
 
 /**
@@ -2806,7 +2757,7 @@ dcb_count_by_usage(DCB_USAGE usage)
         switch (usage)
         {
         case DCB_USAGE_CLIENT:
-            if (dcb_isclient(ptr))
+            if (DCB_ROLE_CLIENT_HANDLER == ptr->dcb_role)
             {
                 rval++;
             }
@@ -2818,14 +2769,14 @@ dcb_count_by_usage(DCB_USAGE usage)
             }
             break;
         case DCB_USAGE_BACKEND:
-            if (dcb_isclient(ptr) == 0
-                && ptr->dcb_role == DCB_ROLE_REQUEST_HANDLER)
+            if (ptr->dcb_role == DCB_ROLE_BACKEND_HANDLER)
             {
                 rval++;
             }
             break;
         case DCB_USAGE_INTERNAL:
-            if (ptr->dcb_role == DCB_ROLE_REQUEST_HANDLER)
+            if (ptr->dcb_role == DCB_ROLE_CLIENT_HANDLER ||
+                ptr->dcb_role == DCB_ROLE_BACKEND_HANDLER)
             {
                 rval++;
             }
@@ -2856,12 +2807,14 @@ dcb_count_by_usage(DCB_USAGE usage)
 static int
 dcb_create_SSL(DCB* dcb)
 {
-    if (NULL == dcb->listen_ssl || listener_init_SSL(dcb->listen_ssl) != 0)
+    if (NULL == dcb->listener ||
+        NULL == dcb->listener->ssl ||
+        listener_init_SSL(dcb->listener->ssl) != 0)
     {
         return -1;
     }
 
-    if ((dcb->ssl = SSL_new(dcb->listen_ssl->ctx)) == NULL)
+    if ((dcb->ssl = SSL_new(dcb->listener->ssl->ctx)) == NULL)
     {
         MXS_ERROR("Failed to initialize SSL for connection.");
         return -1;
@@ -2910,25 +2863,21 @@ int dcb_accept_SSL(DCB* dcb)
             dcb->ssl_state = SSL_ESTABLISHED;
             dcb->ssl_read_want_write = false;
             return 1;
-            break;
 
         case SSL_ERROR_WANT_READ:
             MXS_DEBUG("SSL_accept ongoing want read for %s@%s", user, remote);
             return 0;
-            break;
 
         case SSL_ERROR_WANT_WRITE:
             MXS_DEBUG("SSL_accept ongoing want write for %s@%s", user, remote);
             dcb->ssl_read_want_write = true;
             return 0;
-            break;
 
         case SSL_ERROR_ZERO_RETURN:
             MXS_DEBUG("SSL error, shut down cleanly during SSL accept %s@%s", user, remote);
             dcb_log_errors_SSL(dcb, __func__, 0);
             poll_fake_hangup_event(dcb);
             return 0;
-            break;
 
         case SSL_ERROR_SYSCALL:
             MXS_DEBUG("SSL connection SSL_ERROR_SYSCALL error during accept %s@%s", user, remote);
@@ -2936,7 +2885,6 @@ int dcb_accept_SSL(DCB* dcb)
             dcb->ssl_state = SSL_HANDSHAKE_FAILED;
             poll_fake_hangup_event(dcb);
             return -1;
-            break;
 
         default:
             MXS_DEBUG("SSL connection shut down with error during SSL accept %s@%s", user, remote);
@@ -2944,7 +2892,6 @@ int dcb_accept_SSL(DCB* dcb)
             dcb->ssl_state = SSL_HANDSHAKE_FAILED;
             poll_fake_hangup_event(dcb);
             return -1;
-            break;
     }
 }
 
@@ -2998,6 +2945,461 @@ int dcb_connect_SSL(DCB* dcb)
 }
 
 /**
+ * @brief Accept a new client connection, given a listener, return new DCB
+ *
+ * Calls dcb_accept_one_connection to do the basic work of obtaining a new
+ * connection from a listener.  If that succeeds, some settings are fixed and
+ * a client DCB is created to handle the new connection. Further DCB details
+ * are set before returning the new DCB to the caller, or returning NULL if
+ * no new connection could be achieved.
+ *
+ * @param dcb Listener DCB that has detected new connection request
+ * @return DCB - The new client DCB for the new connection, or NULL if failed
+ */
+DCB *
+dcb_accept(DCB *listener, GWPROTOCOL *protocol_funcs)
+{
+    DCB *client_dcb = NULL;
+    int c_sock;
+    int sendbuf;
+    struct sockaddr_storage client_conn;
+    socklen_t optlen = sizeof(sendbuf);
+    char errbuf[STRERROR_BUFLEN];
+
+    if ((c_sock = dcb_accept_one_connection(listener, (struct sockaddr *)&client_conn)) >= 0)
+    {
+        listener->stats.n_accepts++;
+#if defined(SS_DEBUG)
+        MXS_DEBUG("%lu [gw_MySQLAccept] Accepted fd %d.",
+                  pthread_self(),
+                  c_sock);
+#endif /* SS_DEBUG */
+#if defined(FAKE_CODE)
+        conn_open[c_sock] = true;
+#endif /* FAKE_CODE */
+        /* set nonblocking  */
+        sendbuf = GW_CLIENT_SO_SNDBUF;
+
+        if (setsockopt(c_sock, SOL_SOCKET, SO_SNDBUF, &sendbuf, optlen) != 0)
+        {
+            MXS_ERROR("Failed to set socket options. Error %d: %s",
+                      errno, strerror_r(errno, errbuf, sizeof(errbuf)));
+        }
+
+        sendbuf = GW_CLIENT_SO_RCVBUF;
+
+        if (setsockopt(c_sock, SOL_SOCKET, SO_RCVBUF, &sendbuf, optlen) != 0)
+        {
+            MXS_ERROR("Failed to set socket options. Error %d: %s",
+                      errno, strerror_r(errno, errbuf, sizeof(errbuf)));
+        }
+        setnonblocking(c_sock);
+
+        client_dcb = dcb_alloc(DCB_ROLE_CLIENT_HANDLER, listener->listener);
+
+        if (client_dcb == NULL)
+        {
+            MXS_ERROR("Failed to create DCB object for client connection.");
+            close(c_sock);
+        }
+        else
+        {
+            const char *authenticator_name = "NullAuth";
+            GWAUTHENTICATOR *authfuncs;
+
+            client_dcb->service = listener->session->service;
+            client_dcb->session = session_set_dummy(client_dcb);
+            client_dcb->fd = c_sock;
+
+            // get client address
+            if (((struct sockaddr *)&client_conn)->sa_family == AF_UNIX)
+            {
+                // client address
+                client_dcb->remote = strdup("localhost_from_socket");
+                // set localhost IP for user authentication
+                (client_dcb->ipv4).sin_addr.s_addr = 0x0100007F;
+            }
+            else
+            {
+                /* client IPv4 in raw data*/
+                memcpy(&client_dcb->ipv4,
+                   (struct sockaddr_in *)&client_conn,
+                   sizeof(struct sockaddr_in));
+                /* client IPv4 in string representation */
+                client_dcb->remote = (char *)calloc(INET_ADDRSTRLEN+1, sizeof(char));
+
+                if (client_dcb->remote != NULL)
+                {
+                    inet_ntop(AF_INET,
+                          &(client_dcb->ipv4).sin_addr,
+                          client_dcb->remote,
+                          INET_ADDRSTRLEN);
+                }
+            }
+            memcpy(&client_dcb->func, protocol_funcs, sizeof(GWPROTOCOL));
+            if (listener->listener->authenticator)
+            {
+                authenticator_name = listener->listener->authenticator;
+            }
+            else if (client_dcb->func.auth_default != NULL)
+            {
+                authenticator_name = client_dcb->func.auth_default();
+            }
+            if ((authfuncs = (GWAUTHENTICATOR *)load_module(authenticator_name,
+                MODULE_AUTHENTICATOR)) == NULL)
+            {
+                if ((authfuncs = (GWAUTHENTICATOR *)load_module("NullAuth",
+                    MODULE_AUTHENTICATOR)) == NULL)
+                {
+                    MXS_ERROR("Failed to load authenticator module for %s, free dcb %p\n",
+                      authenticator_name,
+                      client_dcb);
+                    dcb_close(client_dcb);
+                    return NULL;
+                }
+            }
+            memcpy(&(client_dcb->authfunc), authfuncs, sizeof(GWAUTHENTICATOR));
+
+        }
+    }
+    return client_dcb;
+}
+
+/**
+ * @brief Accept a new client connection, given listener, return file descriptor
+ *
+ * Up to 10 retries will be attempted in case of non-permanent errors.  Calls
+ * the accept function and analyses the return, logging any errors and making
+ * an appropriate return.
+ *
+ * @param dcb Listener DCB that has detected new connection request
+ * @return -1 for failure, or a file descriptor for the new connection
+ */
+static int
+dcb_accept_one_connection(DCB *listener, struct sockaddr *client_conn)
+{
+    int c_sock;
+
+    /* Try up to 10 times to get a file descriptor by use of accept */
+    for (int i = 0; i < 10; i++)
+    {
+        socklen_t client_len = sizeof(struct sockaddr_storage);
+        int eno = 0;
+
+#if defined(FAKE_CODE)
+        if (fail_next_accept > 0)
+        {
+            c_sock = -1;
+            eno = fail_accept_errno;
+            fail_next_accept -= 1;
+        }
+        else
+        {
+            fail_accept_errno = 0;
+#endif /* FAKE_CODE */
+
+        /* new connection from client */
+        c_sock = accept(listener->fd,
+            client_conn,
+            &client_len);
+        eno = errno;
+        errno = 0;
+#if defined(FAKE_CODE)
+        }
+#endif /* FAKE_CODE */
+
+        if (c_sock == -1)
+        {
+            char errbuf[STRERROR_BUFLEN];
+            /* Did not get a file descriptor */
+            if (eno == EAGAIN || eno == EWOULDBLOCK)
+            {
+                /**
+                 * We have processed all incoming connections, break out
+                 * of loop for return of -1.
+                 */
+                break;
+            }
+            else if (eno == ENFILE || eno == EMFILE)
+            {
+                struct timespec ts1;
+                long long nanosecs;
+
+                /**
+                 * Exceeded system's (ENFILE) or processes
+                 * (EMFILE) max. number of files limit.
+                 */
+                MXS_DEBUG("%lu [dcb_accept_one_connection] Error %d, %s. ",
+                    pthread_self(),
+                    eno,
+                    strerror_r(eno, errbuf, sizeof(errbuf)));
+
+                /* Log an error the first time this happens */
+                if (i == 0)
+                {
+                    MXS_ERROR("Error %d, %s. Failed to accept new client connection.",
+                        eno,
+                        strerror_r(eno, errbuf, sizeof(errbuf)));
+                }
+                nanosecs = (long long)1000000 * 100 * i * i;
+                ts1.tv_sec = nanosecs / 1000000000;
+                ts1.tv_nsec = nanosecs % 1000000000;
+                nanosleep(&ts1, NULL);
+
+                /* Remain in loop for up to the loop limit, retries. */
+            }
+            else
+            {
+                /**
+                 * Other error, log it then break out of loop for return of -1.
+                 */
+                MXS_ERROR("Failed to accept new client connection due to %d, %s.",
+                    eno,
+                    strerror_r(eno, errbuf, sizeof(errbuf)));
+                break;
+            }
+        }
+        else
+        {
+            break;
+        }
+    }
+    return c_sock;
+}
+
+/**
+ * @brief Create a listener, add new information to the given DCB
+ *
+ * First creates and opens a socket, either TCP or Unix according to the
+ * configuration data provided.  Then try to listen on the socket and
+ * record the socket in the given DCB.  Add the given DCB into the poll
+ * list.  The protocol name does not affect the logic, but is used in
+ * log messages.
+ *
+ * @param listener Listener DCB that is being created
+ * @param config Configuration for port to listen on
+ * @param protocol_name Name of protocol that is listening
+ * @return 0 if new listener created successfully, otherwise -1
+ */
+int
+dcb_listen(DCB *listener, const char *config, const char *protocol_name)
+{
+    int listener_socket;
+
+    listener->fd = -1;
+    if (strchr(config,'/'))
+    {
+        listener_socket = dcb_listen_create_socket_unix(config);
+    }
+    else
+    {
+        listener_socket = dcb_listen_create_socket_inet(config);
+    }
+    if (listener_socket < 0)
+    {
+        return -1;
+    }
+
+    if (listen(listener_socket, 10 * SOMAXCONN) != 0)
+    {
+        char errbuf[STRERROR_BUFLEN];
+        MXS_ERROR("Failed to start listening on '%s' with protocol '%s': %d, %s",
+            config,
+            protocol_name,
+            errno,
+            strerror_r(errno, errbuf, sizeof(errbuf)));
+        close(listener_socket);
+        return -1;
+    }
+
+    MXS_NOTICE("Listening MySQL connections at %s with protocol %s", config, protocol_name);
+
+    // assign listener_socket to dcb
+    listener->fd = listener_socket;
+
+    // add listening socket to poll structure
+    if (poll_add_dcb(listener) != 0)
+    {
+        MXS_ERROR("MaxScale encountered system limit while "
+                  "attempting to register on an epoll instance.");
+        return -1;
+    }
+#if defined(FAKE_CODE)
+    conn_open[listener_socket] = true;
+#endif /* FAKE_CODE */
+    return 0;
+}
+
+/**
+ * @brief Create a listening socket, TCP
+ *
+ * Parse the configuration provided and if valid create a socket.
+ * Set options, set non-blocking and bind to the socket.
+ *
+ * @param config_bind The configuration information
+ * @return socket if successful, -1 otherwise
+ */
+static int
+dcb_listen_create_socket_inet(const char *config_bind)
+{
+    int listener_socket;
+    struct sockaddr_in server_address;
+    int one = 1;
+
+    memset(&server_address, 0, sizeof(server_address));
+    if (!parse_bindconfig(config_bind, &server_address))
+    {
+        MXS_ERROR("Error in parse_bindconfig for [%s]", config_bind);
+        return -1;
+    }
+
+    /** Create the TCP socket */
+    if ((listener_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    {
+        char errbuf[STRERROR_BUFLEN];
+        MXS_ERROR("Can't create socket: %i, %s",
+                  errno,
+                  strerror_r(errno, errbuf, sizeof(errbuf)));
+        return -1;
+    }
+
+    // socket options
+    if (dcb_set_socket_option(listener_socket, SOL_SOCKET, SO_REUSEADDR, (char *) &one, sizeof(one)) != 0 ||
+        dcb_set_socket_option(listener_socket, IPPROTO_TCP, TCP_NODELAY, (char *) &one, sizeof(one)) != 0)
+    {
+        return -1;
+    }
+
+    // set NONBLOCKING mode
+    if (setnonblocking(listener_socket) != 0)
+    {
+        MXS_ERROR("Failed to set socket to non-blocking mode.");
+        close(listener_socket);
+        return -1;
+    }
+
+    if (bind(listener_socket, (struct sockaddr *) &server_address, sizeof(server_address)) < 0)
+    {
+        char errbuf[STRERROR_BUFLEN];
+        MXS_ERROR("Failed to bind on '%s': %i, %s",
+                  config_bind,
+                  errno,
+                  strerror_r(errno, errbuf, sizeof(errbuf)));
+        close(listener_socket);
+        return -1;
+    }
+    return listener_socket;
+}
+
+/**
+ * @brief Create a listening socket, Unix
+ *
+ * Parse the configuration provided and if valid create a socket.
+ * Set options, set non-blocking and bind to the socket.
+ *
+ * @param config_bind The configuration information
+ * @return socket if successful, -1 otherwise
+ */
+static int
+dcb_listen_create_socket_unix(const char *config_bind)
+{
+    int listener_socket;
+    struct sockaddr_un local_addr;
+    int one = 1;
+
+    char *tmp = strrchr(config_bind, ':');
+    if (tmp)
+    {
+        *tmp = '\0';
+    }
+
+    // UNIX socket create
+    if ((listener_socket = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
+    {
+        char errbuf[STRERROR_BUFLEN];
+        MXS_ERROR("Can't create UNIX socket: %i, %s",
+                  errno,
+                  strerror_r(errno, errbuf, sizeof(errbuf)));
+        return -1;
+    }
+
+    // socket options
+    if (dcb_set_socket_option(listener_socket, SOL_SOCKET, SO_REUSEADDR, (char *) &one, sizeof(one)) != 0)
+    {
+        return -1;
+    }
+
+    // set NONBLOCKING mode
+    if (setnonblocking(listener_socket) != 0)
+    {
+        MXS_ERROR("Failed to set socket to non-blocking mode.");
+        close(listener_socket);
+        return -1;
+    }
+
+    memset(&local_addr, 0, sizeof(local_addr));
+    local_addr.sun_family = AF_UNIX;
+    strncpy(local_addr.sun_path, config_bind, sizeof(local_addr.sun_path) - 1);
+
+    if ((-1 == unlink(config_bind)) && (errno != ENOENT))
+    {
+        char errbuf[STRERROR_BUFLEN];
+        MXS_ERROR("Failed to unlink Unix Socket %s: %d %s",
+                  config_bind, errno, strerror_r(errno, errbuf, sizeof(errbuf)));
+    }
+
+    /* Bind the socket to the Unix domain socket */
+    if (bind(listener_socket, (struct sockaddr *) &local_addr, sizeof(local_addr)) < 0)
+    {
+        char errbuf[STRERROR_BUFLEN];
+        MXS_ERROR("Failed to bind to UNIX Domain socket '%s': %i, %s",
+                  config_bind,
+                  errno,
+                  strerror_r(errno, errbuf, sizeof(errbuf)));
+        close(listener_socket);
+        return -1;
+    }
+
+    /* set permission for all users */
+    if (chmod(config_bind, 0777) < 0)
+    {
+        char errbuf[STRERROR_BUFLEN];
+        MXS_ERROR("Failed to change permissions on UNIX Domain socket '%s': %i, %s",
+                  config_bind,
+                  errno,
+                  strerror_r(errno, errbuf, sizeof(errbuf)));
+    }
+    return listener_socket;
+}
+
+/**
+ * @brief Set socket options, log an error if fails
+ *
+ * Simply calls the setsockopt function with the same parameters, but also
+ * checks for success and logs an error if necessary.
+ *
+ * @param sockfd  Socket file descriptor
+ * @param level   Will always be SOL_SOCKET for socket level operations
+ * @param optname Option name
+ * @param optval  Option value
+ * @param optlen  Length of option value
+ * @return 0 if successful, otherwise -1
+ */
+static int
+dcb_set_socket_option(int sockfd, int level, int optname, void *optval, socklen_t optlen)
+{
+    if (setsockopt(sockfd, level, optname, optval, optlen) != 0)
+    {
+        char errbuf[STRERROR_BUFLEN];
+        MXS_ERROR("Failed to set socket options. Error %d: %s",
+                  errno,
+                  strerror_r(errno, errbuf, sizeof(errbuf)));
+        return -1;
+    }
+    return 0;
+}
+
+/**
  * Convert a DCB role to a string, the returned
  * string has been malloc'd and must be free'd by the caller
  *
@@ -3016,9 +3418,13 @@ dcb_role_name(DCB *dcb)
         {
             strcat(name, "Service Listener");
         }
-        else if (DCB_ROLE_REQUEST_HANDLER == dcb->dcb_role)
+        else if (DCB_ROLE_CLIENT_HANDLER == dcb->dcb_role)
         {
-            strcat(name, "Request Handler");
+            strcat(name, "Client Request Handler");
+        }
+        else if (DCB_ROLE_BACKEND_HANDLER == dcb->dcb_role)
+        {
+            strcat(name, "Backend Request Handler");
         }
         else if (DCB_ROLE_INTERNAL == dcb->dcb_role)
         {

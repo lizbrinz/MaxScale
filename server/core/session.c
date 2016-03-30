@@ -65,8 +65,6 @@ static SPINLOCK timeout_lock = SPINLOCK_INIT;
 static int session_setup_filters(SESSION *session);
 static void session_simple_free(SESSION *session, DCB *dcb);
 
-static void mysql_auth_free_client_data(DCB *dcb);
-
 /**
  * Allocate a new session for a new client of the specified service.
  *
@@ -302,39 +300,6 @@ session_link_dcb(SESSION *session, DCB *dcb)
     return true;
 }
 
-int session_unlink_dcb(SESSION* session,
-                       DCB*     dcb)
-{
-    int nlink;
-
-    CHK_SESSION(session);
-
-    spinlock_acquire(&session->ses_lock);
-    ss_dassert(session->refcount > 0);
-    /*<
-     * Remove dcb from session's router_client_session.
-     */
-    nlink = atomic_add(&session->refcount, -1);
-    nlink -= 1;
-
-    if (nlink == 0)
-    {
-        session->state = SESSION_STATE_TO_BE_FREED;
-    }
-
-    if (dcb != NULL)
-    {
-        if (session->client_dcb == dcb)
-        {
-            session->client_dcb = NULL;
-        }
-        dcb->session = NULL;
-    }
-    spinlock_release(&session->ses_lock);
-
-    return nlink;
-}
-
 /**
  * Deallocate the specified session, minimal actions during session_alloc
  * Since changes to keep new session in existence until all related DCBs
@@ -379,7 +344,7 @@ session_simple_free(SESSION *session, DCB *dcb)
 bool
 session_free(SESSION *session)
 {
-    if (session && SESSION_STATE_DUMMY == session->state)
+    if (NULL == session || SESSION_STATE_DUMMY == session->state)
     {
         return true;
     }
@@ -425,7 +390,7 @@ session_free(SESSION *session)
     {
         if (!DCB_IS_CLONE(session->client_dcb))
         {
-            mysql_auth_free_client_data(session->client_dcb);
+            session->client_dcb->authfunc.free(session->client_dcb);
         }
         dcb_free_all_memory(session->client_dcb);
     }
@@ -753,7 +718,7 @@ dListSessions(DCB *dcb)
  * @return A string representation of the session state
  */
 char *
-session_state(int state)
+session_state(session_state_t state)
 {
     switch (state)
     {
@@ -1076,6 +1041,12 @@ sessionRowCallback(RESULTSET *set, void *data)
  *
  * @return A Result set
  */
+/* Lint is not convinced that the new memory for data is always tracked
+ * because it does not see what happens within the resultset_create function,
+ * so we suppress the warning. In fact, the function call results in return
+ * of the set structure which includes a pointer to data
+ */
+/*lint -e429 */
 RESULTSET *
 sessionGetList(SESSIONLISTFILTER filter)
 {
@@ -1100,21 +1071,5 @@ sessionGetList(SESSIONLISTFILTER filter)
 
     return set;
 }
+/*lint +e429 */
 
-/**
- * @brief Free the client data pointed to by the passed DCB.
- *
- * Currently all that is required is to free the storage pointed to by
- * dcb->data.  But this is intended to be implemented as part of the
- * authentication API at which time this code will be moved into the
- * MySQL authenticator.  If the data structure were to become more complex
- * the mechanism would still work and be the responsibility of the authenticator.
- * The DCB should not know authenticator implementation details.
- *
- * @param dcb Request handler DCB connected to the client
- */
-static void
-mysql_auth_free_client_data(DCB *dcb)
-{
-    free(dcb->data);
-}

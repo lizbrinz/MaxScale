@@ -37,6 +37,10 @@ static void monitorMain(void *);
 
 static char *version_str = "V2.1.0";
 
+/* @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
+ */
+/*lint -e14 */
 MODULE_INFO info =
 {
     MODULE_API_MONITOR,
@@ -44,6 +48,7 @@ MODULE_INFO info =
     MONITOR_VERSION,
     "A MySQL cluster SQL node monitor"
 };
+/*lint +e14 */
 
 static void *startMonitor(void *, void*);
 static void stopMonitor(void *);
@@ -61,7 +66,11 @@ static MONITOR_OBJECT MyObject =
  * Implementation of the mandatory version entry point
  *
  * @return version string of the module
+ *
+ * @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
  */
+/*lint -e14 */
 char *
 version()
 {
@@ -91,6 +100,7 @@ GetModuleObject()
 {
     return &MyObject;
 }
+/*lint +e14 */
 
 /**
  * Start the instance of the monitor, returning a handle on the monitor.
@@ -140,7 +150,7 @@ startMonitor(void *arg, void* opt)
         }
         else if (!strcmp(params->name, "events"))
         {
-            if (mon_parse_event_string((bool*) &handle->events,
+            if (mon_parse_event_string((bool *)handle->events,
                                        sizeof(handle->events), params->value) != 0)
             {
                 script_error = true;
@@ -378,9 +388,9 @@ monitorMain(void *arg)
 
         /** Wait base interval */
         thread_millisleep(MON_BASE_INTERVAL_MS);
-        /** 
-         * Calculate how far away the monitor interval is from its full 
-         * cycle and if monitor interval time further than the base 
+        /**
+         * Calculate how far away the monitor interval is from its full
+         * cycle and if monitor interval time further than the base
          * interval, then skip monitoring checks. Excluding the first
          * round.
          */

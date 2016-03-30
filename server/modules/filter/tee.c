@@ -321,7 +321,9 @@ version()
 /**
  * The module initialisation routine, called when the module
  * is first loaded.
+ * @see function load_module in load_utils.c for explanation of lint
  */
+/*lint -e14 */
 void
 ModuleInit()
 {
@@ -330,6 +332,7 @@ ModuleInit()
     spinlock_init(&debug_lock);
 #endif
 }
+/*lint +e14 */
 
 /**
  * The module entry point routine. It is this routine that

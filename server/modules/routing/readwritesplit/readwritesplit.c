@@ -2829,7 +2829,7 @@ static void clientReply (
 						    replylen-4-5);
 
                         ss_dassert(len+4 == GWBUF_LENGTH(scur->scmd_cur_cmd->my_sescmd_buf));
-                        
+
                         MXS_ERROR("Failed to execute session command in %s:%d. Error was: %s %s",
                                   bref->bref_backend->backend_server->name,
                                   bref->bref_backend->backend_server->port,
@@ -4720,7 +4720,7 @@ static void handleError (
 	{
                 *succp = false;
     }
-    else if (dcb_isclient(problem_dcb))
+    else if (DCB_ROLE_CLIENT_HANDLER == problem_dcb->dcb_role)
     {
         *succp = false;
     }

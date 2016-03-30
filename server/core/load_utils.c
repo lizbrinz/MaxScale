@@ -106,6 +106,13 @@ WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp)
  * will look for library files in the current directory,
  * the configured folder and /usr/lib64/maxscale.
  *
+ * Note that a number of entry points are standard for any module, as is
+ * the data structure named "info".  They are only accessed by explicit
+ * reference to the module, and so the fact that they are duplicated in
+ * every module is not a problem.  The declarations are protected from
+ * lint by suppressing error 14, since the duplication is a feature and
+ * not an error.
+ *
  * @param module        Name of the module to load
  * @param type          Type of module, used purely for registration
  * @return              The module specific entry point structure or NULL
@@ -120,6 +127,8 @@ load_module(const char *module, const char *type)
     void *(*ep)(), *modobj;
     MODULES *mod;
     MODULE_INFO *mod_info = NULL;
+
+    if (NULL == module || NULL == type) return NULL;
 
     if ((mod = find_module(module)) == NULL)
     {
@@ -178,6 +187,12 @@ load_module(const char *module, const char *type)
                 && mod_info->modapi != MODULE_API_PROTOCOL)
             {
                 MXS_ERROR("Module '%s' does not implement the protocol API.", module);
+                fatal = 1;
+            }
+            if (strcmp(type, MODULE_AUTHENTICATOR) == 0
+                && mod_info->modapi != MODULE_API_AUTHENTICATOR)
+            {
+                MXS_ERROR("Module '%s' does not implement the authenticator API.", module);
                 fatal = 1;
             }
             if (strcmp(type, MODULE_ROUTER) == 0
@@ -276,15 +291,18 @@ find_module(const char *module)
 {
     MODULES *mod = registered;
 
-    while (mod)
+    if (module)
     {
-        if (strcmp(mod->module, module) == 0)
+        while (mod)
         {
-            return mod;
-        }
-        else
-        {
-            mod = mod->next;
+            if (strcmp(mod->module, module) == 0)
+            {
+                return mod;
+            }
+            else
+            {
+                mod = mod->next;
+            }
         }
     }
     return NULL;

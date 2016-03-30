@@ -331,9 +331,10 @@ typedef struct {
 } MySQLProtocol;
 
 
-
-#define MYSQL_GET_COMMAND(payload)              (((uint8_t*)payload)[4])
-#define MYSQL_GET_PACKET_NO(payload)            (((uint8_t*)payload)[3])
+/*
+ * Let's try this with proper enums instead of numbers
+#define MYSQL_GET_COMMAND(payload)              (payload[4])
+#define MYSQL_GET_PACKET_NO(payload)            (payload[3])
 #define MYSQL_GET_PACKET_LEN(payload)           (gw_mysql_get_byte3(payload))
 #define MYSQL_GET_ERRCODE(payload)              (gw_mysql_get_byte2(&payload[5]))
 #define MYSQL_GET_STMTOK_NPARAM(payload)        (gw_mysql_get_byte2(&payload[9]))
@@ -343,7 +344,18 @@ typedef struct {
 #define MYSQL_IS_COM_INIT_DB(payload)              (MYSQL_GET_COMMAND(payload)==0x02)
 #define MYSQL_IS_CHANGE_USER(payload)		(MYSQL_GET_COMMAND(payload)==0x11)
 #define MYSQL_GET_NATTR(payload)                ((int)payload[4])
-
+*/
+#define MYSQL_GET_COMMAND(payload)              ((mysql_server_cmd_t)((payload)[4]))
+#define MYSQL_GET_PACKET_NO(payload)            (payload[3])
+#define MYSQL_GET_PACKET_LEN(payload)           (gw_mysql_get_byte3(payload))
+#define MYSQL_GET_ERRCODE(payload)              (gw_mysql_get_byte2(&payload[5]))
+#define MYSQL_GET_STMTOK_NPARAM(payload)        (gw_mysql_get_byte2(&payload[9]))
+#define MYSQL_GET_STMTOK_NATTR(payload)         (gw_mysql_get_byte2(&payload[11]))
+#define MYSQL_IS_ERROR_PACKET(payload)          ((int)MYSQL_GET_COMMAND(payload)==0xff)
+#define MYSQL_IS_COM_QUIT(payload)              (MYSQL_GET_COMMAND(payload)==MYSQL_COM_QUIT)
+#define MYSQL_IS_COM_INIT_DB(payload)           (MYSQL_GET_COMMAND(payload)==MYSQL_COM_INIT_DB)
+#define MYSQL_IS_CHANGE_USER(payload)		(MYSQL_GET_COMMAND(payload)==MYSQL_COM_CHANGE_USER)
+#define MYSQL_GET_NATTR(payload)                ((int)payload[4])
 
 
 MySQLProtocol* mysql_protocol_init(DCB* dcb, int fd);
@@ -423,6 +435,7 @@ bool protocol_get_response_status (MySQLProtocol* p, int* npackets, ssize_t* nby
 void protocol_set_response_status (MySQLProtocol* p, int  npackets, ssize_t  nbytes);
 void protocol_archive_srv_command(MySQLProtocol* p);
 
+char* create_auth_fail_str(char *username, char *hostaddr, char *sha1, char *db,int);
 
 void init_response_status (
         GWBUF* buf,

@@ -899,7 +899,7 @@ static void handleError(ROUTER *instance, void *router_session, GWBUF *errbuf,
         spinlock_release(&session->ses_lock);
     }
 
-    if (dcb_isclient(problem_dcb))
+    if (DCB_ROLE_CLIENT_HANDLER == problem_dcb->dcb_role)
     {
         dcb_close(problem_dcb);
     }

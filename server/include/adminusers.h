@@ -33,6 +33,25 @@
 
 #define ADMIN_SALT "$1$MXS"
 
+/* Max length of fields in for admin users */
+#define ADMIN_USER_MAXLEN	128
+#define ADMIN_PASSWORD_MAXLEN	128
+
+/*
+ * MySQL session specific data
+ *
+ */
+typedef struct admin_session {
+#if defined(SS_DEBUG)
+	skygw_chk_t	adminses_chk_top;
+#endif
+        char user[ADMIN_USER_MAXLEN+1];                 /*< username       */
+        bool validated;                                 /* Was user validated? */
+#if defined(SS_DEBUG)
+	skygw_chk_t	adminses_chk_tail;
+#endif
+} ADMIN_session;
+
 extern int  admin_verify(char *, char *);
 extern char *admin_add_user(char *, char *);
 extern int  admin_search_user(char *);

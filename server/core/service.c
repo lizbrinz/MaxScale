@@ -215,15 +215,20 @@ serviceStartPort(SERVICE *service, SERV_LISTENER *port)
     char config_bind[40];
     GWPROTOCOL *funcs;
 
-    port->listener = dcb_alloc(DCB_ROLE_SERVICE_LISTENER);
+    if (service == NULL || service->router == NULL || service->router_instance == NULL)
+    {
+        /* Should never happen, this guarantees it can't */
+        MXS_ERROR("Attempt to start port with null or incomplete service");
+        goto retblock;
+    }
+
+    port->listener = dcb_alloc(DCB_ROLE_SERVICE_LISTENER, port);
 
     if (port->listener == NULL)
     {
         MXS_ERROR("Failed to create listener for service %s.", service->name);
         goto retblock;
     }
-
-    port->listener->listen_ssl = port->ssl;
 
     if (port->ssl)
     {

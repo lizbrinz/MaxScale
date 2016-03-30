@@ -1023,12 +1023,12 @@ newSession(
     client_rses->rses_autocommit_enabled = true;
     client_rses->rses_transaction_active = false;
     client_rses->session = session;
-    client_rses->replydcb = dcb_alloc(DCB_ROLE_REQUEST_HANDLER);
+    client_rses->replydcb = dcb_alloc(DCB_ROLE_INTERNAL, NULL);
     client_rses->replydcb->func.read = fakeReply;
     client_rses->replydcb->state = DCB_STATE_POLLING;
     client_rses->replydcb->session = session;
 
-    client_rses->routedcb = dcb_alloc(DCB_ROLE_REQUEST_HANDLER);
+    client_rses->routedcb = dcb_alloc(DCB_ROLE_INTERNAL, NULL);
     client_rses->routedcb->func.read = fakeQuery;
     client_rses->routedcb->state = DCB_STATE_POLLING;
     client_rses->routedcb->session = session;

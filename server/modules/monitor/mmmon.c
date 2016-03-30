@@ -37,6 +37,10 @@ static void monitorMain(void *);
 
 static char *version_str = "V1.1.1";
 
+/* @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
+ */
+/*lint -e14 */
 MODULE_INFO info =
 {
     MODULE_API_MONITOR,
@@ -44,13 +48,14 @@ MODULE_INFO info =
     MONITOR_VERSION,
     "A Multi-Master Multi Master monitor"
 };
+/*lint +e14 */
 
 static void *startMonitor(void *, void*);
 static void stopMonitor(void *);
 static void diagnostics(DCB *, void *);
 static void detectStaleMaster(void *, int);
 static MONITOR_SERVERS *get_current_master(MONITOR *);
-bool isMySQLEvent(monitor_event_t event);
+static bool isMySQLEvent(monitor_event_t event);
 
 static MONITOR_OBJECT MyObject =
 {
@@ -63,7 +68,11 @@ static MONITOR_OBJECT MyObject =
  * Implementation of the mandatory version entry point
  *
  * @return version string of the module
+ *
+ * @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
  */
+/*lint -e14 */
 char *
 version()
 {
@@ -93,6 +102,7 @@ GetModuleObject()
 {
     return &MyObject;
 }
+/*lint +e14 */
 
 /**
  * Start the instance of the monitor, returning a handle on the monitor.
@@ -149,7 +159,7 @@ startMonitor(void *arg, void* opt)
         }
         else if (!strcmp(params->name, "events"))
         {
-            if (mon_parse_event_string((bool*) & handle->events,
+            if (mon_parse_event_string((bool *)handle->events,
                                        sizeof(handle->events), params->value) != 0)
             {
                 script_error = true;
@@ -373,8 +383,8 @@ monitorDatabase(MONITOR* mon, MONITOR_SERVERS *database)
                     isslave += 1;
                 }
 
-                /* If Slave_IO_Running = Yes, assign the master_id to current server: this allows building 
-                 * the replication tree, slaves ids will be added to master(s) and we will have at least the 
+                /* If Slave_IO_Running = Yes, assign the master_id to current server: this allows building
+                 * the replication tree, slaves ids will be added to master(s) and we will have at least the
                  * root master server.
                  * Please note, there could be no slaves at all if Slave_SQL_Running == 'No'
                  */
@@ -447,8 +457,8 @@ monitorDatabase(MONITOR* mon, MONITOR_SERVERS *database)
                     isslave = 1;
                 }
 
-                /* If Slave_IO_Running = Yes, assign the master_id to current server: this allows building 
-                 * the replication tree, slaves ids will be added to master(s) and we will have at least the 
+                /* If Slave_IO_Running = Yes, assign the master_id to current server: this allows building
+                 * the replication tree, slaves ids will be added to master(s) and we will have at least the
                  * root master server.
                  * Please note, there could be no slaves at all if Slave_SQL_Running == 'No'
                  */
@@ -677,6 +687,7 @@ monitorMain(void *arg)
  * @param arg		The handle allocated by startMonitor
  * @param enable	To enable it 1, disable it with 0
  */
+/* Not used
 static void
 detectStaleMaster(void *arg, int enable)
 {
@@ -684,6 +695,7 @@ detectStaleMaster(void *arg, int enable)
     MM_MONITOR *handle = (MM_MONITOR *) mon->handle;
     memcpy(&handle->detectStaleMaster, &enable, sizeof(int));
 }
+*/
 
 /*******
  * This function returns the master server

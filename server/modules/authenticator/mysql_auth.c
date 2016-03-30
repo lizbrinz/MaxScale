@@ -32,6 +32,38 @@
 
 #include <mysql_auth.h>
 #include <mysql_client_server_protocol.h>
+#include <gw_authenticator.h>
+
+ /* @see function load_module in load_utils.c for explanation of the following
+  * lint directives.
+ */
+/*lint -e14 */
+MODULE_INFO info =
+{
+    MODULE_API_AUTHENTICATOR,
+    MODULE_GA,
+    GWAUTHENTICATOR_VERSION,
+    "The MySQL client to MaxScale authenticator implementation"
+};
+/*lint +e14 */
+
+static char *version_str = "V1.0.0";
+
+static int mysql_auth_set_protocol_data(DCB *dcb, GWBUF *buf);
+static bool mysql_auth_is_client_ssl_capable(DCB *dcb);
+static int mysql_auth_authenticate(DCB *dcb);
+static void mysql_auth_free_client_data(DCB *dcb);
+
+/*
+ * The "module object" for mysql client authenticator module.
+ */
+static GWAUTHENTICATOR MyObject =
+{
+    mysql_auth_set_protocol_data,           /* Extract data into structure   */
+    mysql_auth_is_client_ssl_capable,       /* Check if client supports SSL  */
+    mysql_auth_authenticate,                /* Authenticate user credentials */
+    mysql_auth_free_client_data,            /* Free the client data held in DCB */
+};
 
 static int combined_auth_check(
     DCB             *dcb,
@@ -49,6 +81,42 @@ static int mysql_auth_set_client_data(
     int client_auth_packet_size);
 
 /**
+ * Implementation of the mandatory version entry point
+ *
+ * @return version string of the module
+ *
+ * @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
+ */
+/*lint -e14 */
+char* version()
+{
+    return version_str;
+}
+
+/**
+ * The module initialisation routine, called when the module
+ * is first loaded.
+ */
+void ModuleInit()
+{
+}
+
+/**
+ * The module entry point routine. It is this routine that
+ * must populate the structure that is referred to as the
+ * "module object", this is a structure with the set of
+ * external entry points for this module.
+ *
+ * @return The module object
+ */
+GWAUTHENTICATOR* GetModuleObject()
+{
+    return &MyObject;
+}
+/*lint +e14 */
+
+/**
  * @brief Authenticates a MySQL user who is a client to MaxScale.
  *
  * First call the SSL authentication function, passing the DCB and a boolean
@@ -58,18 +126,17 @@ static int mysql_auth_set_client_data(
  * data if the first attempt fails.
  *
  * @param dcb Request handler DCB connected to the client
- * @param buffer Pointer to pointer to buffer containing data from client
  * @return Authentication status
  * @note Authentication status codes are defined in mysql_client_server_protocol.h
  */
-int
-mysql_auth_authenticate(DCB *dcb, GWBUF **buffer)
+static int
+mysql_auth_authenticate(DCB *dcb)
 {
     MySQLProtocol *protocol = DCB_PROTOCOL(dcb, MySQLProtocol);
     MYSQL_session *client_data = (MYSQL_session *)dcb->data;
     int auth_ret, ssl_ret;
 
-    if (0 != (ssl_ret = ssl_authenticate_client(dcb, client_data->user, mysql_auth_is_client_ssl_capable(dcb))))
+    if (0 != (ssl_ret = ssl_authenticate_client(dcb, dcb->authfunc.connectssl(dcb))))
     {
         auth_ret = (SSL_ERROR_CLIENT_NOT_SSL == ssl_ret) ? MYSQL_FAILED_AUTH_SSL : MYSQL_FAILED_AUTH;
     }
@@ -146,7 +213,7 @@ mysql_auth_authenticate(DCB *dcb, GWBUF **buffer)
  * @note Authentication status codes are defined in mysql_client_server_protocol.h
  * @see https://dev.mysql.com/doc/internals/en/client-server-protocol.html
  */
-int
+static int
 mysql_auth_set_protocol_data(DCB *dcb, GWBUF *buf)
 {
     uint8_t *client_auth_packet = GWBUF_DATA(buf);
@@ -287,8 +354,8 @@ mysql_auth_set_client_data(
             /*
              * Note: some clients may pass empty database, CONNECT_WITH_DB !=0 but database =""
              */
-            if (GW_MYSQL_CAPABILITIES_CONNECT_WITH_DB &
-                gw_mysql_get_byte4((uint32_t *)&protocol->client_capabilities)
+            if ((uint32_t)GW_MYSQL_CAPABILITIES_CONNECT_WITH_DB &
+                gw_mysql_get_byte4((uint8_t *)&protocol->client_capabilities)
                 && client_auth_packet_size > packet_length_used)
             {
                 char *database = (char *)(client_auth_packet + packet_length_used);
@@ -321,13 +388,13 @@ mysql_auth_set_client_data(
  * @param dcb Request handler DCB connected to the client
  * @return Boolean indicating whether client is SSL capable
  */
-bool
+static bool
 mysql_auth_is_client_ssl_capable(DCB *dcb)
 {
     MySQLProtocol *protocol;
 
     protocol = DCB_PROTOCOL(dcb, MySQLProtocol);
-    return (protocol->client_capabilities & GW_MYSQL_CAPABILITIES_SSL) ? true : false;
+    return (protocol->client_capabilities & (int)GW_MYSQL_CAPABILITIES_SSL) ? true : false;
 }
 
 /**
@@ -349,7 +416,7 @@ int
 gw_check_mysql_scramble_data(DCB *dcb,
                                  uint8_t *token,
                                  unsigned int token_len,
-                                 uint8_t *scramble,
+                                 uint8_t *mxs_scramble,
                                  unsigned int scramble_len,
                                  char *username,
                                  uint8_t *stage1_hash)
@@ -363,7 +430,7 @@ gw_check_mysql_scramble_data(DCB *dcb,
     uint8_t null_client_sha1[MYSQL_SCRAMBLE_LEN]="";
 
 
-    if ((username == NULL) || (scramble == NULL) || (stage1_hash == NULL))
+    if ((username == NULL) || (mxs_scramble == NULL) || (stage1_hash == NULL))
     {
         return MYSQL_FAILED_AUTH;
     }
@@ -413,7 +480,7 @@ gw_check_mysql_scramble_data(DCB *dcb,
      * the result in step1 is SHA_DIGEST_LENGTH long
      */
 
-    gw_sha1_2_str(scramble, scramble_len, password, SHA_DIGEST_LENGTH, step1);
+    gw_sha1_2_str(mxs_scramble, scramble_len, password, SHA_DIGEST_LENGTH, step1);
 
     /*<
      * step2: STEP2 = XOR(token, STEP1)
@@ -550,3 +617,20 @@ static int combined_auth_check(
     return auth_ret;
 }
 
+/**
+ * @brief Free the client data pointed to by the passed DCB.
+ *
+ * Currently all that is required is to free the storage pointed to by
+ * dcb->data.  But this is intended to be implemented as part of the
+ * authentication API at which time this code will be moved into the
+ * MySQL authenticator.  If the data structure were to become more complex
+ * the mechanism would still work and be the responsibility of the authenticator.
+ * The DCB should not know authenticator implementation details.
+ *
+ * @param dcb Request handler DCB connected to the client
+ */
+static void
+mysql_auth_free_client_data(DCB *dcb)
+{
+    free(dcb->data);
+}

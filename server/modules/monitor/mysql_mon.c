@@ -56,10 +56,16 @@
 #include <dcb.h>
 #include <modutil.h>
 
+extern char *strcasestr(const char *haystack, const char *needle);
+
 static void monitorMain(void *);
 
 static char *version_str = "V1.4.0";
 
+/* @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
+ */
+/*lint -e14 */
 MODULE_INFO info =
 {
     MODULE_API_MONITOR,
@@ -67,18 +73,18 @@ MODULE_INFO info =
     MONITOR_VERSION,
     "A MySQL Master/Slave replication monitor"
 };
+/*lint +e14 */
 
 static void *startMonitor(void *, void*);
 static void stopMonitor(void *);
 static void diagnostics(DCB *, void *);
-static void defaultId(void *, unsigned long);
 static MONITOR_SERVERS *getServerByNodeId(MONITOR_SERVERS *, long);
 static MONITOR_SERVERS *getSlaveOfNodeId(MONITOR_SERVERS *, long);
 static MONITOR_SERVERS *get_replication_tree(MONITOR *, int);
 static void set_master_heartbeat(MYSQL_MONITOR *, MONITOR_SERVERS *);
 static void set_slave_heartbeat(MONITOR *, MONITOR_SERVERS *);
 static int add_slave_to_master(long *, int, long);
-bool isMySQLEvent(monitor_event_t event);
+static bool isMySQLEvent(monitor_event_t event);
 void check_maxscale_schema_replication(MONITOR *monitor);
 static bool report_version_err = true;
 static const char* hb_table_name = "maxscale_schema.replication_heartbeat";
@@ -94,7 +100,11 @@ static MONITOR_OBJECT MyObject =
  * Implementation of the mandatory version entry point
  *
  * @return version string of the module
+ *
+ * @see function load_module in load_utils.c for explanation of the following
+ * lint directives.
  */
+/*lint -e14 */
 char *
 version()
 {
@@ -124,6 +134,7 @@ GetModuleObject()
 {
     return &MyObject;
 }
+/*lint +e14 */
 
 /**
  * Start the instance of the monitor, returning a handle on the monitor.
@@ -181,7 +192,7 @@ startMonitor(void *arg, void* opt)
         }
         else if (!strcmp(params->name, "events"))
         {
-            if (mon_parse_event_string((bool*) & handle->events, sizeof(handle->events), params->value) != 0)
+            if (mon_parse_event_string((bool *)handle->events, sizeof(handle->events), params->value) != 0)
                 script_error = true;
             else
                 have_events = true;
@@ -592,7 +603,6 @@ monitorDatabase(MONITOR *mon, MONITOR_SERVERS *database)
     MYSQL_MONITOR* handle = mon->handle;
     MYSQL_ROW row;
     MYSQL_RES *result;
-    int isslave = 0;
     char *uname = mon->user;
     unsigned long int server_version = 0;
     char *server_string;
@@ -775,9 +785,9 @@ monitorMain(void *arg)
             heartbeat_checked = true;
         }
 
-        /** 
-         * Calculate how far away the monitor interval is from its full 
-         * cycle and if monitor interval time further than the base 
+        /**
+         * Calculate how far away the monitor interval is from its full
+         * cycle and if monitor interval time further than the base
          * interval, then skip monitoring checks. Excluding the first
          * round.
          */
@@ -828,7 +838,7 @@ monitorMain(void *arg)
                  * Here we say: If the server's state changed
                  * so that it isn't running or some other way
                  * lost cluster membership, call call-back function
-                 * of every DCB for which such callback was 
+                 * of every DCB for which such callback was
                  * registered for this kind of issue (DCB_REASON_...)
                  */
                 if (!(SERVER_IS_RUNNING(ptr->server)) ||
@@ -1016,47 +1026,6 @@ monitorMain(void *arg)
             }
         }
     } /*< while (1) */
-}
-
-/**
- * Set the default id to use in the monitor.
- *
- * @param arg           The handle allocated by startMonitor
- * @param id            The id to set in monitor struct
- */
-static void
-defaultId(void *arg, unsigned long id)
-{
-    MYSQL_MONITOR *handle = (MYSQL_MONITOR *) arg;
-    memcpy(&handle->id, &id, sizeof(unsigned long));
-}
-
-/**
- * Enable/Disable the MySQL Replication hearbeat, detecting slave lag behind master.
- *
- * @param arg		The handle allocated by startMonitor
- * @param enable	To enable it 1, disable it with 0
- */
-static void
-replicationHeartbeat(void *arg, int enable)
-{
-    MYSQL_MONITOR *handle = (MYSQL_MONITOR *) arg;
-    memcpy(&handle->replicationHeartbeat, &enable, sizeof(int));
-}
-
-/**
- * Enable/Disable the MySQL Replication Stale Master dectection, allowing a previouvsly detected master to still act as a Master.
- * This option must be enabled in order to keep the Master when the replication is stopped or removed from slaves.
- * If the replication is still stopped when MaxSclale is restarted no Master will be available.
- *
- * @param arg		The handle allocated by startMonitor
- * @param enable	To enable it 1, disable it with 0
- */
-static void
-detectStaleMaster(void *arg, int enable)
-{
-    MYSQL_MONITOR *handle = (MYSQL_MONITOR *) arg;
-    memcpy(&handle->detectStaleMaster, &enable, sizeof(int));
 }
 
 /**
@@ -1281,7 +1250,7 @@ static void set_slave_heartbeat(MONITOR* mon, MONITOR_SERVERS *database)
             if (rlag >= 0)
             {
                 /* store rlag only if greater than monitor sampling interval */
-                database->server->rlag = (rlag > (mon->interval / 1000)) ? rlag : 0;
+                database->server->rlag = ((unsigned int)rlag > (mon->interval / 1000)) ? rlag : 0;
             }
             else
             {

@@ -74,7 +74,7 @@ int max_poll_sleep;
  * 07/07/15     Martin Brampton Simplified add and remove DCB, improve error handling.
  * 23/08/15     Martin Brampton Added test so only DCB with a session link can be added to the poll list
  * 07/02/16     Martin Brampton Added a small piece of SSL logic to EPOLLIN
- * 
+ *
  * @endverbatim
  */
 
@@ -301,7 +301,7 @@ poll_add_dcb(DCB *dcb)
      * Choose new state according to the role of dcb.
      */
     spinlock_acquire(&dcb->dcb_initlock);
-    if (dcb->dcb_role == DCB_ROLE_REQUEST_HANDLER)
+    if (dcb->dcb_role == DCB_ROLE_CLIENT_HANDLER || dcb->dcb_role == DCB_ROLE_BACKEND_HANDLER)
     {
         new_state = DCB_STATE_POLLING;
     }
@@ -361,7 +361,7 @@ poll_add_dcb(DCB *dcb)
  * polling environment.
  *
  * @param dcb   The descriptor to remove
- * @return      -1 on error or 0 on success
+ * @return      -1 on error or 0 on success; actually always 0
  */
 int
 poll_remove_dcb(DCB *dcb)
@@ -1634,7 +1634,7 @@ poll_fake_read_event(DCB *dcb)
  * @param ev    Event to emulate
  */
 void
-poll_fake_event(DCB *dcb, uint32_t ev)
+poll_fake_event(DCB *dcb, enum EPOLL_EVENTS ev)
 {
 
     spinlock_acquire(&pollqlock);

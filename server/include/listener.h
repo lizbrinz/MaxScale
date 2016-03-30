@@ -34,7 +34,8 @@
 
 #include <gw_protocol.h>
 #include <gw_ssl.h>
-#include <dcb.h>
+
+struct dcb;
 
 /**
  * The servlistener structure is used to link a service to the protocols that
@@ -49,7 +50,7 @@ typedef struct servlistener
     char *address;              /**< Address to listen with */
     char *authenticator;        /**< Name of authenticator */
     SSL_LISTENER *ssl;          /**< Structure of SSL data or NULL */
-    DCB *listener;              /**< The DCB for the listener */
+    struct dcb *listener;       /**< The DCB for the listener */
     struct  servlistener *next; /**< Next service protocol */
 } SERV_LISTENER;
 

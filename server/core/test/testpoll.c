@@ -41,6 +41,7 @@
 #include <maxscale/poll.h>
 #include <dcb.h>
 #include <test_utils.h>
+#include <listener.h>
 
 /**
  * test1	Allocate a service and do lots of other things
@@ -53,6 +54,7 @@ test1()
 DCB     *dcb;
 int     result;
 	int eno = 0;
+    SERV_LISTENER dummy;
 
         /* Poll tests */  
         ss_dfprintf(stderr,
@@ -60,7 +62,7 @@ int     result;
         init_test_env(NULL);
         poll_init();
         ss_dfprintf(stderr, "\t..done\nAdd a DCB");
-        dcb = dcb_alloc(DCB_ROLE_REQUEST_HANDLER);
+        dcb = dcb_alloc(DCB_ROLE_CLIENT_HANDLER, &dummy);
 
 		if(dcb == NULL){
 			ss_dfprintf(stderr, "\nError on function call: dcb_alloc() returned NULL.\n");

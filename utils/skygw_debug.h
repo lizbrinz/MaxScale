@@ -21,7 +21,7 @@
 #include <assert.h>
 #include <limits.h>
 
-#define __USE_UNIX98 1 
+#define __USE_UNIX98 1
 #include <pthread.h>
 #include <unistd.h>
 #include <stdbool.h>
@@ -97,10 +97,10 @@
 #else /* SS_DEBUG */
 
 # define ss_debug(exp)
-# define ss_dfprintf(a, b, ...)  
-# define ss_dfflush(s) 
-# define ss_dfwrite(a, b, c, d) 
-# define ss_dassert(exp) 
+# define ss_dfprintf(a, b, ...)
+# define ss_dfflush(s)
+# define ss_dfwrite(a, b, c, d)
+# define ss_dassert(exp)
 # define ss_info_dassert(exp, info)
 
 #endif /* SS_DEBUG */
@@ -139,7 +139,8 @@ typedef enum skygw_chk_t
     CHK_NUM_BACKEND_REF,
     CHK_NUM_PREP_STMT,
     CHK_NUM_PINFO,
-    CHK_NUM_MYSQLSES
+    CHK_NUM_MYSQLSES,
+    CHK_NUM_ADMINSES
 } skygw_chk_t;
 
 # define STRBOOL(b) ((b) ? "true" : "false")
@@ -253,16 +254,17 @@ typedef enum skygw_chk_t
                          ((t) == Item::VIEW_FIXER_ITEM ? "VIEW_FIXER_ITEM" :  \
                           ((t) == Item::EXPR_CACHE_ITEM ? "EXPR_CACHE_ITEM" : \
                            "Unknown item")))))))))))))))))))))))))))
-         
+
 #define STRDCBROLE(r) ((r) == DCB_ROLE_SERVICE_LISTENER ? "DCB_ROLE_SERVICE_LISTENER" : \
-                       ((r) == DCB_ROLE_REQUEST_HANDLER ? "DCB_ROLE_REQUEST_HANDLER" : \
-                        "UNKNOWN DCB ROLE"))
+                       ((r) == DCB_ROLE_CLIENT_HANDLER ? "DCB_ROLE_CLIENT_HANDLER" : \
+                        ((r) == DCB_ROLE_BACKEND_HANDLER ? "DCB_ROLE_BACKEND_HANDLER" : \
+                         "UNKNOWN DCB ROLE")))
 
 #define STRBETYPE(t) ((t) == BE_MASTER ? "BE_MASTER" : \
                         ((t) == BE_SLAVE ? "BE_SLAVE" : \
                         ((t) == BE_UNDEFINED ? "BE_UNDEFINED" : \
                         "Unknown backend tpe")))
-                        
+
 #define STRCRITERIA(c) ((c) == UNDEFINED_CRITERIA ? "UNDEFINED_CRITERIA" :              \
                         ((c) == LEAST_GLOBAL_CONNECTIONS ? "LEAST_GLOBAL_CONNECTIONS" : \
                         ((c) == LEAST_ROUTER_CONNECTIONS ? "LEAST_ROUTER_CONNECTIONS" : \
@@ -283,17 +285,17 @@ typedef enum skygw_chk_t
 			(t == TARGET_NAMED_SERVER ? "TARGET_NAMED_SERVER" : 	\
 			(t == TARGET_UNDEFINED ? "TARGET_UNDEFINED" : 		\
 			"Unknown target value")))))
-                        
+
 #define BREFSRV(b)	(b->bref_backend->backend_server)
-                        
-                        
+
+
 #define STRHINTTYPE(t)	(t == HINT_ROUTE_TO_MASTER ? "HINT_ROUTE_TO_MASTER" :	\
 			((t) == HINT_ROUTE_TO_SLAVE ? "HINT_ROUTE_TO_SLAVE" :	\
 			((t) == HINT_ROUTE_TO_NAMED_SERVER ? "HINT_ROUTE_TO_NAMED_SERVER" :		\
 			((t) == HINT_ROUTE_TO_UPTODATE_SERVER ? "HINT_ROUTE_TO_UPTODATE_SERVER" :	\
 			((t) == HINT_ROUTE_TO_ALL ? "HINT_ROUTE_TO_ALL" : 	\
 			((t) == HINT_PARAMETER ? "HINT_PARAMETER" : "UNKNOWN HINT TYPE"))))))
-                        
+
 #define STRDCBREASON(r)	((r) == DCB_REASON_CLOSE ? "DCB_REASON_CLOSE" : 		\
 			((r) == DCB_REASON_DRAINED ? "DCB_REASON_DRAINED" : 		\
 			((r) == DCB_REASON_HIGH_WATER ? "DCB_REASON_HIGH_WATER" : 	\
@@ -302,7 +304,7 @@ typedef enum skygw_chk_t
 			((r) == DCB_REASON_HUP ? "DCB_REASON_HUP" :			\
 			((r) == DCB_REASON_NOT_RESPONDING ? "DCB_REASON_NOT_RESPONDING" : 	\
 			"Unknown DCB reason")))))))
-                        
+
 #define CHK_MLIST(l) {                                                  \
             ss_info_dassert((l->mlist_chk_top ==  CHK_NUM_MLIST &&      \
                              l->mlist_chk_tail == CHK_NUM_MLIST),       \
@@ -465,7 +467,7 @@ typedef enum skygw_chk_t
                         lm->lm_chk_tail == CHK_NUM_LOGMANAGER,          \
                         "Log manager struct under- or overflow");       \
     }
-    
+
 #define CHK_FILE(f) {                                                   \
         ss_info_dassert(f->sf_chk_top == CHK_NUM_FILE &&                \
         f->sf_chk_tail == CHK_NUM_FILE,                                 \
@@ -524,19 +526,19 @@ typedef enum skygw_chk_t
 		(p)->rses_prop_chk_tail == CHK_NUM_ROUTER_PROPERTY, \
 		"Router property has invalid check fields"); \
         }
-        
+
 #define CHK_MYSQL_SESCMD(s) {                                            \
 	ss_info_dassert((s)->my_sescmd_chk_top == CHK_NUM_MY_SESCMD && \
 		(s)->my_sescmd_chk_tail == CHK_NUM_MY_SESCMD, \
 		"Session command has invalid check fields"); \
         }
-        
+
 #define CHK_SESCMD_CUR(c) {     \
         ss_info_dassert((c)->scmd_cur_chk_top == CHK_NUM_SESCMD_CUR && \
                 (c)->scmd_cur_chk_tail == CHK_NUM_SESCMD_CUR, \
                 "Session command cursor has invalid check fields"); \
         }
-        
+
 #define CHK_BACKEND(b) {     \
         ss_info_dassert((b)->be_chk_top == CHK_NUM_BACKEND && \
         (b)->be_chk_tail == CHK_NUM_BACKEND, \
@@ -565,6 +567,12 @@ typedef enum skygw_chk_t
 	ss_info_dassert((s)->myses_chk_top == CHK_NUM_MYSQLSES &&	\
 	(s)->myses_chk_tail == CHK_NUM_MYSQLSES,			\
 	"MYSQL session struct has invalid check fields");		\
+}
+
+#define CHK_ADMIN_SESSION(s) {						\
+	ss_info_dassert((s)->adminses_chk_top == CHK_NUM_ADMINSES &&	\
+	(s)->adminses_chk_tail == CHK_NUM_ADMINSES,			\
+	"Admin session struct has invalid check fields");		\
 }
 
 
