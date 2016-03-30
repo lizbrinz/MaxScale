@@ -94,6 +94,7 @@ bool avro_load_created_tables(AVRO_INSTANCE *router);
 int avro_client_callback(DCB *dcb, DCB_REASON reason, void *userdata);
 static bool ensure_dir_ok(const char* path, int mode);
 bool avro_save_conversion_state(AVRO_INSTANCE *router);
+static void stats_func(void *);
 
 /** The module object definition */
 static ROUTER_OBJECT MyObject =
@@ -108,32 +109,6 @@ static ROUTER_OBJECT MyObject =
     errorReply,
     getCapabilities
 };
-
-static void stats_func(void *);
-
-int table_id_hash(void *data)
-{
-    return *(uint64_t*) data;
-}
-
-int table_id_cmp(void *a, void *b)
-{
-    return *(uint64_t*) a != *(uint64_t*) b;
-}
-
-void* i64dup(void *data)
-{
-    uint64_t *k = malloc(sizeof(uint64_t));
-    *k = *(uint64_t*) data;
-    return k;
-
-}
-
-void* safe_key_free(void *data)
-{
-    free(data);
-    return NULL;
-}
 
 static SPINLOCK instlock;
 static AVRO_INSTANCE *instances;
@@ -176,7 +151,10 @@ GetModuleObject()
 }
 
 /**
- * Trim whitespace from string
+ * @brief Trim whitespace from string
+ *
+ * Trim leading and trailing whitespace from a string
+ *
  * @param str String to trim
  * @return Trimmed string
  */
@@ -195,6 +173,20 @@ static char* trim(char *str)
     }
 
     return str;
+}
+
+/**
+ * @brief Safe hashtable key freeing function
+ *
+ * This function conforms to the HASHMEMORYFN type by returning a NULL pointer
+ *
+ * @param data Data to free
+ * @return Always NULL
+ */
+void* safe_key_free(void *data)
+{
+    free(data);
+    return NULL;
 }
 
 /**
