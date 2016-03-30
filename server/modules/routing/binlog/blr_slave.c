@@ -86,12 +86,7 @@
 #include <zlib.h>
 
 extern int load_mysql_users(SERVICE *service);
-extern void blr_master_close(ROUTER_INSTANCE* router);
-extern int blr_file_new_binlog(ROUTER_INSTANCE *router, char *file);
-extern int blr_file_write_master_config(ROUTER_INSTANCE *router, char *error);
-extern char *blr_extract_column(GWBUF *buf, int col);
 extern uint32_t extract_field(uint8_t *src, int bits);
-int blr_file_get_next_binlogname(ROUTER_INSTANCE *router);
 static void encode_value(unsigned char *data, unsigned int value, int len);
 static int blr_slave_query(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, GWBUF *queue);
 static int blr_slave_replay(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, GWBUF *master);
@@ -158,7 +153,6 @@ static int blr_slave_send_columndef_with_status_schema(ROUTER_INSTANCE *router, 
                                                        char *name, int type, int len, uint8_t seqno);
 static void blr_send_slave_heartbeat(void *inst);
 static int blr_slave_send_heartbeat(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave);
-bool blr_send_event(ROUTER_SLAVE *slave, REP_HEADER *hdr, uint8_t *buf);
 
 void poll_fake_write_event(DCB *dcb);
 
@@ -349,7 +343,7 @@ blr_slave_query(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, GWBUF *queue)
     if (ptr != NULL)
     {
         char *new_text = strdup(query_text);
-        int trucate_at  = (ptr - query_text);
+        intptr_t trucate_at  = (ptr - query_text);
         if (trucate_at > 0)
         {
             if ( (trucate_at + 3) <= (int)strlen(new_text))
@@ -1999,7 +1993,7 @@ blr_slave_binlog_dump(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, GWBUF *queue
          * 5 bytes of the message. We also do not include the 4 byte checksum itself.
          */
         chksum = crc32(0L, NULL, 0);
-        chksum = crc32(chksum, GWBUF_DATA(resp) + 5, hdr.event_size - 4);
+        chksum = crc32(chksum, (uint8_t *)GWBUF_DATA(resp) + 5, hdr.event_size - 4);
         encode_value(ptr, chksum, 32);
     }
 
@@ -2712,7 +2706,7 @@ blr_slave_fake_rotate(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, BLFILE** fil
          * 5 bytes of the message. We also do not include the 4 byte checksum itself.
          */
         chksum = crc32(0L, NULL, 0);
-        chksum = crc32(chksum, GWBUF_DATA(resp) + 5, hdr.event_size - 4);
+        chksum = crc32(chksum, (uint8_t *)GWBUF_DATA(resp) + 5, hdr.event_size - 4);
         encode_value(ptr, chksum, 32);
     }
 
@@ -2778,9 +2772,9 @@ blr_slave_send_fde(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave)
      * calculate a new checksum
      * and write it into the header
      */
-    ptr = GWBUF_DATA(record) + hdr.event_size - 4;
+    ptr = (uint8_t *)GWBUF_DATA(record) + hdr.event_size - 4;
     chksum = crc32(0L, NULL, 0);
-    chksum = crc32(chksum, GWBUF_DATA(record), hdr.event_size - 4);
+    chksum = crc32(chksum, (uint8_t *)GWBUF_DATA(record), hdr.event_size - 4);
     encode_value(ptr, chksum, 32);
 
     slave->dcb->func.write(slave->dcb, head);
@@ -3020,15 +3014,14 @@ blr_slave_disconnect_server(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, int se
     if (!server_found)
     {
         n = blr_slave_send_disconnected_server(router, slave, server_id, 0);
-    }
-
-    if (n == 0)
-    {
-        MXS_ERROR("gwbuf memory allocation in "
+        if (n == 0)
+        {
+            MXS_ERROR("gwbuf memory allocation in "
                   "DISCONNECT SERVER server_id [%d]",
-                  sptr->serverid);
+                  slave->serverid);
 
-        blr_slave_send_error(router, slave, "Memory allocation error for DISCONNECT SERVER");
+            blr_slave_send_error(router, slave, "Memory allocation error for DISCONNECT SERVER");
+        }
     }
 
     return 1;
@@ -5219,7 +5212,7 @@ blr_slave_send_heartbeat(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave)
     if (!slave->nocrc)
     {
         chksum = crc32(0L, NULL, 0);
-        chksum = crc32(chksum, GWBUF_DATA(resp) + 5, hdr.event_size - 4);
+        chksum = crc32(chksum, (uint8_t *)GWBUF_DATA(resp) + 5, hdr.event_size - 4);
         encode_value(ptr, chksum, 32);
     }
 

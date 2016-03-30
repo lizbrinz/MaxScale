@@ -91,8 +91,6 @@ void blr_distribute_binlog_record(ROUTER_INSTANCE *router, REP_HEADER *hdr, uint
 static void *CreateMySQLAuthData(char *username, char *password, char *database);
 void blr_extract_header(uint8_t *pkt, REP_HEADER *hdr);
 static void blr_log_packet(int priority, char *msg, uint8_t *ptr, int len);
-void blr_master_close(ROUTER_INSTANCE *);
-char *blr_extract_column(GWBUF *buf, int col);
 void poll_fake_write_event(DCB *dcb);
 GWBUF *blr_read_events_from_pos(ROUTER_INSTANCE *router, unsigned long long pos, REP_HEADER *hdr,
                                 unsigned long long pos_end);
@@ -103,7 +101,6 @@ static void blr_distribute_error_message(ROUTER_INSTANCE *router, char *message,
                                          unsigned int err_code);
 
 int blr_write_data_into_binlog(ROUTER_INSTANCE *router, uint32_t data_len, uint8_t *buf);
-bool blr_send_event(ROUTER_SLAVE *slave, REP_HEADER *hdr, uint8_t *buf);
 void extract_checksum(ROUTER_INSTANCE* router, uint8_t *cksumptr, uint8_t len);
 
 static int keepalive = 1;
@@ -1283,14 +1280,17 @@ blr_handle_binlog_record(ROUTER_INSTANCE *router, GWBUF *pkt)
 
                         statement_len = len - (4 + 20 + 4 + 4 + 1 + 2 + 2 + var_block_len + 1 + db_name_len);
                         statement_sql = calloc(1, statement_len + 1);
-                        strncpy(statement_sql,
+                        if (statement_sql)
+                        {
+                            strncpy(statement_sql,
                                 (char *)ptr + 4 + 20 + 4 + 4 + 1 + 2 + 2 + var_block_len + 1 + db_name_len,
                                 statement_len);
+                        }
 
                         spinlock_acquire(&router->binlog_lock);
 
                         /* Check for BEGIN (it comes for START TRANSACTION too) */
-                        if (strncmp(statement_sql, "BEGIN", 5) == 0)
+                        if (statement_sql && strncmp(statement_sql, "BEGIN", 5) == 0)
                         {
                             if (router->pending_transaction > 0)
                             {
@@ -1306,7 +1306,7 @@ blr_handle_binlog_record(ROUTER_INSTANCE *router, GWBUF *pkt)
                         }
 
                         /* Check for COMMIT in non transactional store engines */
-                        if (strncmp(statement_sql, "COMMIT", 6) == 0)
+                        if (statement_sql && strncmp(statement_sql, "COMMIT", 6) == 0)
                         {
                             router->pending_transaction = 2;
                         }
@@ -2431,7 +2431,7 @@ blr_check_heartbeat(ROUTER_INSTANCE *router)
 
     if (router->master_state == BLRM_BINLOGDUMP && router->lastEventReceived > 0)
     {
-        if ((t_now - router->stats.lastReply) > (router->heartbeat + BLR_NET_LATENCY_WAIT_TIME))
+        if ((t_now - router->stats.lastReply) > ((unsigned int)router->heartbeat + BLR_NET_LATENCY_WAIT_TIME))
         {
             MXS_ERROR("No event received from master %s:%d in heartbeat period (%lu seconds), "
                       "last event (%s %d) received %lu seconds ago. Assuming connection is dead "

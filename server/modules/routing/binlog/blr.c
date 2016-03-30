@@ -17,10 +17,10 @@
  */
 
 /**
- * @file blr.c - binlog router, allows MaxScale to act as an intermediatory for replication
+ * @file blr.c - binlog router, allows MaxScale to act as an intermediary for replication
  *
  * The binlog router is designed to be used in replication environments to
- * increase the replication fanout of a master server. It provides a transparant
+ * increase the replication fanout of a master server. It provides a transparent
  * mechanism to read the binlog entries for multiple slaves while requiring
  * only a single connection to the actual master to support the slaves.
  *
@@ -108,7 +108,6 @@ static int blr_set_service_mysql_user(SERVICE *service);
 static int blr_load_dbusers(const ROUTER_INSTANCE *router);
 static int blr_check_binlog(ROUTER_INSTANCE *router);
 int blr_read_events_all_events(ROUTER_INSTANCE *router, int fix, int debug);
-void blr_master_close(ROUTER_INSTANCE *);
 extern int MaxScaleUptime();
 
 /** The module object definition */

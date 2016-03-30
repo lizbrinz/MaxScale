@@ -612,5 +612,11 @@ char    *blr_get_event_description(ROUTER_INSTANCE *router, uint8_t event);
 void blr_file_append(ROUTER_INSTANCE *router, char *file);
 void blr_cache_response(ROUTER_INSTANCE *router, char *response, GWBUF *buf);
 char * blr_last_event_description(ROUTER_INSTANCE *router);
+char *blr_extract_column(GWBUF *buf, int col);
+int blr_file_get_next_binlogname(ROUTER_INSTANCE *router);
+int blr_file_new_binlog(ROUTER_INSTANCE *router, char *file);
+int blr_file_write_master_config(ROUTER_INSTANCE *router, char *error);
+void blr_master_close(ROUTER_INSTANCE *);
+bool blr_send_event(ROUTER_SLAVE *slave, REP_HEADER *hdr, uint8_t *buf);
 
 #endif
