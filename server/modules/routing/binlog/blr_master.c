@@ -148,7 +148,7 @@ blr_start_master(void* data)
     router->residual = NULL;
 
     spinlock_release(&router->lock);
-    if ((client = dcb_alloc(DCB_ROLE_INTERNAL)) == NULL)
+    if ((client = dcb_alloc(DCB_ROLE_INTERNAL, NULL)) == NULL)
     {
         MXS_ERROR("Binlog router: failed to create DCB for dummy client");
         return;

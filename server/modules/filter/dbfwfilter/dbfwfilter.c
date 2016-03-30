@@ -1694,7 +1694,7 @@ bool rule_matches(FW_INSTANCE* my_instance,
     }
 
     if (rulelist->rule->on_queries == QUERY_OP_UNDEFINED || rulelist->rule->on_queries & optype ||
-        (MYSQL_IS_COM_INIT_DB(queue) && rulelist->rule->on_queries & QUERY_OP_CHANGE_DB))
+        (MYSQL_IS_COM_INIT_DB((uint8_t*)GWBUF_DATA(queue)) && rulelist->rule->on_queries & QUERY_OP_CHANGE_DB))
     {
         switch (rulelist->rule->type)
         {
@@ -1950,7 +1950,7 @@ bool check_match_any(FW_INSTANCE* my_instance, FW_SESSION* my_session,
 
     if ((rulelist = user->rules_or) &&
         (modutil_is_SQL(queue) || modutil_is_SQL_prepare(queue) ||
-         MYSQL_IS_COM_INIT_DB(queue)))
+         MYSQL_IS_COM_INIT_DB((uint8_t*)GWBUF_DATA(queue))))
     {
         char *fullquery = modutil_get_SQL(queue);
         while (rulelist)

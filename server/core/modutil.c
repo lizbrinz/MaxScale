@@ -280,7 +280,8 @@ modutil_get_SQL(GWBUF *buf)
     unsigned char *ptr;
     char *dptr, *rval = NULL;
 
-    if (modutil_is_SQL(buf) || modutil_is_SQL_prepare(buf) || MYSQL_IS_COM_INIT_DB(buf))
+    if (modutil_is_SQL(buf) || modutil_is_SQL_prepare(buf) ||
+        MYSQL_IS_COM_INIT_DB((uint8_t*)GWBUF_DATA(buf)))
     {
         ptr = GWBUF_DATA(buf);
         length = *ptr++;

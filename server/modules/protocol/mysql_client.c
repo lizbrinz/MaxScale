@@ -676,6 +676,7 @@ gw_read_normal_data(DCB *dcb, GWBUF *read_buffer, int nbytes_read)
         {
             return 0;
         }
+        gwbuf_set_type(read_buffer, GWBUF_TYPE_MYSQL);
     }
     return gw_read_finish_processing(dcb, read_buffer, capabilities);
 }
