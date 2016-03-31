@@ -339,8 +339,6 @@ typedef struct router_instance
     BACKEND*                master;      /*< NULL or pointer */
     rwsplit_config_t        rwsplit_config; /*< expanded config info from SERVICE */
     int                     rwsplit_version; /*< version number for router's config */
-    unsigned int            bitmask;     /*< Bitmask to apply to server->status */
-    unsigned int            bitvalue;    /*< Required value of server->status */
     ROUTER_STATS            stats;       /*< Statistics for this router */
     struct router_instance* next;        /*< Next router on the list */
     bool                    available_slaves; /*< The router has some slaves avialable */

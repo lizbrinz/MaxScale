@@ -620,18 +620,6 @@ static ROUTER *createInstance(SERVICE *service, char **options)
         }
     }
 
-    /**
-     * vraa : is this necessary for readwritesplit ?
-     * Option : where can a read go?
-     * - master (only)
-     * - slave (only)
-     * - joined (to both)
-     *
-     * Process the options
-     */
-    router->bitmask = 0;
-    router->bitvalue = 0;
-
     /** Enable strict multistatement handling by default */
     router->rwsplit_config.rw_strict_multi_stmt = true;
 
@@ -2970,39 +2958,120 @@ static void bref_set_state(backend_ref_t *bref, bref_state_t state)
 }
 
 /**
- * @node Search suitable backend servers from those of router instance.
+ * @brief Connect a server
  *
- * Parameters:
- * @param p_master_ref - in, use, out
- *      Pointer to location where master's backend reference is to  be stored.
- *      NULL is not allowed.
+ * Connects to a server, adds callbacks to the created DCB and updates
+ * router statistics. If @p execute_history is true, the session command
+ * history will be executed on this server.
  *
- * @param backend_ref - in, use, out
- *      Pointer to backend server reference object array.
- *      NULL is not allowed.
+ * @param b Router's backend structure for the server
+ * @param session Client's session object
+ * @param execute_history Execute session command history
+ * @return True if successful, false if an error occurred
+ */
+bool connect_server(backend_ref_t *bref, SESSION *session, bool execute_history)
+{
+    SERVER *serv = bref->bref_backend->backend_server;
+    bool rval = false;
+
+    bref->bref_dcb = dcb_connect(serv, session, serv->protocol);
+
+    if (bref->bref_dcb != NULL)
+    {
+        if (execute_history)
+        {
+            /** Execute session command history */
+            execute_sescmd_history(bref);
+        }
+
+        /** Add a callback for unresponsive server */
+        dcb_add_callback(bref->bref_dcb, DCB_REASON_NOT_RESPONDING,
+                         &router_handle_state_switch, (void *) bref);
+        bref->bref_state = 0;
+        bref_set_state(bref, BREF_IN_USE);
+        atomic_add(&bref->bref_backend->backend_conn_count, 1);
+        rval = true;
+    }
+    else
+    {
+        MXS_ERROR("Unable to establish connection with server %s:%d",
+                  serv->name, serv->port);
+    }
+
+    return rval;
+}
+
+/**
+ * @brief Log server connections
  *
- * @param router_nservers - in, use
- *      Number of backend server pointers pointed to by b.
+ * @param select_criteria Slave selection criteria
+ * @param backend_ref Backend reference array
+ * @param router_nservers Number of backends in @p backend_ref
+ */
+void log_server_connections(select_criteria_t select_criteria,
+                            backend_ref_t *backend_ref, int router_nservers)
+{
+    if (select_criteria == LEAST_GLOBAL_CONNECTIONS ||
+        select_criteria == LEAST_ROUTER_CONNECTIONS ||
+        select_criteria == LEAST_BEHIND_MASTER ||
+        select_criteria == LEAST_CURRENT_OPERATIONS)
+    {
+        MXS_INFO("Servers and %s connection counts:",
+                 select_criteria == LEAST_GLOBAL_CONNECTIONS ? "all MaxScale"
+                 : "router");
+
+        for (int i = 0; i < router_nservers; i++)
+        {
+            BACKEND *b = backend_ref[i].bref_backend;
+
+            switch (select_criteria)
+            {
+                case LEAST_GLOBAL_CONNECTIONS:
+                    MXS_INFO("MaxScale connections : %d in \t%s:%d %s",
+                             b->backend_server->stats.n_current, b->backend_server->name,
+                             b->backend_server->port, STRSRVSTATUS(b->backend_server));
+                    break;
+
+                case LEAST_ROUTER_CONNECTIONS:
+                    MXS_INFO("RWSplit connections : %d in \t%s:%d %s",
+                             b->backend_conn_count, b->backend_server->name,
+                             b->backend_server->port, STRSRVSTATUS(b->backend_server));
+                    break;
+
+                case LEAST_CURRENT_OPERATIONS:
+                    MXS_INFO("current operations : %d in \t%s:%d %s",
+                             b->backend_server->stats.n_current_ops,
+                             b->backend_server->name, b->backend_server->port,
+                             STRSRVSTATUS(b->backend_server));
+                    break;
+
+                case LEAST_BEHIND_MASTER:
+                    MXS_INFO("replication lag : %d in \t%s:%d %s",
+                             b->backend_server->rlag, b->backend_server->name,
+                             b->backend_server->port, STRSRVSTATUS(b->backend_server));
+                default:
+                    break;
+            }
+        }
+    }
+}
+
+/**
+ * @brief Search suitable backend servers from those of router instance
  *
- * @param max_nslaves - in, use
- *      Upper limit for the number of slaves. Configuration parameter or default.
+ * It is assumed that there is only one master among servers of a router instance.
+ * As a result, the first master found is chosen. There will possibly be more
+ * backend references than connected backends because only those in correct state
+ * are connected to.
  *
- * @param max_slave_rlag - in, use
- *      Maximum allowed replication lag for any slave. Configuration parameter or default.
- *
- * @param session - in, use
- *      MaxScale session pointer used when connection to backend is established.
- *
- * @param  router - in, use
- *      Pointer to router instance. Used when server states are qualified.
- *
+ * @param p_master_ref Pointer to location where master's backend reference is to  be stored
+ * @param backend_ref Pointer to backend server reference object array
+ * @param router_nservers Number of backend server pointers pointed to by @p backend_ref
+ * @param max_nslaves Upper limit for the number of slaves
+ * @param max_slave_rlag Maximum allowed replication lag for any slave
+ * @param session Client session
+ * @param router Router instance
  * @return true, if at least one master and one slave was found.
- *
- *
- * @details It is assumed that there is only one master among servers of
- *      a router instance. As a result, the first master found is chosen.
- *      There will possibly be more backend references than connected backends
- *      because only those in correct state are connected to.
  */
 static bool select_connect_backend_servers(backend_ref_t **p_master_ref,
                                            backend_ref_t *backend_ref,
@@ -3012,26 +3081,16 @@ static bool select_connect_backend_servers(backend_ref_t **p_master_ref,
                                            SESSION *session,
                                            ROUTER_INSTANCE *router)
 {
-    bool succp = true;
-    bool master_found;
-    bool master_connected;
-    int slaves_found = 0;
-    int slaves_connected = 0;
-    int i;
-    const int min_nslaves = 0; /*< not configurable at the time */
-    bool is_synced_master;
-    int (*p)(const void *, const void *);
-    BACKEND *master_host;
-
     if (p_master_ref == NULL || backend_ref == NULL)
     {
-        ss_dassert(FALSE);
-        succp = false;
-        goto return_succp;
+        ss_dassert(false);
+        return false;
     }
 
     /* get the root Master */
-    master_host = get_root_master(backend_ref, router_nservers);
+    BACKEND *master_host = get_root_master(backend_ref, router_nservers);
+    bool master_found = false;
+    bool master_connected = false;
 
     /**
      * Existing session : master is already chosen and connected.
@@ -3048,247 +3107,79 @@ static bool select_connect_backend_servers(backend_ref_t **p_master_ref,
             !SERVER_IS_MASTER((*p_master_ref)->bref_backend->backend_server) ||
             master_host != (*p_master_ref)->bref_backend)
         {
-            succp = false;
-            goto return_succp;
+            return false;
         }
         master_found = true;
         master_connected = true;
     }
-    /** New session : select master and slaves */
-    else
-    {
-        master_found = false;
-        master_connected = false;
-    }
 
     /** Check slave selection criteria and set compare function */
-    p = criteria_cmpfun[select_criteria];
+    int (*p)(const void *, const void *) = criteria_cmpfun[select_criteria];
+    ss_dassert(p);
 
-    if (p == NULL)
-    {
-        succp = false;
-        goto return_succp;
-    }
-
-    if (router->bitvalue != 0) /*< 'synced' is the only bitvalue in rwsplit */
-    {
-        is_synced_master = true;
-    }
-    else
-    {
-        is_synced_master = false;
-    }
-
-#if defined(EXTRA_SS_DEBUG)
-    MXS_INFO("Servers and conns before ordering:");
-
-    for (i = 0; i < router_nservers; i++)
-    {
-        BACKEND *b = backend_ref[i].bref_backend;
-
-        MXS_INFO("master bref %p bref %p %d %s %d:%d", *p_master_ref,
-                 &backend_ref[i], backend_ref[i].bref_state,
-                 b->backend_server->name, b->backend_server->port,
-                 b->backend_conn_count);
-    }
-#endif
     /**
      * Sort the pointer list to servers according to connection counts. As
      * a consequence those backends having least connections are in the
      * beginning of the list.
      */
-    qsort(backend_ref, (size_t)router_nservers, sizeof(backend_ref_t), p);
+    qsort(backend_ref, (size_t) router_nservers, sizeof(backend_ref_t), p);
 
     if (MXS_LOG_PRIORITY_IS_ENABLED(LOG_INFO))
     {
-        if (select_criteria == LEAST_GLOBAL_CONNECTIONS ||
-            select_criteria == LEAST_ROUTER_CONNECTIONS ||
-            select_criteria == LEAST_BEHIND_MASTER ||
-            select_criteria == LEAST_CURRENT_OPERATIONS)
-        {
-            MXS_INFO("Servers and %s connection counts:",
-                     select_criteria == LEAST_GLOBAL_CONNECTIONS ? "all MaxScale"
-                     : "router");
+        log_server_connections(select_criteria, backend_ref, router_nservers);
+    }
 
-            for (i = 0; i < router_nservers; i++)
-            {
-                BACKEND *b = backend_ref[i].bref_backend;
-
-                switch (select_criteria)
-                {
-                    case LEAST_GLOBAL_CONNECTIONS:
-                        MXS_INFO("MaxScale connections : %d in \t%s:%d %s",
-                                 b->backend_server->stats.n_current, b->backend_server->name,
-                                 b->backend_server->port, STRSRVSTATUS(b->backend_server));
-                        break;
-
-                    case LEAST_ROUTER_CONNECTIONS:
-                        MXS_INFO("RWSplit connections : %d in \t%s:%d %s",
-                                 b->backend_conn_count, b->backend_server->name,
-                                 b->backend_server->port, STRSRVSTATUS(b->backend_server));
-                        break;
-
-                    case LEAST_CURRENT_OPERATIONS:
-                        MXS_INFO("current operations : %d in \t%s:%d %s",
-                                 b->backend_server->stats.n_current_ops,
-                                 b->backend_server->name, b->backend_server->port,
-                                 STRSRVSTATUS(b->backend_server));
-                        break;
-
-                    case LEAST_BEHIND_MASTER:
-                        MXS_INFO("replication lag : %d in \t%s:%d %s",
-                                 b->backend_server->rlag, b->backend_server->name,
-                                 b->backend_server->port, STRSRVSTATUS(b->backend_server));
-                    default:
-                        break;
-                }
-            }
-        }
-    } /*< log only */
+    int slaves_found = 0;
+    int slaves_connected = 0;
+    const int min_nslaves = 0; /*< not configurable at the time */
+    bool succp = false;
 
     /**
      * Choose at least 1+min_nslaves (master and slave) and at most 1+max_nslaves
      * servers from the sorted list. First master found is selected.
      */
-    for (i = 0; i < router_nservers &&
-         (slaves_connected < max_nslaves || !master_connected);
-         i++)
+    for (int i = 0; i < router_nservers &&
+         (slaves_connected < max_nslaves || !master_connected); i++)
     {
-        BACKEND *b = backend_ref[i].bref_backend;
+        SERVER *serv = backend_ref[i].bref_backend->backend_server;
 
-        if (SERVER_IS_RUNNING(b->backend_server) &&
-            ((b->backend_server->status & router->bitmask) == router->bitvalue))
+        if (!BREF_HAS_FAILED(&backend_ref[i]) && SERVER_IS_RUNNING(serv))
         {
             /* check also for relay servers and don't take the master_host */
             if (slaves_found < max_nslaves &&
                 (max_slave_rlag == MAX_RLAG_UNDEFINED ||
-                 (b->backend_server->rlag != MAX_RLAG_NOT_AVAILABLE &&
-                  b->backend_server->rlag <= max_slave_rlag)) &&
-                (SERVER_IS_SLAVE(b->backend_server) ||
-                 SERVER_IS_RELAY_SERVER(b->backend_server)) &&
-                (master_host != NULL &&
-                 (b->backend_server != master_host->backend_server)))
+                 (serv->rlag != MAX_RLAG_NOT_AVAILABLE &&
+                  serv->rlag <= max_slave_rlag)) &&
+                (SERVER_IS_SLAVE(serv) || SERVER_IS_RELAY_SERVER(serv)) &&
+                (master_host != NULL && (serv != master_host->backend_server)))
             {
-                if (BREF_HAS_FAILED(&backend_ref[i]))
-                {
-                    continue;
-                }
-
                 slaves_found += 1;
 
-                /** Slave is already connected */
-                if (BREF_IS_IN_USE((&backend_ref[i])))
+                if (BREF_IS_IN_USE((&backend_ref[i])) ||
+                    connect_server(&backend_ref[i], session, true))
                 {
                     slaves_connected += 1;
                 }
-                /** New slave connection is taking place */
-                else
-                {
-                    backend_ref[i].bref_dcb = dcb_connect(b->backend_server, session,
-                                                          b->backend_server->protocol);
-
-                    if (backend_ref[i].bref_dcb != NULL)
-                    {
-                        slaves_connected += 1;
-                        /**
-                         * Start executing session command
-                         * history.
-                         */
-                        execute_sescmd_history(&backend_ref[i]);
-                        /**
-                         * Here we actually say : When this
-                         * type of issue occurs (DCB_REASON_...)
-                         * for this particular DCB,
-                         * call this function.
-                         */
-                        dcb_add_callback(backend_ref[i].bref_dcb, DCB_REASON_NOT_RESPONDING,
-                                         &router_handle_state_switch,
-                                         (void *)&backend_ref[i]);
-                        backend_ref[i].bref_state = 0;
-                        bref_set_state(&backend_ref[i], BREF_IN_USE);
-                        /**
-                         * Increase backend connection counter.
-                         * Server's stats are _increased_ in
-                         * dcb.c:dcb_alloc !
-                         * But decreased in the calling function
-                         * of dcb_close.
-                         */
-                        atomic_add(&b->backend_conn_count, 1);
-                    }
-                    else
-                    {
-                        MXS_ERROR("Unable to establish connection with slave %s:%d",
-                                  b->backend_server->name, b->backend_server->port);
-                        /* handle connect error */
-                    }
-                }
             }
-            /* take the master_host for master */
-            else if (master_host && (b->backend_server == master_host->backend_server))
+                /* take the master_host for master */
+            else if (master_host && (serv == master_host->backend_server))
             {
-                /**
-                 * *p_master_ref must be assigned with this
-                 * backend_ref pointer because its original value
-                 * may have been lost when backend references were
-                 * sorted (qsort).
-                 */
+                /** p_master_ref must be assigned with this backend_ref pointer
+                 * because its original value may have been lost when backend
+                 * references were sorted with qsort. */
                 *p_master_ref = &backend_ref[i];
 
-                if (master_connected)
+                if (!master_connected)
                 {
-                    continue;
-                }
-
-                master_found = true;
-
-                backend_ref[i].bref_dcb = dcb_connect(b->backend_server, session,
-                                                      b->backend_server->protocol);
-
-                if (backend_ref[i].bref_dcb != NULL)
-                {
-                    master_connected = true;
-                    /**
-                     * When server fails, this callback
-                     * is called.
-                     */
-                    dcb_add_callback(backend_ref[i].bref_dcb, DCB_REASON_NOT_RESPONDING,
-                                     &router_handle_state_switch,
-                                     (void *)&backend_ref[i]);
-
-                    backend_ref[i].bref_state = 0;
-                    bref_set_state(&backend_ref[i], BREF_IN_USE);
-                    /** Increase backend connection counters */
-                    atomic_add(&b->backend_conn_count, 1);
-                }
-                else
-                {
-                    succp = false;
-                    MXS_ERROR("Unable to establish connection with master %s:%d",
-                              b->backend_server->name, b->backend_server->port);
-                    /** handle connect error */
+                    master_found = true;
+                    if (connect_server(&backend_ref[i], session, false))
+                    {
+                        master_connected = true;
+                    }
                 }
             }
         }
     } /*< for */
-
-#if defined(EXTRA_SS_DEBUG)
-    MXS_INFO("Servers and conns after ordering:");
-
-    for (i = 0; i < router_nservers; i++)
-    {
-        BACKEND *b = backend_ref[i].bref_backend;
-
-        MXS_INFO("master bref %p bref %p %d %s %d:%d", *p_master_ref,
-                 &backend_ref[i], backend_ref[i].bref_state,
-                 b->backend_server->name, b->backend_server->port,
-                 b->backend_conn_count);
-    }
-    /* assert with master_host */
-    ss_dassert(!master_connected ||
-               (master_host && ((*p_master_ref)->bref_backend->backend_server ==
-                                master_host->backend_server) &&
-                SERVER_MASTER));
-#endif
 
     /**
      * Successful cases
@@ -3298,63 +3189,39 @@ static bool select_connect_backend_servers(backend_ref_t **p_master_ref,
     {
         succp = true;
 
-        if (slaves_connected == 0 && slaves_found > 0)
-        {
-#if defined(SS_EXTRA_DEBUG)
-            MXS_WARNING("Couldn't connect to any of the %d "
-                        "slaves. Routing to %s only.",
-                        slaves_found, (is_synced_master ? "Galera nodes" : "Master"));
-#endif
-        }
-        else if (slaves_found == 0)
-        {
-#if defined(SS_EXTRA_DEBUG)
-            MXS_WARNING("Couldn't find any slaves from existing "
-                        "%d servers. Routing to %s only.",
-                        router_nservers,
-                        (is_synced_master ? "Galera nodes" : "Master"));
-#endif
-        }
-        else if (slaves_connected < max_nslaves)
-        {
-            MXS_INFO("Couldn't connect to maximum number of "
-                     "slaves. Connected successfully to %d slaves "
-                     "of %d of them.", slaves_connected, slaves_found);
-        }
-
         if (MXS_LOG_PRIORITY_IS_ENABLED(LOG_INFO))
         {
-            for (i = 0; i < router_nservers; i++)
+            if (slaves_connected < max_nslaves)
             {
-                BACKEND *b = backend_ref[i].bref_backend;
+                MXS_INFO("Couldn't connect to maximum number of "
+                         "slaves. Connected successfully to %d slaves "
+                         "of %d of them.", slaves_connected, slaves_found);
+            }
 
+            for (int i = 0; i < router_nservers; i++)
+            {
                 if (BREF_IS_IN_USE((&backend_ref[i])))
                 {
-                    MXS_INFO("Selected %s in \t%s:%d", STRSRVSTATUS(b->backend_server),
-                             b->backend_server->name, b->backend_server->port);
+                    MXS_INFO("Selected %s in \t%s:%d",
+                             STRSRVSTATUS(backend_ref[i].bref_backend->backend_server),
+                             backend_ref[i].bref_backend->backend_server->name,
+                             backend_ref[i].bref_backend->backend_server->port);
                 }
             } /* for */
         }
     }
-    /**
-     * Failure cases
-     */
+        /** Failure cases */
     else
     {
-        succp = false;
-
         if (!master_found)
         {
-            MXS_ERROR("Couldn't find suitable %s from %d candidates.",
-                      (is_synced_master ? "Galera node" : "Master"),
+            MXS_ERROR("Couldn't find suitable Master from %d candidates.",
                       router_nservers);
         }
         else if (!master_connected)
         {
-            MXS_ERROR("Couldn't connect to any %s although there exists at least "
-                      "one %s node in the cluster.",
-                      (is_synced_master ? "Galera node" : "Master"),
-                      (is_synced_master ? "Galera node" : "Master"));
+            MXS_ERROR("Couldn't connect to any Master node although there exists"
+                      "at least one Master node in the cluster.");
         }
 
         if (slaves_connected < min_nslaves)
@@ -3364,7 +3231,7 @@ static bool select_connect_backend_servers(backend_ref_t **p_master_ref,
         }
 
         /** Clean up connections */
-        for (i = 0; i < router_nservers; i++)
+        for (int i = 0; i < router_nservers; i++)
         {
             if (BREF_IS_IN_USE((&backend_ref[i])))
             {
@@ -3378,7 +3245,6 @@ static bool select_connect_backend_servers(backend_ref_t **p_master_ref,
             }
         }
     }
-return_succp:
 
     return succp;
 }
