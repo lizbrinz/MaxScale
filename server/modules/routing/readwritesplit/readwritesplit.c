@@ -2644,10 +2644,7 @@ static void clientReply(ROUTER *instance, void *router_session, GWBUF *writebuf,
      */
     if (client_dcb == NULL)
     {
-        while ((writebuf = gwbuf_consume(writebuf, GWBUF_LENGTH(writebuf))) != NULL)
-        {
-            ;
-        }
+        gwbuf_free(writebuf);
         /** Log that client was closed before reply */
         goto lock_failed;
     }
@@ -3625,10 +3622,8 @@ static GWBUF *sescmd_cursor_process_replies(GWBUF *replybuf,
                     dcb_close(bref->bref_dcb);
                 }
                 *reconnect = true;
-                while (replybuf && (replybuf = gwbuf_consume(replybuf, gwbuf_length(replybuf))))
-                {
-                    ;
-                }
+                gwbuf_free(replybuf);
+                replybuf = NULL;
             }
         }
         /** This is a response from the master and it is the "right" one.
@@ -3684,10 +3679,8 @@ static GWBUF *sescmd_cursor_process_replies(GWBUF *replybuf,
                           serv->unique_name, serv->name, serv->port);
             }
 
-            while (replybuf && (replybuf = gwbuf_consume(replybuf, gwbuf_length(replybuf))))
-            {
-                ;
-            }
+            gwbuf_free(replybuf);
+            replybuf = NULL;
         }
 
         if (sescmd_cursor_next(scur))
@@ -4727,10 +4720,7 @@ static void print_error_packet(ROUTER_CLIENT_SES *rses, GWBUF *buf, DCB *dcb)
     }
     else
     {
-        while ((buf = gwbuf_consume(buf, GWBUF_LENGTH(buf))) != NULL)
-        {
-            ;
-        }
+        gwbuf_free(buf);
     }
 #endif /*< SS_DEBUG */
 }
