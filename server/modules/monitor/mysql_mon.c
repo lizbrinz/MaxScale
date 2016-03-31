@@ -164,7 +164,8 @@ startMonitor(void *arg, void* opt)
         handle->shutdown = 0;
         handle->id = config_get_gateway_id();
         handle->replicationHeartbeat = 0;
-        handle->detectStaleMaster = 0;
+        handle->detectStaleMaster = true;
+        handle->detectStaleSlave = true;
         handle->master = NULL;
         handle->script = NULL;
         handle->mysql51_replication = false;
@@ -176,6 +177,8 @@ startMonitor(void *arg, void* opt)
     {
         if (!strcmp(params->name, "detect_stale_master"))
             handle->detectStaleMaster = config_truth_value(params->value);
+        else if (!strcmp(params->name, "detect_stale_slave"))
+            handle->detectStaleSlave = config_truth_value(params->value);
         else if (!strcmp(params->name, "detect_replication_lag"))
             handle->replicationHeartbeat = config_truth_value(params->value);
         else if (!strcmp(params->name, "script"))
@@ -203,6 +206,15 @@ startMonitor(void *arg, void* opt)
         }
         params = params->next;
     }
+
+    if (!check_monitor_permissions(monitor, "SHOW SLAVE STATUS"))
+    {
+        MXS_ERROR("Failed to start monitor. See earlier errors for more information.");
+        free(handle->script);
+        free(handle);
+        return NULL;
+    }
+
     if (script_error)
     {
         MXS_ERROR("Errors were found in the script configuration parameters "
@@ -654,8 +666,10 @@ monitorDatabase(MONITOR *mon, MONITOR_SERVERS *database)
             /* Clean addition status too */
             server_clear_status(database->server, SERVER_SLAVE_OF_EXTERNAL_MASTER);
             server_clear_status(database->server, SERVER_STALE_STATUS);
+            server_clear_status(database->server, SERVER_STALE_SLAVE);
             monitor_clear_pending_status(database, SERVER_SLAVE_OF_EXTERNAL_MASTER);
             monitor_clear_pending_status(database, SERVER_STALE_STATUS);
+            monitor_clear_pending_status(database, SERVER_STALE_SLAVE);
 
             /* Log connect failure only once */
             if (mon_status_changed(database) && mon_print_fail_status(database))
@@ -747,7 +761,7 @@ monitorMain(void *arg)
     MYSQL_MONITOR *handle;
     MONITOR_SERVERS *ptr;
     int replication_heartbeat;
-    int detect_stale_master;
+    bool detect_stale_master;
     int num_servers = 0;
     MONITOR_SERVERS *root_master = NULL;
     size_t nrounds = 0;
@@ -942,10 +956,41 @@ monitorMain(void *arg)
                                    ptr->server->port);
                     }
                 }
-                else
+
+                if (handle->detectStaleSlave)
                 {
-                    ptr->server->status = ptr->pending_status;
+                    int bits = SERVER_SLAVE | SERVER_RUNNING;
+
+                    if ((ptr->mon_prev_status & bits) == bits &&
+                        root_master && SERVER_IS_MASTER(root_master->server))
+                    {
+                        /** Slave with a running master, assign stale slave candidacy */
+                        if ((ptr->pending_status & bits) == bits)
+                        {
+                            ptr->pending_status |= SERVER_STALE_SLAVE;
+                        }
+                        /** Server lost slave when a master is available, remove
+                         * stale slave candidacy */
+                        else if ((ptr->pending_status & bits) == SERVER_RUNNING)
+                        {
+                            ptr->pending_status &= ~SERVER_STALE_SLAVE;
+                        }
+                    }
+                    /** If this server was a stale slave candidate, assign
+                     * slave status to it */
+                    else if (ptr->mon_prev_status & SERVER_STALE_SLAVE &&
+                             ptr->pending_status & SERVER_RUNNING &&
+                             // Master is down
+                             (!root_master || !SERVER_IS_MASTER(root_master->server) ||
+                              // Master just came up
+                              (SERVER_IS_MASTER(root_master->server) &&
+                               (root_master->mon_prev_status & SERVER_MASTER) == 0)))
+                    {
+                        ptr->pending_status |= SERVER_SLAVE;
+                    }
                 }
+
+                ptr->server->status = ptr->pending_status;
             }
             ptr = ptr->next;
         }
