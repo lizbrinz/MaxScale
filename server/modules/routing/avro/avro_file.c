@@ -385,11 +385,13 @@ static GWBUF* read_event_data(AVRO_INSTANCE *router, REP_HEADER* hdr, uint64_t p
 {
     GWBUF* result;
     /* Allocate a GWBUF for the event */
-    if ((result = gwbuf_alloc(hdr->event_size - BINLOG_EVENT_HDR_LEN)))
+    if ((result = gwbuf_alloc(hdr->event_size - BINLOG_EVENT_HDR_LEN + 1)))
     {
         uint8_t *data = GWBUF_DATA(result);
         int n = pread(router->binlog_fd, data, hdr->event_size - BINLOG_EVENT_HDR_LEN,
                       pos + BINLOG_EVENT_HDR_LEN);
+        /** NULL-terminate for QUERY_EVENT processing */
+        data[hdr->event_size - BINLOG_EVENT_HDR_LEN] = '\0';
 
         if (n != hdr->event_size - BINLOG_EVENT_HDR_LEN)
         {
@@ -963,10 +965,24 @@ bool save_and_replace_table_create(AVRO_INSTANCE *router, TABLE_CREATE *created)
 
     if (old)
     {
+        HASHITERATOR *iter = hashtable_iterator(router->table_maps);
+
+        char *key;
+        while ((key = hashtable_next(iter)))
+        {
+            if (strcmp(key, table_ident) == 0)
+            {
+                hashtable_delete(router->table_maps, key);
+            }
+        }
+
+        hashtable_iterator_free(iter);
+
         hashtable_delete(router->created_tables, table_ident);
     }
 
     hashtable_add(router->created_tables, table_ident, created);
+    ss_dassert(created->columns > 0);
     spinlock_release(&router->lock);
     return true;
 }
@@ -994,12 +1010,17 @@ void handle_query_event(AVRO_INSTANCE *router, REP_HEADER *hdr, int *pending_tra
 {
     int dblen = ptr[DBNM_OFF];
     int vblklen = ptr[VBLK_OFF];
-    int len = hdr->event_size - BINLOG_EVENT_HDR_LEN - (PHDR_OFF + vblklen + 1 + dblen);
+    int len = hdr->event_size - BINLOG_EVENT_HDR_LEN - (PHDR_OFF + vblklen + 1 + dblen) + 1;
     char *sql = (char *) ptr + PHDR_OFF + vblklen + 1 + dblen;
     char db[dblen + 1];
     strncpy(db, (char*) ptr + PHDR_OFF + vblklen, sizeof(db));
 
     unify_whitespace(sql, len);
+    size_t sqlsz = len, tmpsz = len;
+    char *tmp = malloc(len);
+    remove_mysql_comments((const char**)&sql, &sqlsz, &tmp, &tmpsz);
+    sql = tmp;
+    len = tmpsz;
 
     if (is_create_table_statement(router, sql, len))
     {
@@ -1048,4 +1069,6 @@ void handle_query_event(AVRO_INSTANCE *router, REP_HEADER *hdr, int *pending_tra
         // TODO: Handle COMMIT
         *pending_transaction = 0;
     }
+
+    free(tmp);
 }

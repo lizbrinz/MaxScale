@@ -164,6 +164,7 @@ bool column_is_temporal(uint8_t type)
         case TABLE_COL_TYPE_YEAR:
         case TABLE_COL_TYPE_DATE:
         case TABLE_COL_TYPE_TIME:
+        case TABLE_COL_TYPE_TIME2:
         case TABLE_COL_TYPE_DATETIME:
         case TABLE_COL_TYPE_DATETIME2:
         case TABLE_COL_TYPE_TIMESTAMP:
@@ -399,6 +400,9 @@ static size_t temporal_field_size(uint8_t type, uint8_t decimals)
         case TABLE_COL_TYPE_DATE:
             return 3;
 
+        case TABLE_COL_TYPE_TIME2:
+            return 3 + ((decimals + 1) / 2);
+
         case TABLE_COL_TYPE_DATETIME:
         case TABLE_COL_TYPE_TIMESTAMP:
             return 4;
@@ -473,6 +477,7 @@ void format_temporal_value(char *str, size_t size, uint8_t type, struct tm *tm)
             break;
 
         case TABLE_COL_TYPE_TIME:
+        case TABLE_COL_TYPE_TIME2:
             format = "%H:%M:%S";
             break;
 

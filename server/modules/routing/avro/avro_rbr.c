@@ -81,6 +81,7 @@ bool handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr
 
     read_table_info(ptr, ev_len, &id, table_ident, sizeof(table_ident));
     TABLE_CREATE* create = hashtable_fetch(router->created_tables, table_ident);
+    ss_dassert(create && create->columns > 0);
 
     if (create)
     {
@@ -140,6 +141,11 @@ bool handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr
         }
         else
         {
+            ss_dassert(router->active_maps[old->id % sizeof(router->active_maps)] == old);
+            router->active_maps[old->id % sizeof(router->active_maps)] = NULL;
+            table_map_remap(ptr, ev_len, old);
+            router->active_maps[old->id % sizeof(router->active_maps)] = old;
+            MXS_DEBUG("Table %s re-mapped to %lu", table_ident, old->id);
             /** No changes in the schema */
             rval = true;
         }
@@ -377,6 +383,9 @@ int get_metadata_len(uint8_t type)
         case TABLE_COL_TYPE_BLOB:
         case TABLE_COL_TYPE_FLOAT:
         case TABLE_COL_TYPE_DOUBLE:
+        case TABLE_COL_TYPE_DATETIME2:
+        case TABLE_COL_TYPE_TIMESTAMP2:
+        case TABLE_COL_TYPE_TIME2:
             return 1;
 
         default:
@@ -414,6 +423,7 @@ uint8_t* process_row_event_data(TABLE_MAP *map, TABLE_CREATE *create, avro_value
 
     for (long i = 0; i < map->columns && npresent < ncolumns; i++)
     {
+        ss_dassert(create->columns == map->columns);
         avro_value_get_by_name(record, create->column_names[i], &field, NULL);
 
         if (bit_is_set(columns_present, ncolumns, i))

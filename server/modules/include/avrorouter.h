@@ -243,7 +243,7 @@ typedef struct avro_instance
 } AVRO_INSTANCE;
 
 extern void read_table_info(uint8_t *ptr, uint8_t post_header_len, uint64_t *table_id,
-                     char* dest, size_t len);
+                            char* dest, size_t len);
 extern TABLE_MAP *table_map_alloc(uint8_t *ptr, uint8_t hdr_len, TABLE_CREATE* create);
 extern void* table_map_free(TABLE_MAP *map);
 extern TABLE_CREATE* table_create_alloc(const char* sql, const char* db);
@@ -263,6 +263,7 @@ extern char* json_new_schema_from_table(TABLE_MAP *map);
 extern void save_avro_schema(const char *path, const char* schema, TABLE_MAP *map);
 extern bool handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr);
 extern bool handle_row_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr);
+extern void table_map_remap(uint8_t *ptr, uint8_t hdr_len, TABLE_MAP *map);
 
 #define AVRO_CLIENT_UNREGISTERED 0x0000
 #define AVRO_CLIENT_REGISTERED   0x0001

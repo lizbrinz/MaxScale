@@ -295,28 +295,6 @@ avro_client_process_command(AVRO_INSTANCE *router, AVRO_CLIENT *client, GWBUF *q
 
             if (file_in_dir(router->avrodir, client->avro_binfile))
             {
-                /** Send the first schema */
-                GWBUF *schema = NULL;
-
-                switch (client->format)
-                {
-                    case AVRO_FORMAT_JSON:
-                        schema = read_avro_json_schema(client->avro_binfile, router->avrodir);
-                        break;
-
-                    case AVRO_FORMAT_AVRO:
-                        schema = read_avro_binary_schema(client->avro_binfile, router->avrodir);
-                        break;
-
-                    default:
-                        MXS_ERROR("Unknown client format: %d", client->format);
-                }
-
-                if (schema)
-                {
-                    client->dcb->func.write(client->dcb, schema);
-                }
-
                 /* set callback routine for data sending */
                 dcb_add_callback(client->dcb, DCB_REASON_DRAINED, avro_client_callback, client);
 
@@ -695,18 +673,10 @@ static void rotate_avro_file(AVRO_CLIENT *client, char *fullname)
     strncpy(client->avro_binfile, filename, sizeof(client->avro_binfile));
     client->last_sent_pos = 0;
 
-    GWBUF *schema = read_avro_json_schema(client->avro_binfile, client->router->avrodir);
-
-    if (schema)
-    {
-        client->dcb->func.write(client->dcb, schema);
-    }
-
     spinlock_acquire(&client->file_lock);
     maxavro_file_close(client->file_handle);
-    client->file_handle = maxavro_file_open(fullname);
 
-    if (client->file_handle == NULL)
+    if ((client->file_handle = maxavro_file_open(fullname)) == NULL)
     {
         MXS_ERROR("Failed to open file: %s", filename);
     }
@@ -770,6 +740,31 @@ int avro_client_callback(DCB *dcb, DCB_REASON reason, void *userdata)
 
         client->cstate |= AVRO_CS_BUSY;
         spinlock_release(&client->catch_lock);
+
+        if (client->last_sent_pos == 0)
+        {
+            /** Send the schema of the current file */
+            GWBUF *schema = NULL;
+
+            switch (client->format)
+            {
+                case AVRO_FORMAT_JSON:
+                    schema = read_avro_json_schema(client->avro_binfile, client->router->avrodir);
+                    break;
+
+                case AVRO_FORMAT_AVRO:
+                    schema = read_avro_binary_schema(client->avro_binfile, client->router->avrodir);
+                    break;
+
+                default:
+                    MXS_ERROR("Unknown client format: %d", client->format);
+            }
+
+            if (schema)
+            {
+                client->dcb->func.write(client->dcb, schema);
+            }
+        }
 
         /** Stream the data to the client */
         bool read_more = avro_client_stream_data(client);

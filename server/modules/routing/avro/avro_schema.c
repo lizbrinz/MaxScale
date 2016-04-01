@@ -361,7 +361,7 @@ static const char* get_next_field_def(const char* sql)
     return NULL;
 }
 
-const char* get_field_name_start(const char* ptr)
+static const char* get_field_name_start(const char* ptr)
 {
     while (isspace(*ptr) || *ptr == '`')
     {
@@ -370,8 +370,17 @@ const char* get_field_name_start(const char* ptr)
     return ptr;
 }
 
-const char* get_field_name_end(const char* ptr)
+static const char* get_field_name_end(const char* ptr)
 {
+    /** Check for non-column keywords */
+    if (strncasecmp(ptr, "constraint", 10) == 0 || strncasecmp(ptr, "index", 5) == 0 ||
+        strncasecmp(ptr, "key", 3) == 0 || strncasecmp(ptr, "fulltext", 8) == 0 ||
+        strncasecmp(ptr, "spatial", 7) == 0 || strncasecmp(ptr, "foreign", 7) == 0 ||
+        strncasecmp(ptr, "unique", 6) == 0 || strncasecmp(ptr, "primary", 7) == 0)
+    {
+        return NULL;
+    }
+
     while (!isspace(*ptr) && *ptr != '`')
     {
         ptr++;
@@ -426,8 +435,7 @@ static int process_column_definition(const char *nameptr, char*** dest)
             char colname[128 + 1];
             snprintf(colname, sizeof(colname), "%.*s", (int) (end - nameptr), nameptr);
 
-            if (strcasecmp(colname, "constraint") != 0 &&
-                (names[i++] = strdup(colname)) == NULL)
+            if ((names[i++] = strdup(colname)) == NULL)
             {
                 for (int x = 0; x < i; x++)
                 {
@@ -486,6 +494,7 @@ TABLE_CREATE* table_create_alloc(const char* sql, const char* event_db)
 
     char **names = NULL;
     int n_columns = process_column_definition(statement_sql, &names);
+    ss_dassert(n_columns > 0);
 
     /** We have appear to have a valid CREATE TABLE statement */
     TABLE_CREATE *rval = NULL;
@@ -525,7 +534,10 @@ TABLE_CREATE* table_create_alloc(const char* sql, const char* event_db)
             rval = NULL;
         }
     }
-
+    else
+    {
+        MXS_ERROR("No columns in a CREATE TABLE statement: %.*s", stmt_len, statement_sql);
+    }
     return rval;
 }
 
@@ -867,4 +879,21 @@ void* table_map_free(TABLE_MAP *map)
         free(map);
     }
     return NULL;
+}
+
+/**
+ * @brief Map a table to a different ID
+ *
+ * This updates the table ID that the @c TABLE_MAP object is assigned with
+ *
+ * @param ptr Pointer to the start of a table map event
+ * @param hdr_len Post-header length
+ * @param map Table map to remap
+ */
+void table_map_remap(uint8_t *ptr, uint8_t hdr_len, TABLE_MAP *map)
+{
+    uint64_t table_id = 0;
+    size_t id_size = hdr_len == 6 ? 4 : 6;
+    memcpy(&table_id, ptr, id_size);
+    map->id = table_id;
 }
