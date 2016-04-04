@@ -158,6 +158,7 @@ void maxavro_map_free(MAXAVRO_MAP *value);
 json_t* maxavro_record_read_json(MAXAVRO_FILE *file);
 GWBUF* maxavro_record_read_binary(MAXAVRO_FILE *file);
 bool maxavro_record_seek(MAXAVRO_FILE *file, uint64_t offset);
+bool maxavro_record_set_pos(MAXAVRO_FILE *file, long pos);
 bool maxavro_next_block(MAXAVRO_FILE *file);
 
 /** File operations */

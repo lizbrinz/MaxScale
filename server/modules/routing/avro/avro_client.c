@@ -476,6 +476,53 @@ static bool stream_binary(AVRO_CLIENT *client)
     return bytes >= AVRO_DATA_BURST_SIZE;
 }
 
+static int sqlite_cb(void* data, int rows, char** values, char** names)
+{
+    for (int i = 0; i < rows; i++)
+    {
+        if (values[i])
+        {
+            *((long*)data) = strtol(values[i], NULL, 10);
+            return 0;
+        }
+    }
+    return 0;
+}
+
+static const char select_template[] = "SELECT max(position) FROM gtid WHERE domain=%lu "
+                                      "AND server_id=%lu AND sequence <= %lu AND avrofile=\"%s\";";
+
+static bool seek_to_index_pos(AVRO_CLIENT *client, MAXAVRO_FILE* file)
+{
+    char *name = strrchr(client->file_handle->filename, '/');
+    ss_dassert(name);
+    name++;
+
+    char sql[sizeof(select_template) + NAME_MAX + 80];
+    snprintf(sql, sizeof(sql), select_template, client->gtid.domain,
+             client->gtid.server_id, client->gtid.seq, name);
+
+    long offset = -1;
+    char *errmsg = NULL;
+    bool rval = false;
+
+    if (sqlite3_exec(client->sqlite_handle, sql, sqlite_cb, &offset, &errmsg) == SQLITE_OK)
+    {
+        rval = true;
+        if (offset > 0 && !maxavro_record_set_pos(file, offset))
+        {
+            rval = false;
+        }
+    }
+    else
+    {
+        MXS_ERROR("Failed to query index position for GTID %lu-%lu-%lu: %s",
+                  client->gtid.domain, client->gtid.server_id, client->gtid.seq, errmsg);
+    }
+    sqlite3_free(errmsg);
+    return rval;
+}
+
 /**
  *
  * @param client
@@ -561,7 +608,9 @@ static bool avro_client_stream_data(AVRO_CLIENT *client)
         {
             case AVRO_FORMAT_JSON:
                 /** Currently only JSON format supports seeking to a GTID */
-                if (client->requested_gtid && seek_to_gtid(client, client->file_handle))
+                if (client->requested_gtid &&
+                    seek_to_index_pos(client, client->file_handle) &&
+                    seek_to_gtid(client, client->file_handle))
                 {
                     client->requested_gtid = false;
                 }

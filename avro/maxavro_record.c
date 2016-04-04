@@ -275,6 +275,23 @@ bool maxavro_record_seek(MAXAVRO_FILE *file, uint64_t offset)
 }
 
 /**
+ * @brief seek to file offset
+ *
+ * This sets the file offset to a position and checks that it is preceeded by a
+ * valid sync marker.
+ *
+ * @param file File to seek
+ * @param pos Position in the file to seek to, this should be the starting offset
+ * of a data block
+ * @return True if seeking to the offset was successful, false if an error occurred
+ */
+bool maxavro_record_set_pos(MAXAVRO_FILE *file, long pos)
+{
+    fseek(file->file, pos - SYNC_MARKER_SIZE, SEEK_SET);
+    return maxavro_verify_block(file) && maxavro_read_datablock_start(file);
+}
+
+/**
  * @brief Read native Avro data
  *
  * This function reads a complete Avro data block from the disk and returns

@@ -34,6 +34,9 @@
 
 #define MAX_MAPPED_TABLES 1024
 
+#define GTID_TABLE_NAME "gtid"
+#define INDEX_TABLE_NAME "indexing_progress"
+
 /** Avro filename maxlen */
 #ifdef NAME_MAX
 #define AVRO_MAX_FILENAME_LEN NAME_MAX
@@ -193,6 +196,7 @@ typedef struct avro_client
     gtid_pos_t      gtid; /*< Current/requested GTID */
     gtid_pos_t      gtid_start; /*< First sent GTID */
     unsigned int    cstate;         /*< Catch up state */
+    sqlite3       *sqlite_handle;
 #if defined(SS_DEBUG)
     skygw_chk_t     rses_chk_tail;
 #endif

@@ -66,6 +66,8 @@
 
 static char *version_str = "V1.0.0";
 static const char* avro_task_name = "binlog_to_avro";
+static const char* index_task_name = "avro_indexing";
+static const char* avro_index_name = "avro.index";
 
 /** For detection of CREATE/ALTER TABLE statements */
 static const char* create_table_regex =
@@ -95,6 +97,8 @@ int avro_client_callback(DCB *dcb, DCB_REASON reason, void *userdata);
 static bool ensure_dir_ok(const char* path, int mode);
 bool avro_save_conversion_state(AVRO_INSTANCE *router);
 static void stats_func(void *);
+void avro_index_file(AVRO_INSTANCE *router, const char* path);
+void avro_update_index(AVRO_INSTANCE* router);
 
 /** The module object definition */
 static ROUTER_OBJECT MyObject =
@@ -291,7 +295,7 @@ createInstance(SERVICE *service, char **options)
     }
 
     char dbpath[PATH_MAX + 1];
-    snprintf(dbpath, sizeof(dbpath), "/%s/avro.db", get_datadir());
+    snprintf(dbpath, sizeof(dbpath), "/%s/%s", get_datadir(), avro_index_name);
 
     if (sqlite3_open_v2(dbpath, &inst->sqlite_handle,
                         SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL) != SQLITE_OK)
@@ -304,9 +308,10 @@ createInstance(SERVICE *service, char **options)
     {
         char* errmsg;
         int rc = sqlite3_exec(inst->sqlite_handle, "CREATE TABLE IF NOT EXISTS "
-                              "gtid(domain int, server_id int, "
+                              GTID_TABLE_NAME"(domain int, server_id int, "
                               "sequence bigint, "
-                              "binlogfile varchar(255), "
+                              "avrofile varchar(255), "
+                              "position bigint, "
                               "primary key(domain, server_id, sequence));",
                               NULL, NULL, &errmsg);
         if (rc != SQLITE_OK)
@@ -315,6 +320,9 @@ createInstance(SERVICE *service, char **options)
                       sqlite3_errmsg(inst->sqlite_handle));
             err = true;
         }
+        rc = sqlite3_exec(inst->sqlite_handle, "CREATE TABLE IF NOT EXISTS "
+                          INDEX_TABLE_NAME"(position bigint, filename varchar(255));",
+                          NULL, NULL, &errmsg);
     }
 
     if (inst->fileroot == NULL)
@@ -462,7 +470,16 @@ newSession(ROUTER *instance, SESSION *session)
     memset(&client->gtid_start, 0, sizeof(client->gtid_start));
     /* Set initial state of the slave */
     client->state = AVRO_CLIENT_UNREGISTERED;
+    char dbpath[PATH_MAX + 1];
+    snprintf(dbpath, sizeof(dbpath), "/%s/%s", get_datadir(), avro_index_name);
 
+    if (sqlite3_open_v2(dbpath, &client->sqlite_handle,
+                        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL) != SQLITE_OK)
+    {
+        MXS_ERROR("Failed to open SQLite database '%s': %s", dbpath,
+                  sqlite3_errmsg(inst->sqlite_handle));
+        sqlite3_close(client->sqlite_handle);
+    }
     /**
      * Add this session to the list of active sessions.
      */
@@ -550,6 +567,8 @@ static void closeSession(ROUTER *instance, void *router_session)
 
     spinlock_release(&client->file_lock);
     spinlock_release(&client->catch_lock);
+
+    sqlite3_close(client->sqlite_handle);
 
     /* decrease server registered slaves counter */
     atomic_add(&router->stats.n_clients, -1);

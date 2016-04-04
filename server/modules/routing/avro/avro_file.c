@@ -52,6 +52,7 @@ void handle_query_event(AVRO_INSTANCE *router, REP_HEADER *hdr,
 bool is_create_table_statement(AVRO_INSTANCE *router, char* ptr, size_t len);
 void avro_flush_all_tables(AVRO_INSTANCE *router);
 void avro_notify_client(AVRO_CLIENT *client);
+void avro_update_index(AVRO_INSTANCE* router);
 
 /**
  * Prepare an existing binlog file to be appened to.
@@ -727,9 +728,9 @@ avro_binlog_end_t avro_read_all_events(AVRO_INSTANCE *router)
             if (router->row_count >= router->row_target ||
                 router->trx_count >= router->trx_target)
             {
-                notify_all_clients(router);
                 avro_flush_all_tables(router);
                 avro_save_conversion_state(router);
+                notify_all_clients(router);
                 total_rows += router->row_count;
                 total_commits += router->trx_count;
                 router->row_count = router->trx_count = 0;
@@ -886,6 +887,9 @@ void avro_flush_all_tables(AVRO_INSTANCE *router)
         }
         hashtable_iterator_free(iter);
     }
+
+    /** Update the GTID index */
+    avro_update_index(router);
 }
 
 /**
