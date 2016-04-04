@@ -18,6 +18,7 @@
 #include <maxscale_pcre2.h>
 #include <maxavro.h>
 #include <binlog_common.h>
+#include <sqlite3.h>
 
 /**
  * How often to call the router status function (seconds)
@@ -228,6 +229,7 @@ typedef struct avro_instance
     HASHTABLE     *table_maps;
     HASHTABLE     *open_tables;
     HASHTABLE     *created_tables;
+    sqlite3       *sqlite_handle;
     char              prevbinlog[BINLOG_FNAMELEN + 1];
     int               rotating;     /*< Rotation in progress flag */
     SPINLOCK          fileslock;    /*< Lock for the files queue above */

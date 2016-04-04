@@ -290,6 +290,33 @@ createInstance(SERVICE *service, char **options)
         }
     }
 
+    char dbpath[PATH_MAX + 1];
+    snprintf(dbpath, sizeof(dbpath), "/%s/avro.db", get_datadir());
+
+    if (sqlite3_open_v2(dbpath, &inst->sqlite_handle,
+                        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL) != SQLITE_OK)
+    {
+        MXS_ERROR("Failed to open SQLite database '%s': %s", dbpath,
+                  sqlite3_errmsg(inst->sqlite_handle));
+        err = true;
+    }
+    else
+    {
+        char* errmsg;
+        int rc = sqlite3_exec(inst->sqlite_handle, "CREATE TABLE IF NOT EXISTS "
+                              "gtid(domain int, server_id int, "
+                              "sequence bigint, "
+                              "binlogfile varchar(255), "
+                              "primary key(domain, server_id, sequence));",
+                              NULL, NULL, &errmsg);
+        if (rc != SQLITE_OK)
+        {
+            MXS_ERROR("Failed to create gtid index table 'avrorouter.gtid': %s",
+                      sqlite3_errmsg(inst->sqlite_handle));
+            err = true;
+        }
+    }
+
     if (inst->fileroot == NULL)
     {
         inst->fileroot = strdup(BINLOG_NAME_ROOT);
@@ -349,6 +376,7 @@ createInstance(SERVICE *service, char **options)
 
     if (err)
     {
+        sqlite3_close(inst->sqlite_handle);
         hashtable_free(inst->table_maps);
         hashtable_free(inst->open_tables);
         hashtable_free(inst->created_tables);
