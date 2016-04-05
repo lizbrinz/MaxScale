@@ -90,6 +90,9 @@ start() {
     chmod 0755 @MAXSCALE_VARDIR@/cache/maxscale
     chmod 0755 @MAXSCALE_VARDIR@/run/maxscale
 
+    # Set open files limit
+    ulimit -HSn 65535
+
         log_daemon_msg "Starting MaxScale"
         start_daemon -p "$MAXSCALE_PIDFILE" $DAEMON $DAEMON_OPTS 2> /dev/null > /dev/null
 
