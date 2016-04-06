@@ -100,7 +100,11 @@ bool handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr
                     char filepath[PATH_MAX + 1];
                     snprintf(filepath, sizeof(filepath), "%s/%s.%06d.avro",
                              router->avrodir, table_ident, map->version);
+
+                    /** Close the file and open a new one */
+                    hashtable_delete(router->open_tables, table_ident);
                     AVRO_TABLE *avro_table = avro_table_alloc(filepath, json_schema);
+
                     if (avro_table)
                     {
                         bool notify = old != NULL;
@@ -110,7 +114,6 @@ bool handle_table_map_event(AVRO_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr
                             router->active_maps[old->id % sizeof(router->active_maps)] = NULL;
                         }
                         hashtable_delete(router->table_maps, table_ident);
-                        hashtable_delete(router->open_tables, table_ident);
                         hashtable_add(router->table_maps, (void*) table_ident, map);
                         hashtable_add(router->open_tables, table_ident, avro_table);
                         save_avro_schema(router->avrodir, json_schema, map);

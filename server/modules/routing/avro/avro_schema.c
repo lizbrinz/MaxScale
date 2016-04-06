@@ -306,8 +306,13 @@ static bool get_database_name(const char* sql, char* dest)
         {
             ptr--;
         }
-        const char* end = ptr;
-        ptr--;
+
+        while (*ptr == '`' || *ptr == '.' || isspace(*ptr))
+        {
+            ptr--;
+        }
+
+        const char* end = ptr + 1;
 
         while (*ptr != '`' && *ptr != '.' && !isspace(*ptr))
         {

@@ -288,9 +288,15 @@ GWBUF* maxavro_record_read_binary(MAXAVRO_FILE *file)
 {
     GWBUF *rval = NULL;
 
-    if (file->last_error == MAXAVRO_ERR_NONE && !feof(file->file))
+    if (file->last_error == MAXAVRO_ERR_NONE)
     {
+        if (!file->metadata_read && !maxavro_read_datablock_start(file))
+        {
+            return NULL;
+        }
+
         long data_size = (file->data_start_pos - file->block_start_pos) + file->block_size;
+        ss_dassert(data_size > 0);
         rval = gwbuf_alloc(data_size + SYNC_MARKER_SIZE);
 
         if (rval)
@@ -319,6 +325,11 @@ GWBUF* maxavro_record_read_binary(MAXAVRO_FILE *file)
         {
             MXS_ERROR("Failed to allocate %ld bytes for data block.", data_size);
         }
+    }
+    else
+    {
+        MXS_ERROR("Attempting to read from a failed Avro file '%s', error is: %s",
+                  file->filename, maxavro_get_error_string(file));
     }
     return rval;
 }

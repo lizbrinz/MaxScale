@@ -81,11 +81,16 @@ bool maxavro_read_datablock_start(MAXAVRO_FILE* file)
         file->records_in_block = records;
         file->records_read_from_block = 0;
         file->data_start_pos = ftell(file->file);
+        ss_dassert(file->data_start_pos > file->block_start_pos);
         file->metadata_read = true;
     }
     else if (maxavro_get_error(file) != MAXAVRO_ERR_NONE)
     {
         MXS_ERROR("Failed to read data block start.");
+    }
+    else if (feof(file->file))
+    {
+        clearerr(file->file);
     }
     return rval;
 }
