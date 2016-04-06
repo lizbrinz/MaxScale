@@ -29,6 +29,7 @@
  */
 
 #include <spinlock.h>
+#ifndef USE_PTHREAD_ADAPTIVE_LOCKS
 #include <atomic.h>
 #include <time.h>
 
@@ -176,3 +177,51 @@ spinlock_stats(SPINLOCK *lock, void (*reporter)(void *, char *, int), void *hdl)
     }
 #endif
 }
+
+#else
+
+#include <log_manager.h>
+
+void spinlock_init(SPINLOCK *lock)
+{
+    int rc;
+    pthread_mutexattr_t attr;
+    rc = pthread_mutexattr_init(&attr);
+    if (rc != 0)
+    {
+        MXS_ERROR("Fatal: pthread_mutexattr_init failed: %d", rc);
+    }
+
+    rc = pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ADAPTIVE_NP);
+    if (rc != 0)
+    {
+        MXS_ERROR("Fatal: pthread_mutexattr_settype failed: %d", rc);
+    }
+
+    rc = pthread_mutex_init(lock, &attr);
+    if (rc != 0)
+    {
+        MXS_ERROR("Fatal: pthread_mutex_init failed: %d", rc);
+    }
+}
+
+void spinlock_acquire(SPINLOCK* lock)
+{
+    pthread_mutex_lock(lock);
+}
+
+int spinlock_acquire_nowait(SPINLOCK *lock)
+{
+    return pthread_mutex_trylock(lock) == 0;
+}
+
+void spinlock_release(SPINLOCK *lock)
+{
+    pthread_mutex_unlock(lock);
+}
+
+void spinlock_stats(SPINLOCK *lock, void (*reporter)(void *, char *, int), void *hdl)
+{
+}
+
+#endif

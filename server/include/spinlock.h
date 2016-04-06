@@ -33,6 +33,32 @@
 
 #define SPINLOCK_PROFILE 0
 
+#define USE_PTHREAD_ADAPTIVE_LOCKS
+#ifdef USE_PTHREAD_ADAPTIVE_LOCKS
+
+#include <pthread.h>
+
+#define SPINLOCK_INIT PTHREAD_ADAPTIVE_MUTEX_INITIALIZER_NP
+
+#define SPINLOCK_IS_LOCKED(l) 1
+
+typedef pthread_mutex_t SPINLOCK;
+
+#ifndef TRUE
+#define TRUE    true
+#endif
+#ifndef FALSE
+#define FALSE   false
+#endif
+
+void spinlock_init(SPINLOCK *lock);
+void spinlock_acquire(SPINLOCK* lock);
+int spinlock_acquire_nowait(SPINLOCK *lock);
+void spinlock_release(SPINLOCK *lock);
+void spinlock_stats(SPINLOCK *lock, void (*reporter)(void *, char *, int), void *hdl);
+
+#else
+
 /**
  * The spinlock structure.
  *
@@ -77,5 +103,7 @@ extern void spinlock_acquire(SPINLOCK *lock);
 extern int spinlock_acquire_nowait(SPINLOCK *lock);
 extern void spinlock_release(SPINLOCK *lock);
 extern void spinlock_stats(SPINLOCK *lock, void (*reporter)(void *, char *, int), void *hdl);
+
+#endif
 
 #endif
