@@ -85,7 +85,8 @@ static GWBUF *blr_make_binlog_dump(ROUTER_INSTANCE *router);
 void encode_value(unsigned char *data, unsigned int value, int len);
 void blr_handle_binlog_record(ROUTER_INSTANCE *router, GWBUF *pkt);
 static int  blr_rotate_event(ROUTER_INSTANCE *router, uint8_t *pkt, REP_HEADER *hdr);
-void blr_distribute_binlog_record(ROUTER_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr);
+void blr_distribute_binlog_record(ROUTER_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr,
+                                  blr_thread_role_t role);
 static void *CreateMySQLAuthData(char *username, char *password, char *database);
 void blr_extract_header(uint8_t *pkt, REP_HEADER *hdr);
 static void blr_log_packet(int priority, char *msg, uint8_t *ptr, int len);
@@ -1132,8 +1133,10 @@ blr_handle_binlog_record(ROUTER_INSTANCE *router, GWBUF *pkt)
         {
             if (router->master_event_state == BLR_EVENT_DONE)
             {
+                spinlock_acquire(&router->lock);
                 router->stats.n_binlogs++;
                 router->stats.n_binlogs_ses++;
+                spinlock_release(&router->lock);
 
                 /* Check for semi-sync in event with OK byte[4]: 
                  * move pointer 2 bytes ahead and set check_packet_len accordingly
@@ -1656,7 +1659,8 @@ blr_handle_binlog_record(ROUTER_INSTANCE *router, GWBUF *pkt)
                                 if (record)
                                 {
                                     uint8_t *data = GWBUF_DATA(record);
-                                    blr_distribute_binlog_record(router, &hdr, data);
+                                    blr_distribute_binlog_record(router, &hdr, data,
+                                                                 BLR_THREAD_ROLE_MASTER_LARGE_NOTRX);
                                     gwbuf_free(record);
                                 }
                                 else
@@ -1669,7 +1673,8 @@ blr_handle_binlog_record(ROUTER_INSTANCE *router, GWBUF *pkt)
                             else
                             {
                                 /* Now distribute events */
-                                blr_distribute_binlog_record(router, &hdr, ptr);
+                                blr_distribute_binlog_record(router, &hdr, ptr,
+                                                             BLR_THREAD_ROLE_MASTER_NOTRX);
                             }
                         }
                         else
@@ -1710,7 +1715,8 @@ blr_handle_binlog_record(ROUTER_INSTANCE *router, GWBUF *pkt)
                                     raw_data = GWBUF_DATA(record);
 
                                     /* distribute event */
-                                    blr_distribute_binlog_record(router, &new_hdr, raw_data);
+                                    blr_distribute_binlog_record(router, &new_hdr, raw_data,
+                                                                 BLR_THREAD_ROLE_MASTER_TRX);
 
                                     spinlock_acquire(&router->binlog_lock);
 
@@ -2030,7 +2036,8 @@ typedef enum
  * @param   ptr     The raw replication event data
  */
 void
-blr_distribute_binlog_record(ROUTER_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr)
+blr_distribute_binlog_record(ROUTER_INSTANCE *router, REP_HEADER *hdr, uint8_t *ptr,
+                             blr_thread_role_t role)
 {
     GWBUF *pkt;
     uint8_t *buf;
@@ -2102,6 +2109,13 @@ blr_distribute_binlog_record(ROUTER_INSTANCE *router, REP_HEADER *hdr, uint8_t *
                       (hdr->event_type == ROTATE_EVENT &&
                        strcmp(slave->binlogfile, router->prevbinlog))))
             {
+                if (router->trx_safe)
+                {
+                    MXS_ERROR("Slave %s:%d, server ID %u: Sending event from an "
+                              "incomplete transaction from file %s@%u.",
+                              slave->dcb->remote, ntohs((slave->dcb->ipv4).sin_port),
+                              slave->serverid, slave->binlogfile, slave->binlog_pos);
+                }
                 /**
                  * Transaction safety is off or there are no pending transactions
                  */
@@ -2169,7 +2183,7 @@ blr_distribute_binlog_record(ROUTER_INSTANCE *router, REP_HEADER *hdr, uint8_t *
                     blr_slave_rotate(router, slave, ptr);
                 }
 
-                if (blr_send_event(BLR_THREAD_ROLE_MASTER, binlog_name, binlog_pos, slave, hdr, ptr))
+                if (blr_send_event(role, binlog_name, binlog_pos, slave, hdr, ptr))
                 {
                     spinlock_acquire(&slave->catch_lock);
                     if (hdr->event_type != ROTATE_EVENT)
@@ -2869,17 +2883,18 @@ bool blr_send_event(blr_thread_role_t role,
         MXS_ERROR("Slave %s:%i, server-id %d, binlog '%s', position %u: "
                   "thread %lu in the role of %s could not send the event, "
                   "the event has already been sent by thread %lu in the role of %s. "
-                  "%u bytes buffered for writing in DCB %p.",
+                  "%u bytes buffered for writing in DCB %p. %lu events received from master.",
                   slave->dcb->remote,
                   ntohs((slave->dcb->ipv4).sin_port),
                   slave->serverid,
                   binlog_name,
                   binlog_pos,
                   THREAD_SHELF(),
-                  role == BLR_THREAD_ROLE_MASTER ? "master" : "slave",
+                  ROLETOSTR(role),
                   slave->lsi_sender_tid,
-                  slave->lsi_sender_role == BLR_THREAD_ROLE_MASTER ? "master" : "slave",
-                  gwbuf_length(slave->dcb->writeq), slave->dcb);
+                  ROLETOSTR(slave->lsi_sender_role),
+                  gwbuf_length(slave->dcb->writeq), slave->dcb,
+                  slave->router->stats.n_binlogs);
         return false;
     }
 
