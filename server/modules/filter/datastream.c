@@ -24,6 +24,7 @@
 #include <strings.h>
 #include <mysql_client_server_protocol.h>
 #include <maxscale/poll.h>
+#include <modutil.h>
 
 /**
  * @file datastream.c - Streaming of bulk inserts
@@ -94,6 +95,7 @@ typedef struct
     GWBUF *queue;
     GWBUF *writebuf;
     bool active;
+    bool in_trx; /*< Whether BEGIN has been seen */
     uint8_t packet_num;
     DCB* client_dcb;
     enum ds_state state; /*< Whether a LOAD DATA LOCAL INFILE was sent or not */
@@ -147,7 +149,7 @@ void free_instance(DS_INSTANCE *instance)
     }
 }
 
-static const char load_data_template[] = "LOAD DATA LOCAL INFILE 'maxscale.data' INTO TABLE %s FIELDS TERMINATED BY ','";
+static const char load_data_template[] = "LOAD DATA LOCAL INFILE 'maxscale.data' INTO TABLE %s FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n'";
 
 /**
  * Create an instance of the filter for a particular service
@@ -203,6 +205,7 @@ newSession(FILTER *instance, SESSION *session)
     {
         my_session->state = DS_STREAM_CLOSED;
         my_session->active = true;
+        my_session->in_trx = false;
         my_session->client_dcb = session->client_dcb;
 
         if (my_instance->source
@@ -293,13 +296,13 @@ routeQuery(FILTER *instance, void *session, GWBUF *queue)
     bool send_ok = false;
 
     my_session->writebuf = gwbuf_append(my_session->writebuf, queue);
-    
+
     if ((queue = modutil_get_complete_packets(&my_session->writebuf)) == NULL)
     {
         return 1;
     }
 
-    if (my_session->active && modutil_is_SQL(queue) &&
+    if (my_session->active && modutil_is_SQL(queue) && my_session->in_trx &&
         extract_insert_target(queue, target, sizeof(target)))
     {
         if (queue->next != NULL)
@@ -338,6 +341,8 @@ routeQuery(FILTER *instance, void *session, GWBUF *queue)
     {
         bool send_empty = false;
         uint8_t packet_num;
+        char* sql;
+        int size;
 
         spinlock_acquire(&my_session->lock);
 
@@ -347,11 +352,20 @@ routeQuery(FILTER *instance, void *session, GWBUF *queue)
             send_empty = true;
             packet_num = ++my_session->packet_num;
             my_session->queue = queue;
+            my_session->in_trx = false;
         }
         else if (my_session->state == DS_REQUEST_ACCEPTED)
         {
             my_session->state = DS_STREAM_OPEN;
             send_ok = true;
+        }
+        else if (modutil_extract_SQL(queue, &sql, &size))
+        {
+            if (strncasecmp(sql, "begin", MIN(5, size)) ||
+                strncasecmp(sql, "start transaction", MIN(17, size)))
+            {
+                my_session->in_trx = true;
+            }
         }
 
         spinlock_release(&my_session->lock);
@@ -372,104 +386,58 @@ routeQuery(FILTER *instance, void *session, GWBUF *queue)
                                        my_session->down.session, queue);
 }
 
-static uint8_t* remove_value_end(uint8_t* ptr, uint8_t* end)
+static char* get_value(char* data, uint32_t datalen, char** dest, uint32_t* destlen)
 {
-    int depth = 0;
+    char *value_start = strnchr_esc_mysql(data, '(', datalen);
 
-    if (ptr)
+    if (value_start)
     {
-        while (ptr < end && (*ptr != ')' || depth > 0))
+        value_start++;
+        char *value_end = strnchr_esc_mysql(value_start, ')', datalen - (value_start - data));
+
+        if (value_end)
         {
-            if (*ptr == '(')
-            {
-                depth++;
-            }
-            ptr++;
-        }
- 
-        if (ptr < end)
-        {
-            *ptr++ = ' ';
+            *destlen = value_end - value_start;
+            *dest = value_start;
+            return value_end;
         }
     }
 
-    return ptr;
-}
-
-static uint8_t* remove_value_start(uint8_t* ptr, uint8_t* end)
-{
-    if (ptr)
-    {
-
-        while (ptr < end && *ptr != '(')
-        {
-            ptr++;
-        }
-        
-        if (ptr < end)
-        {
-            *ptr++ = ' ';
-        }
-    }
-
-    return ptr;
-}
-
-static uint8_t* start_next_value(uint8_t* ptr, uint8_t* end)
-{
-    if (ptr)
-    {
-        while (ptr < end && *ptr != ',')
-        {
-            ptr++;
-        }
-
-        if (ptr < end)
-        {
-            *ptr++ = '\n';
-        }
-    }
-
-    return ptr;
+    return NULL;
 }
 
 static GWBUF* convert_to_stream(GWBUF* buffer, uint8_t packet_num)
 {
-    /**
-     * Remove the INSERT INTO ... from the buffer
-     */
-    uint8_t *dataptr = (uint8_t*) GWBUF_DATA(buffer);
-    uint8_t *modptr = remove_value_start(dataptr + 5, dataptr + GWBUF_LENGTH(buffer));
-    buffer = gwbuf_consume(buffer, modptr - dataptr);
+    /** Remove the INSERT INTO ... from the buffer */
+    char *dataptr = (char*) GWBUF_DATA(buffer);
+    char *modptr = strnchr_esc_mysql(dataptr + 5, '(', GWBUF_LENGTH(buffer));
 
-    /**
-     * Remove the parentheses from the insert and recalculate the packet length
-     */
-    int len = gwbuf_length(buffer);
-    modptr = (uint8_t*) GWBUF_DATA(buffer);
-    uint8_t* end = modptr + len;
+    /** Leave some space for the header so we don't have to allocate a new one */
+    buffer = gwbuf_consume(buffer, (modptr - dataptr) - 4);
+    uint32_t len_before = gwbuf_length(buffer) - 4;
+    char* header_start = (char*)GWBUF_DATA(buffer);
+    char* store_end = dataptr = header_start + 4;
+    char* end = buffer->end;
+    char* value;
+    uint32_t valuesize;
 
-    while (modptr && modptr < end)
+    /** Remove the parentheses from the insert and recalculate the packet length */
+    while ((dataptr = get_value(dataptr, end - dataptr, &value, &valuesize)))
     {
-        modptr = remove_value_end(modptr, end);
-        modptr = start_next_value(modptr, end);
-        modptr = remove_value_start(modptr, end);
+        memmove(store_end, value, valuesize);
+        store_end += valuesize;
+        *store_end++ = '\n';
     }
 
-    GWBUF* rval = gwbuf_alloc(4);
-    
-    if (rval)
-    {
-        dataptr = (uint8_t*)GWBUF_DATA(rval);
-        *dataptr++ = len;
-        *dataptr++ = len >> 8;
-        *dataptr++ = len >> 16;
-        *dataptr = packet_num;
-        rval = gwbuf_append(rval, buffer);
-        ss_dassert(gwbuf_length(rval) == len + 4);
-    }
+    gwbuf_rtrim(buffer, (char*)buffer->end - store_end);
+    uint32_t len = gwbuf_length(buffer) - 4;
 
-    return rval;
+    *header_start++ = len;
+    *header_start++ = len >> 8;
+    *header_start++ = len >> 16;
+    *header_start = packet_num;
+
+    return buffer;
 }
 
 static int clientReply(FILTER* instance, void *session, GWBUF *reply)
