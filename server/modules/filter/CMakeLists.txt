@@ -16,6 +16,11 @@ add_dependencies(regexfilter pcre2)
 set_target_properties(regexfilter PROPERTIES VERSION "1.1.0")
 install(TARGETS regexfilter DESTINATION ${MAXSCALE_LIBDIR})
 
+add_library(datastream SHARED datastream.c)
+target_link_libraries(datastream maxscale-common)
+set_target_properties(datastream PROPERTIES VERSION "1.1.0")
+install(TARGETS datastream DESTINATION ${MAXSCALE_LIBDIR})
+
 add_library(testfilter SHARED testfilter.c)
 target_link_libraries(testfilter maxscale-common)
 set_target_properties(testfilter PROPERTIES VERSION "1.0.0")

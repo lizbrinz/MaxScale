@@ -484,6 +484,33 @@ int modutil_send_mysql_err_packet(DCB        *dcb,
 }
 
 /**
+ * Send an OK packet to a DCB
+ * @param dcb DDB where the data is sent
+ * @param rows Number of affected rows
+ * @return 
+ */
+int modutil_send_ok_packet(DCB *dcb, char packet_num)
+{
+    char ok_packet[] =
+    {
+        7, 0, 0, packet_num, // Header
+        0, // OK command
+        0, // number of affected rows
+        0, // last insert ID
+        0, 0, // status flags
+        0, 0 // warnings
+    };
+
+    GWBUF *buffer = gwbuf_alloc_and_load(sizeof(ok_packet), &ok_packet[0]);
+    if (buffer)
+    {
+        return dcb->func.write(dcb, buffer);
+    }
+
+    return 0;
+}
+
+/**
  * Buffer contains at least one of the following:
  * complete [complete] [partial] mysql packet
  *

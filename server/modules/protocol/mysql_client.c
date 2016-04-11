@@ -454,7 +454,7 @@ int gw_read_client_event(DCB* dcb)
     {
         dcb_close(dcb);
     }
-    if (0 == (nbytes_read = gwbuf_length(read_buffer)))
+    if (0 == (nbytes_read = gwbuf_length(read_buffer)) && !dcb->dcb_readqueue)
     {
         goto return_rc;
     }
@@ -577,13 +577,14 @@ int gw_read_client_event(DCB* dcb)
     uint8_t cap = 0;
     bool stmt_input = false; /*< router input type */
     SESSION *session = dcb->session;
+
     if (session != NULL && SESSION_STATE_DUMMY != session->state)
     {
         CHK_SESSION(session);
         router = session->service->router;
         router_instance = session->service->router_instance;
         rsession = session->router_session;
-
+        
         if (NULL == router_instance || NULL == rsession)
         {
             /** Send ERR 1045 to client */
@@ -595,26 +596,25 @@ int gw_read_client_event(DCB* dcb)
             read_buffer = NULL;
             return 0;
         }
-
+        
         /** Ask what type of input the router expects */
         cap = router->getCapabilities(router_instance, rsession);
-
+        
         if (cap & RCAP_TYPE_STMT_INPUT)
         {
             stmt_input = true;
+        }
+        /** If the router requires statement input or we are still authenticating
+         * we need to make sure that a complete SQL packet is read before continuing */
+        if (stmt_input || protocol->protocol_auth_state == MYSQL_AUTH_SENT)
+        {
+            
+            if (!ensure_complete_packet(dcb, &read_buffer, nbytes_read))
+            {
+                return 0;
+            }
             /** Mark buffer to as MySQL type */
             gwbuf_set_type(read_buffer, GWBUF_TYPE_MYSQL);
-        }
-    }
-
-    /** If the router requires statement input or we are still authenticating
-     * we need to make sure that a complete SQL packet is read before continuing */
-    if (stmt_input || protocol->protocol_auth_state == MYSQL_AUTH_SENT)
-    {
-
-        if (!ensure_complete_packet(dcb, &read_buffer, nbytes_read))
-        {
-            return 0;
         }
     }
 
