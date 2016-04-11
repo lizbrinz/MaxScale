@@ -31,6 +31,7 @@
 #include <spinlock.h>
 #include <atomic.h>
 #include <time.h>
+#include <skygw_debug.h>
 
 /**
  * Initialise a spinlock.
@@ -125,6 +126,7 @@ spinlock_acquire_nowait(SPINLOCK *lock)
 void
 spinlock_release(SPINLOCK *lock)
 {
+    ss_dassert(lock->lock != 0);
  #if SPINLOCK_PROFILE
     if (lock->waiting > lock->max_waiting)
     {
