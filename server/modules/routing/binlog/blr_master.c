@@ -108,6 +108,7 @@ static int blr_get_master_semisync(GWBUF *buf);
 
 int blr_write_data_into_binlog(ROUTER_INSTANCE *router, uint32_t data_len, uint8_t *buf);
 void extract_checksum(ROUTER_INSTANCE* router, uint8_t *cksumptr, uint8_t len);
+static void blr_terminate_master_replication(ROUTER_INSTANCE *router, uint8_t* ptr, int len);
 
 static int keepalive = 1;
 
@@ -1206,6 +1207,10 @@ blr_handle_binlog_record(ROUTER_INSTANCE *router, GWBUF *pkt)
                     router->checksum_size = hdr.event_size - MYSQL_CHECKSUM_LEN;
                     router->partial_checksum_bytes = 0;
                 }
+                else
+                {
+                    blr_terminate_master_replication(router, ptr, len);
+                }
 
                 if (hdr.ok == 0)
                 {
@@ -1841,38 +1846,7 @@ blr_handle_binlog_record(ROUTER_INSTANCE *router, GWBUF *pkt)
             }
             else
             {
-                unsigned long mysql_errno = extract_field(ptr + 5, 16);
-                char *msg_err = NULL;
-                int msg_len = 0;
-                msg_err = (char *)ptr + 7 + 6; // err msg starts after 7 bytes + 6 of status message
-                msg_len = len - 7 - 6; // msg len is decreased by 7 and 6
-                msg_err = (char *)malloc(msg_len + 1);
-                strncpy(msg_err, (char *)ptr + 7 + 6, msg_len);
-                /* NULL terminate error string */
-                *(msg_err + msg_len) = '\0';
-
-                spinlock_acquire(&router->lock);
-
-                /* set mysql_errno */
-                router->m_errno = mysql_errno;
-
-                /* set io error message */
-                if (router->m_errmsg)
-                {
-                    free(router->m_errmsg);
-                }
-                router->m_errmsg = msg_err;
-
-                /* Force stopped state */
-                router->master_state = BLRM_SLAVE_STOPPED;
-
-                spinlock_release(&router->lock);
-
-                MXS_ERROR("Error packet in binlog stream.%s @ %lu.",
-                          router->binlog_name,
-                          router->current_pos);
-
-                router->stats.n_binlog_errors++;
+                blr_terminate_master_replication(router, ptr, len);
             }
         }
 
@@ -3075,3 +3049,35 @@ blr_get_master_semisync(GWBUF *buf)
 
     return master_semisync;
 }
+
+/**
+ * Stop the slave connection and log errors
+ *
+ * @param router Router instance
+ * @param ptr Pointer to the start of the packet
+ * @param len Length of the packet
+ */
+static void blr_terminate_master_replication(ROUTER_INSTANCE* router, uint8_t* ptr, int len)
+{
+    unsigned long mysql_errno = extract_field(ptr + 5, 16);
+    int msg_len = len - 7 - 6; // msg len is decreased by 7 and 6
+    char *msg_err = (char *)malloc(msg_len + 1);
+
+    strncpy(msg_err, (char *)ptr + 7 + 6, msg_len);
+    *(msg_err + msg_len) = '\0';
+
+    spinlock_acquire(&router->lock);
+
+    char* old_errmsg = router->m_errmsg;
+    router->m_errmsg = msg_err;
+    router->m_errno = mysql_errno;
+    router->master_state = BLRM_SLAVE_STOPPED;
+    router->stats.n_binlog_errors++;
+
+    spinlock_release(&router->lock);
+
+    free(old_errmsg);
+    MXS_ERROR("Error packet in binlog stream.%s @ %lu.",
+              router->binlog_name, router->current_pos);
+}
+
