@@ -880,6 +880,14 @@ int dcb_read(DCB   *dcb,
     int     nsingleread = 0;
     int     nreadtotal = 0;
 
+    if (dcb->dcb_readqueue)
+    {
+        spinlock_acquire(&dcb->authlock);
+        *head = gwbuf_append(*head, dcb->dcb_readqueue);
+        dcb->dcb_readqueue = NULL;
+        spinlock_release(&dcb->authlock);
+    }
+
     if (SSL_HANDSHAKE_DONE == dcb->ssl_state || SSL_ESTABLISHED == dcb->ssl_state)
     {
         return dcb_read_SSL(dcb, head);

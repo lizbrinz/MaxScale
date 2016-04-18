@@ -504,23 +504,17 @@ gw_read_and_write(DCB *dcb, MYSQL_session local_session)
             return_code = 0;
             goto return_rc;
         }
-        nbytes_read = gwbuf_length(read_buffer);
 
-        if (nbytes_read == 0 && dcb->dcb_readqueue == NULL)
+        nbytes_read = gwbuf_length(read_buffer);
+        if (nbytes_read == 0)
         {
+            ss_dassert(read_buffer == NULL);
             goto return_rc;
         }
         else
         {
-            ss_dassert(read_buffer != NULL || dcb->dcb_readqueue != NULL);
+            ss_dassert(read_buffer != NULL);
         }
-
-        if (dcb->dcb_readqueue)
-        {
-            read_buffer = gwbuf_append(dcb->dcb_readqueue, read_buffer);
-        }
-
-        nbytes_read = gwbuf_length(read_buffer);
 
         if (nbytes_read < 3)
         {
@@ -531,17 +525,20 @@ gw_read_and_write(DCB *dcb, MYSQL_session local_session)
 
         {
             GWBUF *tmp = modutil_get_complete_packets(&read_buffer);
-
+            /* Put any residue into the read queue */
+            spinlock_acquire(&dcb->authlock);
+            dcb->dcb_readqueue = read_buffer;
+            spinlock_release(&dcb->authlock);
             if (tmp == NULL)
             {
                 /** No complete packets */
-                dcb->dcb_readqueue = read_buffer;
                 return_code = 0;
                 goto return_rc;
             }
-
-            dcb->dcb_readqueue = read_buffer;
-            read_buffer = tmp;
+            else
+            {
+                read_buffer = tmp;
+            }
         }
 
         /**
@@ -1633,7 +1630,9 @@ static GWBUF* process_response_data(DCB* dcb,
 
                     /** Store the already read data into the readqueue of the DCB
                      * and restore the response status to the initial number of packets */
+                    spinlock_acquire(&dcb->authlock);
                     dcb->dcb_readqueue = gwbuf_append(outbuf, dcb->dcb_readqueue);
+                    spinlock_release(&dcb->authlock);
                     protocol_set_response_status(p, initial_packets, initial_bytes);
                     return NULL;
                 }

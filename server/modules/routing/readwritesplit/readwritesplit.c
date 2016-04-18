@@ -833,7 +833,7 @@ static void* newSession(
         client_rses->rses_transaction_active = false;
         client_rses->have_tmp_tables = false;
         client_rses->forced_node = NULL;
-        
+
         router_nservers = router_get_servercount(router);
 
         if (!have_enough_servers(&client_rses,
@@ -1944,8 +1944,9 @@ static int routeQuery(
 				if (GWBUF_LENGTH(tmpbuf) > 0)
 				{
 					DCB* dcb = rses_get_client_dcb(router_cli_ses);
-
+                    spinlock_acquire(&dcb->authlock);
 					dcb->dcb_readqueue = gwbuf_append(dcb->dcb_readqueue, tmpbuf);
+                    spinlock_release(&dcb->authlock);
 				}
 				succp = true;
 				goto retblock;
