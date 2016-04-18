@@ -510,7 +510,7 @@ int gw_read_client_event(DCB* dcb)
     case MYSQL_AUTH_SENT:
         /* After this call read_buffer will point to freed data */
         if (nbytes_read < 3 || nbytes_read <
-            (MYSQL_GET_PACKET_LEN((uint8_t *) GWBUF_DATA(read_buffer)) + 4)
+            (MYSQL_GET_PACKET_LEN((uint8_t *) GWBUF_DATA(read_buffer)) + 4))
         {
             spinlock_acquire(&dcb->authlock);
             dcb->dcb_readqueue = read_buffer;
@@ -687,7 +687,7 @@ gw_read_normal_data(DCB *dcb, GWBUF *read_buffer, int nbytes_read)
         int packet_size;
 
         if (nbytes_read < 3 || nbytes_read <
-            (MYSQL_GET_PACKET_LEN((uint8_t *) GWBUF_DATA(read_buffer)) + 4)
+            (MYSQL_GET_PACKET_LEN((uint8_t *) GWBUF_DATA(read_buffer)) + 4))
         {
             spinlock_acquire(&dcb->authlock);
             dcb->dcb_readqueue = read_buffer;
