@@ -984,7 +984,7 @@ blr_handle_binlog_record(ROUTER_INSTANCE *router, GWBUF *pkt)
     int prev_length = -1;
     int n_bufs = -1, pn_bufs = -1;
     int check_packet_len;
-    int semisync_bytes = 0;
+    int semisync_bytes;
 
     /*
      * Prepend any residual buffer to the buffer chain we have
@@ -1105,6 +1105,8 @@ blr_handle_binlog_record(ROUTER_INSTANCE *router, GWBUF *pkt)
             ptr = pdata;
             n_bufs = 1;
         }
+
+        semisync_bytes = 0;
 
         /*
          * ptr now points at the current message in a contiguous buffer,
