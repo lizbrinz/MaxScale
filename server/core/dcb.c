@@ -408,6 +408,11 @@ dcb_free_all_memory(DCB *dcb)
     {
         free(dcb->protocol);
     }
+    if (dcb->data && dcb->authfunc.free && !DCB_IS_CLONE(dcb))
+    {
+        dcb->authfunc.free(dcb);
+        dcb->data = NULL;
+    }
     if (dcb->protoname)
     {
         free(dcb->protoname);

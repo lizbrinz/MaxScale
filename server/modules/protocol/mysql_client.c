@@ -524,7 +524,13 @@ int gw_read_client_event(DCB* dcb)
         return_code = gw_read_normal_data(dcb, read_buffer, nbytes_read);
         break;
 
+    case MYSQL_AUTH_FAILED:
+        gwbuf_free(read_buffer);
+        return_code = 1;
+        break;
+
     default:
+        MXS_ERROR("In mysql_client.c unexpected protocol authentication state");
         break;
     }
 

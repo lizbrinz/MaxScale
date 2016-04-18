@@ -388,10 +388,6 @@ session_free(SESSION *session)
      */
     if (session->client_dcb)
     {
-        if (!DCB_IS_CLONE(session->client_dcb))
-        {
-            session->client_dcb->authfunc.free(session->client_dcb);
-        }
         dcb_free_all_memory(session->client_dcb);
     }
     /**
