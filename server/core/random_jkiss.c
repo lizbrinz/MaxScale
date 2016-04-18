@@ -72,6 +72,7 @@ random_jkiss(void)
         init = true;
         spinlock_release(&random_jkiss_spinlock);
         random_init_jkiss();
+        spinlock_acquire(&random_jkiss_spinlock);
     }
     x = 314527869 * x + 1234567;
     y ^= y << 5;
