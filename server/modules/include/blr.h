@@ -485,7 +485,7 @@ typedef struct router_instance
     int               send_slave_heartbeat;  /*< Enable sending heartbeat to slaves */
     bool              request_semi_sync;     /*< Request Semi-Sync replication to master */
     int               master_semi_sync;      /*< Semi-Sync replication status of master server */
-    int               semi_sync_send_ack;    /*< Whether the semisync ACK needs to be sent
+    int               semi_sync_send_ack;    /*< Whether the semisync ACK needs to be sent */
     struct router_instance  *next;
 } ROUTER_INSTANCE;
 
