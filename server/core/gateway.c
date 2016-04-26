@@ -816,16 +816,9 @@ static bool file_is_readable(const char* absolute_pathname)
     {
         int eno = errno;
         errno = 0;
-        char errbuf[STRERROR_BUFLEN];
-
-        if (!daemon_mode)
-        {
-            fprintf(stderr, "*\n* Error : Failed to read '%s' due to error %d, %s.\n*\n",
-                    absolute_pathname, eno, strerror_r(eno, errbuf, sizeof (errbuf)));
-        }
-        MXS_ERROR("Failed to read '%s' due to error %d, %s.", absolute_pathname,
-                  eno, strerror_r(eno, errbuf, sizeof (errbuf)));
-        mxs_log_flush_sync();
+        char buff[PATH_MAX + 100];
+        snprintf(buff, sizeof(buff), "Opening file '%s' for reading failed.", absolute_pathname);
+        print_log_n_stderr(true, true, buff, buff, eno);
         succp = false;
     }
     return succp;
@@ -844,16 +837,9 @@ static bool file_is_writable(const char* absolute_pathname)
     {
         int eno = errno;
         errno = 0;
-        char errbuf[STRERROR_BUFLEN];
-
-        if (!daemon_mode)
-        {
-            fprintf(stderr, "*\n* Error : Unable to open file '%s' for writing "
-                    "due to error %d, %s.\n*\n", absolute_pathname, eno,
-                    strerror_r(eno, errbuf, sizeof (errbuf)));
-        }
-        MXS_ERROR("Unable to open file '%s' for writing due to error %d, %s.",
-                  absolute_pathname, eno, strerror_r(eno, errbuf, sizeof (errbuf)));
+        char buff[PATH_MAX + 100];
+        snprintf(buff, sizeof(buff), "Opening file '%s' for writing failed.", absolute_pathname);
+        print_log_n_stderr(true, true, buff, buff, eno);
         succp = false;
     }
     return succp;
@@ -899,19 +885,11 @@ static char* get_expanded_pathname(char** output_path,
     {
         int eno = errno;
         errno = 0;
-        char errbuf[STRERROR_BUFLEN];
+        char buff[PATH_MAX + 100];
 
-        fprintf(stderr,
-                "*\n* Warning : Failed to read the "
-                "directory %s. %s.\n*\n",
-                relative_path,
-                strerror_r(eno, errbuf, sizeof(errbuf)));
+        snprintf(buff, sizeof(buff), "Failed to read the directory '%s'.",  relative_path);
+        print_log_n_stderr(true, true, buff, buff, eno);
 
-        MXS_WARNING("Failed to read the directory %s, due "
-                    "to %d, %s.",
-                    relative_path,
-                    eno,
-                    strerror_r(eno, errbuf, sizeof(errbuf)));
         free(expanded_path);
         *output_path = NULL;
         goto return_cnf_file_buf;
@@ -1708,12 +1686,7 @@ int main(int argc, char **argv)
             snprintf(errorbuffer, sizeof(errorbuffer),
                      "Error: Failed to pre-parse configuration file. Memory allocation failed.");
 
-        MXS_ERROR("%s", errorbuffer);
-        if (!daemon_mode)
-        {
-            fprintf(stderr, "%s\n", errorbuffer);
-        }
-
+        print_log_n_stderr(true, true, errorbuffer, errorbuffer, 0);
         rc = MAXSCALE_BADCONFIG;
         goto return_main;
     }
