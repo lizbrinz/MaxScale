@@ -875,20 +875,21 @@ get_all_users(SERVICE *service, USERS *users)
             goto cleanup;
         }
 
-        if (server->server->server_string == NULL)
+        const char *server_string = mysql_get_server_info(con);
+
+        /** Since the server->server_string isn't actually used here, we can do an
+         * unsafe check for it */
+        if (server->server->server_string == NULL &&
+            !server_set_version_string(server->server, server_string))
         {
-            const char *server_string = mysql_get_server_info(con);
-            if (!server_set_version_string(server->server, server_string))
-            {
-                mysql_close(con);
-                goto cleanup;
-            }
+            mysql_close(con);
+            goto cleanup;
         }
 
         char querybuffer[MAX_QUERY_STR_LEN];
         /** Count users. Start with users and db grants for users */
-        const char *usercount = get_usercount_query(server->server->server_string,
-                                                    service->enable_root, querybuffer);
+        const char *usercount = get_usercount_query(server_string, service->enable_root,
+                                                    querybuffer);
         if (mysql_query(con, usercount))
         {
             if (mysql_errno(con) != ER_TABLEACCESS_DENIED_ERROR)
@@ -941,8 +942,7 @@ get_all_users(SERVICE *service, USERS *users)
             goto cleanup;
         }
 
-        userquery = get_users_db_query(server->server->server_string,
-                                      service->enable_root, querybuffer);
+        userquery = get_users_db_query(server_string, service->enable_root, querybuffer);
 
         /* send first the query that fetches users and db grants */
         if (mysql_query(con, userquery))
@@ -977,8 +977,7 @@ get_all_users(SERVICE *service, USERS *users)
                 MXS_ERROR("Failed to retrieve users: %s", mysql_error(con));
                 MXS_ERROR(ERROR_NO_SHOW_DATABASES, service->name, service_user);
 
-                userquery = get_users_query(server->server->server_string,
-                                            service->enable_root, querybuffer);
+                userquery = get_users_query(server_string, service->enable_root, querybuffer);
 
                 if (mysql_query(con, userquery))
                 {
@@ -1377,19 +1376,19 @@ get_users(SERVICE *service, USERS *users)
         return -1;
     }
 
-    if (server->server->server_string == NULL)
+    const char *server_string = mysql_get_server_info(con);
+
+    /** Since the server->server_string isn't actually used here, we can do an
+     * unsafe check for it */
+    if (server->server->server_string == NULL &&
+        !server_set_version_string(server->server, server_string))
     {
-        const char *server_string = mysql_get_server_info(con);
-        if (!server_set_version_string(server->server, server_string))
-        {
-            mysql_close(con);
-            return -1;
-        }
+        mysql_close(con);
+        return -1;
     }
 
     char querybuffer[MAX_QUERY_STR_LEN];
-    const char *usercount = get_usercount_query(server->server->server_string,
-                                                service->enable_root, querybuffer);
+    const char *usercount = get_usercount_query(server_string, service->enable_root, querybuffer);
     /** Count users. Start with users and db grants for users */
     if (mysql_query(con, usercount))
     {
@@ -1440,8 +1439,7 @@ get_users(SERVICE *service, USERS *users)
         return -1;
     }
 
-    userquery = get_users_db_query(server->server->server_string,
-                                  service->enable_root, querybuffer);
+    userquery = get_users_db_query(server_string, service->enable_root, querybuffer);
     /* send first the query that fetches users and db grants */
     if (mysql_query(con, userquery))
     {
@@ -1471,8 +1469,7 @@ get_users(SERVICE *service, USERS *users)
             MXS_ERROR("Failed to retrieve users: %s", mysql_error(con));
             MXS_ERROR(ERROR_NO_SHOW_DATABASES, service->name, service_user);
 
-            userquery = get_users_query(server->server->server_string,
-                                        service->enable_root, querybuffer);
+            userquery = get_users_query(server_string, service->enable_root, querybuffer);
 
             if (mysql_query(con, userquery))
             {
@@ -2673,17 +2670,18 @@ bool check_service_permissions(SERVICE* service)
         return my_errno != ER_ACCESS_DENIED_ERROR;
     }
 
+    const char *server_string = mysql_get_server_info(mysql);
+
+    /** Since the server->server_string isn't actually used here, we can do an
+     * unsafe check for it */
     if (server->server->server_string == NULL)
     {
-        const char *server_string = mysql_get_server_info(mysql);
         server_set_version_string(server->server, server_string);
     }
 
     char query[MAX_QUERY_STR_LEN];
-    const char* query_pw = strstr(server->server->server_string, "5.7.") ?
-        MYSQL57_PASSWORD : MYSQL_PASSWORD;
-
-    snprintf(query, sizeof(query), "SELECT user, host, %s, Select_priv FROM mysql.user limit 1", query_pw);
+    snprintf(query, sizeof(query), "SELECT user, host, %s, Select_priv FROM mysql.user limit 1",
+             strstr(server_string, "5.7.") ? MYSQL57_PASSWORD : MYSQL_PASSWORD);
 
     if (mysql_query(mysql, query) != 0)
     {

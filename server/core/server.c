@@ -347,9 +347,13 @@ dprintAllServers(DCB *dcb)
                    server->protocol);
         dcb_printf(dcb, "\tPort:                                %d\n",
                    server->port);
-        if (server->server_string)
-            dcb_printf(dcb, "\tServer Version:\t\t\t%s\n",
-                       server->server_string);
+
+        char server_string[MAX_SERVER_VERSION_STRING_LEN];
+        if (server_get_version_string(server, server_string, sizeof(server_string)))
+        {
+            dcb_printf(dcb, "\tServer Version:\t\t\t%s\n", server_string);
+        }
+
         dcb_printf(dcb, "\tNode Id:                     %d\n",
                    server->node_id);
         dcb_printf(dcb, "\tMaster Id:                   %d\n",
@@ -1084,14 +1088,45 @@ server_map_status(char *str)
  */
 bool server_set_version_string(SERVER* server, const char* string)
 {
-    bool rval = true;
-    spinlock_acquire(&server->lock);
-    free(server->server_string);
-    if ((server->server_string = strdup(string)) == NULL)
+    bool rval = false;
+    char *newstring = strdup(string);
+
+    if (newstring)
     {
-        MXS_ERROR("Memory allocation failed.");
-        rval = false;
+        spinlock_acquire(&server->lock);
+        char *oldstring = server->server_string;
+        server->server_string = newstring;
+        free(oldstring);
+        rval = true;
+        spinlock_release(&server->lock);
+    }
+    else
+    {
+        MXS_ERROR("Memory allocation failed");
+    }
+
+    return rval;
+}
+
+/**
+ * Get the version string of the server.
+ * @param server Server to read
+ * @param dest Destination where the string is stored
+ * @param size Size of the destination
+ * @return True if version string was read
+ */
+bool server_get_version_string(SERVER* server, char* dest, size_t size)
+{
+    bool rval = false;
+    spinlock_acquire(&server->lock);
+
+    if (server->server_string)
+    {
+        strncpy(dest, server->server_string, size);
+        dest[size] = '\0';
+        rval = true;
     }
     spinlock_release(&server->lock);
+
     return rval;
 }
