@@ -1450,7 +1450,7 @@ char* qc_get_affected_fields(GWBUF* buf)
         lex->current_select = lex->current_select->next_select_in_list();
     }
 
-    if (lex->sql_command == SQLCOM_INSERT)
+    if ((lex->sql_command == SQLCOM_INSERT) || (lex->sql_command == SQLCOM_INSERT_SELECT))
     {
         List_iterator<Item> ilist(lex->field_list);
         item = (Item*) ilist.next();
