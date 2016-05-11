@@ -1450,6 +1450,28 @@ char* qc_get_affected_fields(GWBUF* buf)
         lex->current_select = lex->current_select->next_select_in_list();
     }
 
+    if (lex->sql_command == SQLCOM_INSERT)
+    {
+        List_iterator<Item> ilist(lex->field_list);
+        item = (Item*) ilist.next();
+
+        for (; item != NULL; item = (Item*) ilist.next())
+        {
+            collect_affected_fields(COLLECT_SELECT, item, &where, &buffsz, &bufflen);
+        }
+
+        if (lex->insert_list)
+        {
+            List_iterator<Item> ilist(*lex->insert_list);
+            item = (Item*) ilist.next();
+
+            for (; item != NULL; item = (Item*) ilist.next())
+            {
+                collect_affected_fields(COLLECT_SELECT, item, &where, &buffsz, &bufflen);
+            }
+        }
+    }
+
     return where;
 }
 
